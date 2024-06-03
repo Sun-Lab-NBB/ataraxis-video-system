@@ -1,19 +1,25 @@
 # import the opencv library 
-from collections import deque
-import sys
 import cv2 
 import os 
 from high_precision_timer.precision_timer import PrecisionTimer
-import time as tm
 from multiprocessing import Process, Queue 
 import numpy as np #temp
 from pynput import keyboard
-from shared_memory_array import SharedMemoryArray
+from ..resources.shared_memory_array import SharedMemoryArray
 
 
 d = {'ns': 10 ** 9, 'us' : 10 ** 6, 'ms' : 10 ** 3, 's': 1}
 
 unit = 'ms'
+
+def delete_files_in_directory(path):
+    try:
+        with os.scandir(path) as img_files:
+            for img_file in img_files:
+                if img_file.is_file():
+                    os.unlink(img_file.path)
+    except OSError:
+        print("Error occurred while deleting files.")
 
 def run_time_control(func, fps, verbose = False):
     run_timer = PrecisionTimer(unit)
@@ -97,8 +103,6 @@ def on_press(key, data_queue, terminator_array):
     if key == keyboard.Key.esc:
         terminator_array.disconnect()
         return False  # stop listener
-
-    
     try:
         if key.char == 'q':
             terminator_array.connect()
@@ -112,7 +116,8 @@ def on_press(key, data_queue, terminator_array):
         pass
 
 if __name__ == '__main__':
-    
+    delete_files_in_directory('imgs')
+
     data_queue = Queue()
 
     prototype = np.array([1,1], dtype=np.int32) # First entry represents whether input stream is active, second entry represents whether output stream is active
@@ -122,7 +127,7 @@ if __name__ == '__main__':
     # p2 = Process(target=save_frame, args=(lambda: save_frame(q), 1), daemon=True) 
 
     listener = keyboard.Listener(on_press=lambda x:on_press(x, data_queue, terminator_array))
-    p1 = Process(target=input_stream, args=(data_queue, terminator_array, 3,), daemon=True) 
+    p1 = Process(target=input_stream, args=(data_queue, terminator_array, 2,), daemon=True) 
     p2 = Process(target=save_images_loop, args=(data_queue, terminator_array, 1,), daemon=True) 
 
     listener.start()  # start to listen on a separate thread
