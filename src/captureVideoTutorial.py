@@ -10,6 +10,7 @@ while(True):
     # Capture the video frame 
     # by frame 
     ret, frame = vid.read() 
+    print(ret)
   
     # Display the resulting frame 
     cv2.imshow('frame', frame) 
