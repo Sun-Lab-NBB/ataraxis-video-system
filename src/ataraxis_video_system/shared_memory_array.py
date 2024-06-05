@@ -9,7 +9,7 @@ class SharedMemoryArray:
     """A wrapper around an n-dimensional numpy array object that exposes methods for accessing the array buffer from
     multiple processes.
 
-    This class is designed to compliment the Queue-based method for sharing data between multiple python processes. 
+    This class is designed to compliment the Queue-based method for sharing data between multiple python processes.
     Similar to Queues, this class instantiates a shared memory buffer, to which all process-specific instance of this
     class link when their 'connect' property is called. Unlike Queue, however, this shared memory buffer is static
     post-initialization and represents a numpy array with all associated limitations (fixed datatypes, static size,
@@ -54,11 +54,11 @@ class SharedMemoryArray:
     """
 
     def __init__(
-            self,
-            name: str,
-            shape: tuple,
-            datatype: np.dtype,
-            buffer: Optional[SharedMemory],
+        self,
+        name: str,
+        shape: tuple,
+        datatype: np.dtype,
+        buffer: Optional[SharedMemory],
     ):
         self._name: str = name
         self._shape: tuple = shape
@@ -69,7 +69,7 @@ class SharedMemoryArray:
         self._is_connected: bool = False
 
     @classmethod
-    def create_array(cls, name: str, prototype: np.ndarray) -> 'SharedMemoryArray':
+    def create_array(cls, name: str, prototype: np.ndarray) -> "SharedMemoryArray":
         """Uses the input prototype numpy array to create an instance of this class.
 
         Specifically, this method first creates a shared bytes buffer that is sufficiently large to hold the data of the
@@ -101,7 +101,9 @@ class SharedMemoryArray:
 
         # Instantiates a numpy array using the shared memory buffer and copies prototype array data into the shared
         # array instance
-        shared_arr = np.ndarray(shape=prototype.shape, dtype=prototype.dtype, buffer=buffer.buf)
+        shared_arr = np.ndarray(
+            shape=prototype.shape, dtype=prototype.dtype, buffer=buffer.buf
+        )
         shared_arr[:] = prototype[:]
 
         # Packages the data necessary to connect to the shared array into the class object.
@@ -128,7 +130,9 @@ class SharedMemoryArray:
         """
         self._buffer = SharedMemory(name=self._name)  # Connects to the buffer
         # Connects to the buffer using a numpy array
-        self._array = np.ndarray(shape=self._shape, dtype=self._datatype, buffer=self._buffer.buf)
+        self._array = np.ndarray(
+            shape=self._shape, dtype=self._datatype, buffer=self._buffer.buf
+        )
         self._is_connected = True  # Sets the connection flag
 
     def disconnect(self):
@@ -166,9 +170,7 @@ class SharedMemoryArray:
             try:
                 return np.array(self._array[index])
             except IndexError:
-                custom_error_message = (
-                    "Invalid index or slice when attempting to read the data from shared memory array."
-                )
+                custom_error_message = "Invalid index or slice when attempting to read the data from shared memory array."
                 raise ValueError(format_exception(custom_error_message))
 
     def write_data(self, index: int | slice, data: np.ndarray) -> None:
@@ -193,24 +195,18 @@ class SharedMemoryArray:
             raise RuntimeError(format_exception(custom_error_message))
 
         if not isinstance(data, np.ndarray):
-            custom_error_message = (
-                "Input data must be a numpy array."
-            )
+            custom_error_message = "Input data must be a numpy array."
             raise ValueError(format_exception(custom_error_message))
 
         if data.dtype != self._datatype:
-            custom_error_message = (
-                f"Input data must have the same datatype as the shared memory array: {self._datatype}."
-            )
+            custom_error_message = f"Input data must have the same datatype as the shared memory array: {self._datatype}."
             raise ValueError(format_exception(custom_error_message))
 
         with self._lock:
             try:
                 self._array[index] = data
             except ValueError:
-                custom_error_message = (
-                    "Input data cannot fit inside the shared memory array at the specified index or slice."
-                )
+                custom_error_message = "Input data cannot fit inside the shared memory array at the specified index or slice."
                 raise ValueError(format_exception(custom_error_message))
 
     @property
@@ -269,4 +265,6 @@ class SharedMemoryArray:
 
 def format_exception(exception: str) -> str:
     """Formats the input exception message string according ot the Ataraxis standards."""
-    return textwrap.fill(exception, width=120, break_long_words=False, break_on_hyphens=False)
+    return textwrap.fill(
+        exception, width=120, break_long_words=False, break_on_hyphens=False
+    )
