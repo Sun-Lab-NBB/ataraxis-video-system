@@ -2,7 +2,6 @@ import pytest
 
 import cv2
 import os
-from high_precision_timer.precision_timer import PrecisionTimer
 from multiprocessing import Process, Queue, ProcessError
 import multiprocessing
 import numpy as np
@@ -118,53 +117,67 @@ def test__input_stream(camera):
     test_array = SharedMemoryArray.create_array("test_array1", bad_prototype1)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
-    assert test_queue.empty()
+    assert test_queue.qsize() == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32) 
     test_array = SharedMemoryArray.create_array("test_array2", bad_prototype2)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
-    assert test_queue.empty()
+    assert test_queue.qsize() == 0
 
     # Bad prototype 3: with first element 0 and third element 1, loop will run but will take no pictures
 
-    bad_prototype3 = np.array([1, 0, 1], dtype=np.int32) 
+    bad_prototype3 = np.array([0, 0, 1], dtype=np.int32) 
     test_array = SharedMemoryArray.create_array("test_array3", bad_prototype3)
     test_array.connect()
 
-
-
     input_stream_process = Process(target=VideoSystem._input_stream, args=(camera, test_queue, test_array,))
     input_stream_process.start()
-    time.sleep(1)
+    time.sleep(3)
 
     arr = np.ndarray(shape=1, dtype=np.int32)
     arr[0] = 0
-    test_array.write_data(2, arr)
+    test_array.write_data(slice(2,3), np.array([0]))
     input_stream_process.join()
 
-    assert test_queue.empty()
+    assert test_queue.qsize() == 0
+
+    # Run input_stream as fast as possible for three seconds
+
+    prototype = np.array([1, 1, 1], dtype=np.int32) 
+    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array.connect()
+
+    input_stream_process = Process(target=VideoSystem._input_stream, args=(Camera(), test_queue, test_array, ),)
+    input_stream_process.start()
+    time.sleep(3)
+    test_array.write_data(slice(2,3), np.array([0]))
+    input_stream_process.join()
+    test_array.disconnect()
+
+    assert test_queue.qsize() > 0
+    VideoSystem._empty_queue(test_queue)
+    assert test_queue.qsize() == 0
+
+    # Run input_stream at 1 fps for 3 seconds
+    prototype = np.array([1, 1, 1], dtype=np.int32) 
+    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array.connect()
+
+    input_stream_process = Process(target=VideoSystem._input_stream, args=(Camera(), test_queue, test_array, 3),)
+    input_stream_process.start()
+    time.sleep(3)
+    test_array.write_data(slice(2,3), np.array([0]))
+    input_stream_process.join()
+    test_array.disconnect()
+
+    assert test_queue.qsize() > 0
+    assert test_queue.qsize() < 5
+
+    VideoSystem._empty_queue(test_queue)
+    assert test_queue.qsize() == 0
 
 
-
-    # prototype = np.array([1, 0, 1], dtype=np.int32) 
-    # test_array = SharedMemoryArray.create_array("test_array3", prototype)
-    # test_array.connect()
-
-    # input_stream_process = Process(target=VideoSystem._input_stream, args=(camera, test_queue, test_array,))
-    # timer = PrecisionTimer('s')
-    # input_stream_process.start()
-    # timer.sleep(1)
-    # test_array.write_data(0, np.array([0]))
-    # input_stream_process.join()
-    # test_array.disconnect()
-    
-
-
-
-    
-
-    
 def test__save_frame():
     pass
 

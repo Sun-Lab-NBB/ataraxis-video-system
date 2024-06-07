@@ -1,6 +1,7 @@
 from PIL import Image, ImageDraw, ImageChops
-from shared_memory_array import SharedMemoryArray
-import numpy as np
+# from multiprocessing import Queue
+import multiprocessing
+import queue
 
 
 def images_are_equal(image1_path, image2_path):
@@ -13,15 +14,20 @@ def images_are_equal(image1_path, image2_path):
     diff = ImageChops.difference(image1, image2)
     return not diff.getbbox()  # Returns True if images are identical
 
-prototype = np.array([1, 0, 1], dtype=np.int32) 
-ar = SharedMemoryArray.create_array("test_array3", prototype)
-ar.connect()
+q = multiprocessing.Queue()
 
-print(ar._array)
-arr = np.ndarray(shape=1, dtype=np.int32)
-arr[0] = 0
-ar.write_data(2, arr)
+try:    
+    q.get_nowait()
+except queue.Empty:
+    print('caught')
+# print(q.qsize())
+# print(q.empty())
 
-print(ar._array)
+# for i in range(4):
+#     q.put(1)
 
-ar.disconnect()
+# for i in range(5):
+#     q.get()
+
+# print(q.qsize())
+# print(q.empty())

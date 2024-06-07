@@ -7,6 +7,7 @@ import numpy as np
 from pynput import keyboard
 from shared_memory_array import SharedMemoryArray
 from camera import Camera
+import queue
 
 unit_conversion = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
 precision = "ms"
@@ -56,7 +57,7 @@ class VideoSystem:
                 self.camera, 
                 self._img_queue, 
                 self._terminator_array, 
-                2,
+                None,
             ), 
         )
         self._save_process = Process(
@@ -146,7 +147,8 @@ class VideoSystem:
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     img_queue.put(camera.grab_frame())
                     frames += 1
-                    run_timer.reset()
+                    if fps:
+                        run_timer.reset()
         camera.disconnect()
         terminator_array.disconnect()
 
@@ -161,7 +163,7 @@ class VideoSystem:
             save_directory: relative path to location  where image is to be saved
             img_id: id tag for image
         """
-        if not img_queue.empty():
+        if img_queue.qsize() > 0:
             frame = img_queue.get()
             filename = save_directory + "\\img" + str(img_id) + ".png"
             cv2.imwrite(filename, frame)
@@ -169,14 +171,17 @@ class VideoSystem:
         return False
 
     @staticmethod
-    def _empty_queue(q):
+    def _empty_queue(q: Queue):
         """Generic method to empty a multiprocessing queue.
 
         Args:
             q: the queue to be emptied
         """
-        while not q.empty():
-            q.get()
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            pass
 
     @staticmethod
     def _save_images_loop(img_queue, terminator_array, save_directory, fps=None):
@@ -202,7 +207,8 @@ class VideoSystem:
                     if saved:
                         num_imgs_saved += 1
                     frames += 1
-                    run_timer.reset()
+                    if fps:
+                        run_timer.reset()
         terminator_array.disconnect()
 
     def on_press(self, key, terminator_array) -> bool:
