@@ -30,8 +30,10 @@ class VideoSystem:
     def __init__(self, save_directory: str, camera: Camera):
         self.save_directory = save_directory
         self.camera = camera
-        self.input_process = None
-        self.save_process = None
+        self._input_process = None
+        self._save_process = None
+        self._terminator_array = None
+        self._img_queue = None
         if multiprocessing.current_process().daemon:
             raise ProcessError('Instantiation method outside of main scope')
 
@@ -40,45 +42,51 @@ class VideoSystem:
 
         Pressing q ends image collection, Pressing w ends image saving.
         """
-        print('running')
         self.delete_images()
 
-        data_queue = Queue()
+        self._img_queue = Queue()
 
-        prototype = np.array([1, 1], dtype=np.int32) # First entry represents whether input stream is active, second entry represents whether output stream is active
-        terminator_array = SharedMemoryArray.create_array("terminator_array", prototype)
+        prototype = np.array([1, 1, 1], dtype=np.int32) # First entry represents whether input stream is active, second entry represents whether output stream is active
+        self._terminator_array = SharedMemoryArray.create_array("terminator_array", prototype)
 
-        listener = keyboard.Listener(on_press=lambda x: self.on_press(x, terminator_array))
-        self.input_process = Process(target=VideoSystem._input_stream, args=(self.camera, data_queue, terminator_array, 2,), daemon=True,)
-        self.save_process = Process(
+        listener = keyboard.Listener(on_press=lambda x: self.on_press(x, self._terminator_array))
+        self._input_process = Process(
+            target=VideoSystem._input_stream, 
+            args=(
+                self.camera, 
+                self._img_queue, 
+                self._terminator_array, 
+                2,
+            ), 
+        )
+        self._save_process = Process(
             target=VideoSystem._save_images_loop,
             args=(
-                data_queue,
-                terminator_array,
+                self._img_queue,
+                self._terminator_array,
                 self.save_directory,
                 1,
             ),
-            daemon=True,
         )
 
         listener.start()  # start to listen on a separate thread
-        self.input_process.start()
-        self.save_process.start()
-
-        self.input_process.join()
-        print("input stream joined")
-        self.input_process.join()
-        print("save images joined")
+        self._input_process.start()
+        self._save_process.start()
 
         listener.join()
-        print("listener joined")
 
-    def stop():
-        pass
+    def stop(self):
+        self._empty_queue(self._img_queue) # Not technically necessary
+        self._terminator_array.connect()
+        self._terminator_array.write_data(2, np.array([0]))
+        self._terminator_array.disconnect()
+        self._save_process.join()
+        self._input_process.join()
+
 
     def __del__(self):
         """ """
-        pass
+        # self.stop()
 
     @staticmethod
     def _delete_files_in_directory(path):
@@ -86,17 +94,28 @@ class VideoSystem:
 
         Args:
             path: Location of the folder
+        Raises:
+            FileNotFoundError when path does not exist
         """
-        try:
-            with os.scandir(path) as entrys:
-                for entry in entrys:
-                    if entry.is_file():
-                        os.unlink(entry.path)
-        except OSError:
-            print("Error occurred while deleting files.")
+        with os.scandir(path) as entrys:
+            for entry in entrys:
+                if entry.is_file():
+                    os.unlink(entry.path)
+
+        # try:
+        #     with os.scandir(path) as entrys:
+        #         for entry in entrys:
+        #             if entry.is_file():
+        #                 os.unlink(entry.path)
+        # except OSError:
+        #     print("Error occurred while deleting files.")
 
     def delete_images(self):
-        """Clears the save directory of all images"""
+        """Clears the save directory of all images
+        
+        Raises:
+            FileNotFoundError when self.save_directory does not exist
+        """
         VideoSystem._delete_files_in_directory(self.save_directory)
 
     @staticmethod
@@ -108,8 +127,7 @@ class VideoSystem:
     ):
         """Iteratively grabs images from the camera and adds to the img_queue.
 
-        This function loops while the first element in terminator_array is nonzero. This function can be run at a
-        specific fps or as fast as possible
+        This function loops while the third element in terminator_array (index 2) is nonzero. It grabs frames as long as the first element in terminator_array (index 0) is nonzero. This function can be run at a specific fps or as fast as possible. This function is meant to be run as a thread will create an infinite loop if run on its own.
 
         Args:
             camera: a Camera object which
@@ -117,18 +135,20 @@ class VideoSystem:
             terminator_array: A multiprocessing array to hold terminate flags, the first element (index 0) is relevant for loop termination
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible
         """
+        img_queue.cancel_join_thread()
         camera.connect()
         terminator_array.connect()
         run_timer = PrecisionTimer(precision) if fps else None
         frames = 0
-        while terminator_array.read_data(0):
-            if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                img_queue.put(camera.grab_frame())
-                frames += 1
-                run_timer.reset()
+        first = True
+        while terminator_array.read_data(2):
+            if terminator_array.read_data(0):
+                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
+                    img_queue.put(camera.grab_frame())
+                    frames += 1
+                    run_timer.reset()
         camera.disconnect()
         terminator_array.disconnect()
-        print("input stream finished")
 
     @staticmethod
     def _save_frame(img_queue, save_directory, img_id: int):
@@ -159,7 +179,7 @@ class VideoSystem:
             q.get()
 
     @staticmethod
-    def _save_images_loop(data_queue, terminator_array, save_directory, fps=None):
+    def _save_images_loop(img_queue, terminator_array, save_directory, fps=None):
         """Iteratively grabs images from the camera and adds to the img_queue.
 
         This function loops while the second element in terminator_array is nonzero. This function can be run at a specific fps or as fast as possible.
@@ -174,18 +194,16 @@ class VideoSystem:
         num_imgs_saved = 0
         run_timer = PrecisionTimer(precision) if fps else None
         frames = 0
-        while terminator_array.read_data(1):
-            if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                saved = VideoSystem._save_frame(data_queue, save_directory, num_imgs_saved)
-                if saved:
-                    num_imgs_saved += 1
-                frames += 1
-                run_timer.reset()
+        img_queue.cancel_join_thread()
+        while terminator_array.read_data(2):
+            if terminator_array.read_data(1):
+                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
+                    saved = VideoSystem._save_frame(img_queue, save_directory, num_imgs_saved)
+                    if saved:
+                        num_imgs_saved += 1
+                    frames += 1
+                    run_timer.reset()
         terminator_array.disconnect()
-        # empty_queue(data_queue)
-        data_queue.close()
-        data_queue.cancel_join_thread()
-        print("save images finished")
 
     def on_press(self, key, terminator_array) -> bool:
         """Changes terminator flags on specific key presses
@@ -196,16 +214,18 @@ class VideoSystem:
             key: the key that was pressed
             terminator_array: A multiprocessing array to hold terminate flags
         """
+        terminator_array.connect()
+
         try:
             if key.char == "q":
-                terminator_array.connect()
                 terminator_array.write_data(0, np.array([0]))
-                print("The 'q' key was pressed.")
+                print("Stopped taking images")
             elif key.char == "w":
-                terminator_array.connect()
                 terminator_array.write_data(1, np.array([0]))
-                print("The 'w' key was pressed.")
+                print("Stopped saving images")
         except AttributeError:
             pass
         if not terminator_array.read_data(0) and not terminator_array.read_data(1):
+            terminator_array.disconnect()
+            self.stop()
             return False  # stop listener
