@@ -101,9 +101,7 @@ class SharedMemoryArray:
 
         # Instantiates a numpy array using the shared memory buffer and copies prototype array data into the shared
         # array instance
-        shared_arr = np.ndarray(
-            shape=prototype.shape, dtype=prototype.dtype, buffer=buffer.buf
-        )
+        shared_arr = np.ndarray(shape=prototype.shape, dtype=prototype.dtype, buffer=buffer.buf)
         shared_arr[:] = prototype[:]
 
         # Packages the data necessary to connect to the shared array into the class object.
@@ -130,9 +128,7 @@ class SharedMemoryArray:
         """
         self._buffer = SharedMemory(name=self._name)  # Connects to the buffer
         # Connects to the buffer using a numpy array
-        self._array = np.ndarray(
-            shape=self._shape, dtype=self._datatype, buffer=self._buffer.buf
-        )
+        self._array = np.ndarray(shape=self._shape, dtype=self._datatype, buffer=self._buffer.buf)
         self._is_connected = True  # Sets the connection flag
 
     def disconnect(self):
@@ -170,7 +166,9 @@ class SharedMemoryArray:
             try:
                 return np.array(self._array[index])
             except IndexError:
-                custom_error_message = "Invalid index or slice when attempting to read the data from shared memory array."
+                custom_error_message = (
+                    "Invalid index or slice when attempting to read the data from shared memory array."
+                )
                 raise ValueError(format_exception(custom_error_message))
 
     def write_data(self, index: int | slice, data: np.ndarray) -> None:
@@ -199,14 +197,18 @@ class SharedMemoryArray:
             raise ValueError(format_exception(custom_error_message))
 
         if data.dtype != self._datatype:
-            custom_error_message = f"Input data must have the same datatype as the shared memory array: {self._datatype}."
+            custom_error_message = (
+                f"Input data must have the same datatype as the shared memory array: {self._datatype}."
+            )
             raise ValueError(format_exception(custom_error_message))
 
         with self._lock:
             try:
                 self._array[index] = data
             except ValueError:
-                custom_error_message = "Input data cannot fit inside the shared memory array at the specified index or slice."
+                custom_error_message = (
+                    "Input data cannot fit inside the shared memory array at the specified index or slice."
+                )
                 raise ValueError(format_exception(custom_error_message))
 
     @property
@@ -265,6 +267,4 @@ class SharedMemoryArray:
 
 def format_exception(exception: str) -> str:
     """Formats the input exception message string according ot the Ataraxis standards."""
-    return textwrap.fill(
-        exception, width=120, break_long_words=False, break_on_hyphens=False
-    )
+    return textwrap.fill(exception, width=120, break_long_words=False, break_on_hyphens=False)

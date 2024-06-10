@@ -12,48 +12,52 @@ from camera import Camera
 from PIL import Image, ImageDraw, ImageChops
 import random
 import time
+import tempfile
 
+@pytest.fixture
+def temp_directory():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        metadata_path = os.path.join(temp_dir, 'test_metadata')
+        os.makedirs(metadata_path, exist_ok=True)
+        yield(metadata_path)
 
 @pytest.fixture
 def camera():
     return Camera()
 
+
 @pytest.fixture
 def video_system(camera):
-    # Makes sure test doesn't delete contents of an actual file
-    test_directory = 'foo'
-    while os.path.exists(test_directory):
-        test_directory += 'o'
-    return VideoSystem(test_directory, camera)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        metadata_path = os.path.join(temp_dir, 'test_metadata')
+        os.makedirs(metadata_path, exist_ok=True)
+        yield VideoSystem(metadata_path, camera)
 
-def test_start(video_system):
+def test_start():
     pass
+
 
 def test_stop():
     pass
 
-def test__delete_files_in_directory():
-    
-    # Makes sure test doesn't delete contents of an actual file
-    test_directory = 'foo'
-    while os.path.exists(test_directory):
-        test_directory += 'o'
 
-    # Test that system raises an error if writing to a directory that doesn't exist
-    with pytest.raises(FileNotFoundError):
-        VideoSystem._delete_files_in_directory(test_directory)
+def test__delete_files_in_directory(temp_directory):
+    test_directory = temp_directory
 
-    # Creates a directory and adds text files to it
-    os.makedirs(test_directory)
     for i in range(10):
-        path = test_directory + '//file' + str(i) + '.txt'
-        with open(path, 'w') as file:
+        path = os.path.join(test_directory, "file" + str(i) + ".txt")
+        with open(path, "w") as file:
             text = "file " + str(i) + ": to be deleted . . ."
             file.write(text)
     assert os.listdir(test_directory)
     VideoSystem._delete_files_in_directory(test_directory)
     assert not os.listdir(test_directory)
+
+    # Test that system raises an error if writing to a directory that doesn't exist
     os.rmdir(test_directory)
+    with pytest.raises(FileNotFoundError):
+        VideoSystem._delete_files_in_directory(test_directory)
+
 
 def create_image(seed: int):
     """A helper function that makes an image for testing purposes
@@ -63,12 +67,13 @@ def create_image(seed: int):
     width, height = 200, 200
     color = random_color(seed)
 
-    image = Image.new('RGB', (width, height), (255, 255, 255))
+    image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image)
 
     draw.ellipse([70, 70, 130, 130], fill=color, outline=(0, 0, 0))  # Green circle with black outline
 
     return image
+
 
 def random_color(seed):
     """helper function to get color from seed"""
@@ -78,48 +83,54 @@ def random_color(seed):
     b = random.randint(0, 255)
     return (r, g, b)
 
+def images_are_equal(image1_path, image2_path):
+    image1 = Image.open(image1_path)
+    image2 = Image.open(image2_path)
+
+    if image1.size != image2.size or image1.mode != image2.mode:
+        return False
+
+    diff = ImageChops.difference(image1, image2)
+    return not diff.getbbox()  # Returns True if images are identical
+
+
 def test_delete_images(video_system):
     test_directory = video_system.save_directory
 
-    # Test that system raises an error if writing to a directory that doesn't exist
-    with pytest.raises(FileNotFoundError):
-        video_system.delete_images()
-    
-    os.makedirs(test_directory)
-
     # Add some text files to folder
     for i in range(10):
-        path = test_directory + '//file' + str(i) + '.txt'
-        with open(path, 'w') as file:
-            text = 'file ' + str(i) + ': to be deleted . . .'
+        path = os.path.join(test_directory, "file" + str(i) + ".txt")
+        with open(path, "w") as file:
+            text = "file " + str(i) + ": to be deleted . . ."
             file.write(text)
 
     # Add some png images to folder
     for i in range(10):
-        path = test_directory + '//img' + str(i) + '.png'
+        path = os.path.join(test_directory, "img" + str(i) + ".png")
         create_image(i * 10).save(path)
 
     assert os.listdir(test_directory)
     video_system.delete_images()
     assert not os.listdir(test_directory)
-    
-    os.rmdir(test_directory)
 
-def test__empty_queue():
-    pass
+
+    # Test that system raises an error if writing to a directory that doesn't exist
+    os.rmdir(test_directory)
+    with pytest.raises(FileNotFoundError):
+        video_system.delete_images()
 
 def test__input_stream(camera):
     test_queue = Queue()
 
     # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
 
-    bad_prototype1 = np.array([0, 0, 0], dtype=np.int32) 
+    bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_array1", bad_prototype1)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
     assert test_queue.qsize() == 0
 
-    bad_prototype2 = np.array([1, 1, 0], dtype=np.int32) 
+    bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_array2", bad_prototype2)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
@@ -127,63 +138,194 @@ def test__input_stream(camera):
 
     # Bad prototype 3: with first element 0 and third element 1, loop will run but will take no pictures
 
-    bad_prototype3 = np.array([0, 0, 1], dtype=np.int32) 
+    bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_array3", bad_prototype3)
     test_array.connect()
 
-    input_stream_process = Process(target=VideoSystem._input_stream, args=(camera, test_queue, test_array,))
+    input_stream_process = Process(
+        target=VideoSystem._input_stream,
+        args=(
+            camera,
+            test_queue,
+            test_array,
+        ),
+    )
     input_stream_process.start()
     time.sleep(3)
 
-    arr = np.ndarray(shape=1, dtype=np.int32)
-    arr[0] = 0
-    test_array.write_data(slice(2,3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0]))
     input_stream_process.join()
 
     assert test_queue.qsize() == 0
 
     # Run input_stream as fast as possible for three seconds
 
-    prototype = np.array([1, 1, 1], dtype=np.int32) 
+    prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_array4", prototype)
     test_array.connect()
 
-    input_stream_process = Process(target=VideoSystem._input_stream, args=(Camera(), test_queue, test_array, ),)
+    input_stream_process = Process(
+        target=VideoSystem._input_stream,
+        args=(
+            Camera(),
+            test_queue,
+            test_array,
+        ),
+    )
     input_stream_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2,3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0]))
     input_stream_process.join()
     test_array.disconnect()
 
     assert test_queue.qsize() > 0
-    VideoSystem._empty_queue(test_queue)
+    test_queue = Queue()
     assert test_queue.qsize() == 0
 
     # Run input_stream at 1 fps for 3 seconds
-    prototype = np.array([1, 1, 1], dtype=np.int32) 
+    prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_array4", prototype)
     test_array.connect()
 
-    input_stream_process = Process(target=VideoSystem._input_stream, args=(Camera(), test_queue, test_array, 3),)
+    input_stream_process = Process(
+        target=VideoSystem._input_stream,
+        args=(Camera(), test_queue, test_array, 3),
+    )
     input_stream_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2,3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0]))
     input_stream_process.join()
     test_array.disconnect()
 
     assert test_queue.qsize() > 0
     assert test_queue.qsize() < 5
 
-    VideoSystem._empty_queue(test_queue)
+    test_queue = Queue()
     assert test_queue.qsize() == 0
 
 
-def test__save_frame():
-    pass
+def test__save_frame(temp_directory):
+    test_directory = temp_directory
 
+    num_images = 25
+    test_queue = Queue()
+    
 
-def test__save_images_loop():
-    pass
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put(cv_img)
+    
+    # Test if video system correctly saves all images
+    for i in range(num_images):
+        assert VideoSystem._save_frame(test_queue, test_directory, i)
+
+    # Test if VideoSystem returns False once queue has been emptied
+    assert not VideoSystem._save_frame(test_queue, test_directory, 31)
+
+    # Test if image saving was performed correctly
+    for i in range(num_images):
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        assert images_are_equal(PIL_path, os.path.join(test_directory, 'img' + str(i) + '.png'))
+
+def test__save_images_loop(temp_directory):
+    test_directory = temp_directory
+
+    test_queue = Queue()
+
+    # Add images to the queue 
+    num_images = 25
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put(cv_img)
+    VideoSystem._delete_files_in_directory(test_directory)
+
+    assert test_queue.qsize() == num_images
+    assert len(os.listdir(test_directory)) == 0
+
+    # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
+
+    bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
+    test_array = SharedMemoryArray.create_array("test_array1", bad_prototype1)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory)
+
+    assert len(os.listdir(test_directory)) == 0
+
+    bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
+    test_array = SharedMemoryArray.create_array("test_array2", bad_prototype2)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory)
+
+    assert len(os.listdir(test_directory)) == 0
+
+    # Bad prototype 3: with second element 0 and third element 1, loop will run but save no images
+
+    bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
+    test_array = SharedMemoryArray.create_array("test_array3", bad_prototype3)
+    test_array.connect()
+
+    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
+    save_process.start()
+    time.sleep(3)
+
+    test_array.write_data(slice(2, 3), np.array([0]))
+    save_process.join()
+
+    assert len(os.listdir(test_directory)) == 0
+
+    # Run sav_images_loop as fast as possible for three seconds
+
+    prototype = np.array([1, 1, 1], dtype=np.int32)
+    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array.connect()
+
+    save_process = Process(
+        target=VideoSystem._save_images_loop,
+        args=(test_queue, test_array, test_directory)
+    )
+    save_process.start()
+    time.sleep(3)
+    test_array.write_data(slice(2, 3), np.array([0]))
+    save_process.join()
+    test_array.disconnect()
+
+    assert len(os.listdir(test_directory)) == num_images
+
+    # clear directory and reload images into queue
+    VideoSystem._delete_files_in_directory(test_directory)
+    num_images = 25
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put(cv_img)
+    VideoSystem._delete_files_in_directory(test_directory)
+
+    assert test_queue.qsize() == num_images
+    assert len(os.listdir(test_directory)) == 0
+
+    # Run sav_images_loop at 1 fps for 3 seconds
+
+    prototype = np.array([1, 1, 1], dtype=np.int32)
+    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array.connect()
+
+    save_process = Process(
+        target=VideoSystem._save_images_loop,
+        args=(test_queue, test_array, test_directory, 1)
+    )
+    save_process.start()
+    time.sleep(3)
+    test_array.write_data(slice(2, 3), np.array([0]))
+    save_process.join()
+    test_array.disconnect()
+
+    assert 1 < len(os.listdir(test_directory))  < 4
 
 def test_on_press():
     pass

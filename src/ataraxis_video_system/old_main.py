@@ -134,9 +134,7 @@ if __name__ == "__main__":
     # p1 = Process(target=run_time_control, args=(lambda: get_frame(q), 2), daemon=True)
     # p2 = Process(target=save_frame, args=(lambda: save_frame(q), 1), daemon=True)
 
-    listener = keyboard.Listener(
-        on_press=lambda x: on_press(x, data_queue, terminator_array)
-    )
+    listener = keyboard.Listener(on_press=lambda x: on_press(x, data_queue, terminator_array))
     p1 = Process(
         target=input_stream,
         args=(

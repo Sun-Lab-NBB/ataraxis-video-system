@@ -78,9 +78,7 @@ class ArenaVideoSystem:
         # Grabber Parameters
         self.grabber_backend = backend  # The backend contains the path to GenTL producer backend file. This enables interfacing with the camera using GenTl protocols
         self.num_buffers = num_buffers  # The number of full buffers (images) kept by harvesters backend on its end. Can be incompatible with some producer backends. Only rely on this as an emergency measure, ideally you want your pipeline to have 1:1 or faster image processing to camera acquisition ratio
-        self.num_writers = (
-            num_writers  # The number of threads that write (save) the images to disk
-        )
+        self.num_writers = num_writers  # The number of threads that write (save) the images to disk
         self.async_grabber = async_grabber  # Specifies whether to use a separate grabber thread that runs in parallel and acquires incoming camera images or whether to use a blocking dynamic API call
 
         # Config. Stores the value of key variables for reference.
@@ -140,23 +138,17 @@ class ArenaVideoSystem:
         )  # Experimental State (stage). Used to communicate the current phase of the experiment, most importantly phase 0 (shutdown)
 
         writer_queue = queue.Queue()  # Create a queue to pass frames to writer(s)
-        display_queue = (
-            queue.Queue()
-        )  # Also create a queue to pass frames to display thread
+        display_queue = queue.Queue()  # Also create a queue to pass frames to display thread
 
         # Create and start writer thread(s). Each of these threads loops over save_image module code
         threads = []
         for _ in range(self.num_writers):
-            t = threading.Thread(
-                target=self.image_recording_module, args=(writer_queue,)
-            )
+            t = threading.Thread(target=self.image_recording_module, args=(writer_queue,))
             t.start()
             threads.append(t)
 
         # Also instantiates a separate thread to display the images to the user in a video-fashion
-        display_thread = threading.Thread(
-            target=self.image_display_module, args=(display_queue,)
-        )
+        display_thread = threading.Thread(target=self.image_display_module, args=(display_queue,))
         display_thread.start()
         threads.append(display_thread)
 
@@ -188,9 +180,7 @@ class ArenaVideoSystem:
             )  # Starts grabbing incoming camera frames. Does not use a separate thread. For this to work properly, your image processing should take equal or less time than your acquisition cycle does
 
         if (self.debug == 1) | (self.verbose == 1):
-            axu.print_string(
-                self.log_path, f"{self.name} video grabber module: initialized", 0
-            )
+            axu.print_string(self.log_path, f"{self.name} video grabber module: initialized", 0)
 
         # Enters infinite loop. Note, given how this loop functions and the use of multiprocessing, this has the ability to hog the core it is assigned to for 100% of the time. To ameliorate this, you can add delays to the loop, but in my case I can sacrifice a few cores, so it is left in a less-optimized state
         # Note, this loop is designed to run until ALL filled buffers are consumed. This may result in somewhat prolonged activation compared to other libraries used in each experiment
@@ -225,9 +215,7 @@ class ArenaVideoSystem:
             buffer = grabber.fetch()  # Fetches the buffer
             payload = buffer.payload  # Obtains recorded buffer payload
             component = payload.components[0]  # Retrieves the frame from payload
-            timestamp = (
-                buffer.timestamp_ns
-            )  # Also retrieves GenTL-assigned nanosecond-based timestamp
+            timestamp = buffer.timestamp_ns  # Also retrieves GenTL-assigned nanosecond-based timestamp
 
             cam_frame = copy.copy(
                 component.data.reshape(self.recording_size)
@@ -241,9 +229,7 @@ class ArenaVideoSystem:
                     1  # Sets ttl value to 1, triggering acquisition ttl pulse via a specialized amc process. That pulse is used to synchronize video data with photometry data
                 )
                 count = count + 1  # Counts saved frames
-                writer_queue.put(
-                    (count, cam_frame)
-                )  # Puts the frame inside writer queue for saving
+                writer_queue.put((count, cam_frame))  # Puts the frame inside writer queue for saving
                 output_array.append(
                     [count, timestamp]
                 )  # Appends frame data to storage array. Saves the image number and acquisition timestamp
@@ -253,9 +239,7 @@ class ArenaVideoSystem:
                 cam_frame, self.display_size, interpolation=cv2.INTER_AREA
             )  # Resizes the frame to actually fit the screen when displayed with opencv
 
-            display_queue.put(
-                (count, cam_frame)
-            )  # Puts the resized frame inside display queue
+            display_queue.put((count, cam_frame))  # Puts the resized frame inside display queue
 
         # If state 255 is passed, the acquisition can be locked-in by the continued presence of unprocessed images. This code shuts down the acquisition, but allows the loop to run until all filled buffers are processed. This ensures there is no visual data loss
         if exp_state[0] == 255:
@@ -291,9 +275,7 @@ class ArenaVideoSystem:
     def image_recording_module(self, img_queue):
         # Executes until encounters a shutdown signal passed through queue
         while True:
-            (frame_number, cam_frame) = (
-                img_queue.get()
-            )  # Obtains the frame object (numpy array) and it's number
+            (frame_number, cam_frame) = img_queue.get()  # Obtains the frame object (numpy array) and it's number
 
             # If passed frame number is less than zero, which only happens when shutdown -1, -1 argument is passed, breaks the loop leading to thread shutdown
             if frame_number < 0:
@@ -316,16 +298,12 @@ class ArenaVideoSystem:
     def image_display_module(self, img_queue):
         # Executes until encounters a shutdown signal passed through queue
         while True:
-            (frame_number, cam_frame) = (
-                img_queue.get()
-            )  # Grabs the image from recorder queue
+            (frame_number, cam_frame) = img_queue.get()  # Grabs the image from recorder queue
 
             if frame_number < 0:  # Breaks, if exit code is passed as an argument
                 break
 
-            cv2.imshow(
-                f"{self.name}_grabbed_frames", cam_frame
-            )  # Shows frame to user using opencv
+            cv2.imshow(f"{self.name}_grabbed_frames", cam_frame)  # Shows frame to user using opencv
 
             # This is a necessary part that enables continued display of images by the opencv module
             if cv2.waitKey(1) & 0xFF == 27:
@@ -336,9 +314,7 @@ class ArenaVideoSystem:
     # A simple error callback that stops processing and displays the error message. Fairly uninformative, but at least indicates when something goes wrong
     @staticmethod
     def grabber_error_callback(error):
-        print(
-            f"Warning! Error encountered during AVS Video Grabber asynchronous module execution. Error: {error}"
-        )
+        print(f"Warning! Error encountered during AVS Video Grabber asynchronous module execution. Error: {error}")
         sys.exit("System: stopped")
 
     # This function packages a grabber config into a pickle file and saves it into the core recording folder (so both are saved outside the Raw folder that stores raw tiff frames)
@@ -433,9 +409,7 @@ class ArenaVideoSystem:
         input_images = os.listdir(input_path)
         frame_list = []
 
-        input_images = sorted(
-            input_images
-        )  # Ensures the frames are sorted in the ascending order
+        input_images = sorted(input_images)  # Ensures the frames are sorted in the ascending order
 
         # Loops over the directory and adds all files ending with correct extension to the processing list. Should really be the only contents of the folder, but checks are useful and all...
         for img in input_images:
@@ -457,9 +431,7 @@ class ArenaVideoSystem:
         # Loops over each set of encoding parameters and encodes the videos
         for i, video_id in enumerate(converter_params.keys()):
 
-            encoding_params = converter_params[
-                video_id
-            ]  # Uses each ID (key) to retrieve processing parameters
+            encoding_params = converter_params[video_id]  # Uses each ID (key) to retrieve processing parameters
 
             # Sets the output video-file name based on -crf, -preset and dictionary id
             video_file = f'{os.path.dirname(input_path)}/{recorder_name}_{encoding_params["crf"]}_{encoding_params["preset"]}_{video_id}.mp4'
@@ -505,16 +477,12 @@ class ArenaVideoSystem:
 
         # Clears raw files if enabled by the user. Default is False
         if remove_raw:
-            sh.rmtree(
-                input_path
-            )  # Deletes raw tiff files once they have been written as a video file
+            sh.rmtree(input_path)  # Deletes raw tiff files once they have been written as a video file
 
     # This function is used to compress lossless images produced by image_recording_module for improved transportability
     # Used to assist in transferring captured folders to processing Workstation for subsequent HEVC encoding, probably not helpful for general users
     @staticmethod
-    def compress_images(
-        input_directory, compression, remove_raw=True, debug=0, verbose=1, log_path=None
-    ):
+    def compress_images(input_directory, compression, remove_raw=True, debug=0, verbose=1, log_path=None):
         if (verbose == 1) | (debug == 1):
             axu.print_string(log_path, "Image compression module: initialized", 0)
 
@@ -523,18 +491,16 @@ class ArenaVideoSystem:
         failed_arr = axu.create_sm_array([0], "int64", "failed_arr")
 
         shm_1 = sm.SharedMemory(name=compressed_arr[0])
-        processed_files = np.ndarray(
-            shape=compressed_arr[1], dtype=compressed_arr[2], buffer=shm_1.buf
-        )
+        processed_files = np.ndarray(shape=compressed_arr[1], dtype=compressed_arr[2], buffer=shm_1.buf)
 
         shm_2 = sm.SharedMemory(name=failed_arr[0])
-        failed_files = np.ndarray(
-            shape=failed_arr[1], dtype=failed_arr[2], buffer=shm_2.buf
-        )
+        failed_files = np.ndarray(shape=failed_arr[1], dtype=failed_arr[2], buffer=shm_2.buf)
 
         # Sets input and output directories
         output_directory = f"{input_directory}/Compressed"
-        output_file = f"{input_directory}/compressed_frame_list.h5"  # Also generates a file path for frame processing data file
+        output_file = (
+            f"{input_directory}/compressed_frame_list.h5"  # Also generates a file path for frame processing data file
+        )
         input_directory = f"{input_directory}/Raw"
 
         if (verbose == 1) | (debug == 1):
@@ -552,9 +518,7 @@ class ArenaVideoSystem:
         image_list = []  # Presets image list variable
         for image_file in directory_files:
             if image_file.endswith("tiff") | image_file.endswith("tif"):
-                image_list.append(
-                    f"{input_directory}/{image_file}"
-                )  # Appends each tiff image to processing list
+                image_list.append(f"{input_directory}/{image_file}")  # Appends each tiff image to processing list
 
         if (verbose == 1) | (debug == 1):
             axu.print_string(log_path, "Image list generation: complete", 0)
@@ -593,25 +557,17 @@ class ArenaVideoSystem:
 
         # Runs the mp pool
         start_time = tm.monotonic_ns()
-        compression_result = processing_pool.starmap_async(
-            ArenaVideoSystem.image_compression_module, input_args
-        )
+        compression_result = processing_pool.starmap_async(ArenaVideoSystem.image_compression_module, input_args)
 
         if (verbose == 1) | (debug == 1):
-            axu.print_string(
-                log_path, "Pool: initialized. Conversion in progress...", 1
-            )
+            axu.print_string(log_path, "Pool: initialized. Conversion in progress...", 1)
 
         # Waits for the compressio to complete. Prints status images
         elapsed_prev = 0
         while not compression_result.ready():
             complete_percent = round(((processed_files[0] / len(image_list)) * 100), 0)
-            elapsed_current = round(
-                (((tm.monotonic_ns() - start_time) / 1000000000) / 60), 0
-            )  # Converts to minutes
-            if (
-                elapsed_current > elapsed_prev + 1
-            ):  # Sets to display progress every minute
+            elapsed_current = round((((tm.monotonic_ns() - start_time) / 1000000000) / 60), 0)  # Converts to minutes
+            if elapsed_current > elapsed_prev + 1:  # Sets to display progress every minute
                 if (verbose == 1) | (debug == 1):
                     axu.print_string(
                         log_path,
@@ -678,32 +634,20 @@ class ArenaVideoSystem:
     # The code replaces the Raw folder with Compressed folder. The encoder has been updated to work with compressed folder
     # This code is designed for massively parallel execution
     @staticmethod
-    def image_compression_module(
-        image_file, output_path, compression, processed_array, failed_array
-    ):
+    def image_compression_module(image_file, output_path, compression, processed_array, failed_array):
         # Connects to shared memory arrays
         shm_1 = sm.SharedMemory(name=processed_array[0])
-        processed_files = np.ndarray(
-            shape=processed_array[1], dtype=processed_array[2], buffer=shm_1.buf
-        )
+        processed_files = np.ndarray(shape=processed_array[1], dtype=processed_array[2], buffer=shm_1.buf)
 
         shm_2 = sm.SharedMemory(name=failed_array[0])
-        failed_files = np.ndarray(
-            shape=failed_array[1], dtype=failed_array[2], buffer=shm_2.buf
-        )
+        failed_files = np.ndarray(shape=failed_array[1], dtype=failed_array[2], buffer=shm_2.buf)
 
-        image_name = image_file.split("/")[
-            -1
-        ]  # Extracts image name out of the input path
+        image_name = image_file.split("/")[-1]  # Extracts image name out of the input path
 
         try:
             image = Image.open(image_file)  # Opens the image to be converted
-            image.save(
-                output_path, "PNG", compress_level=compression
-            )  # max compression is 9
-            processed_files[0] = (
-                processed_files[0] + 1
-            )  # Increments succeeded counter by 1
+            image.save(output_path, "PNG", compress_level=compression)  # max compression is 9
+            processed_files[0] = processed_files[0] + 1  # Increments succeeded counter by 1
             image_status = 1  # 1 is processed
         except OSError:
             failed_files[0] = failed_files[0] + 1  # Increments failed counter by 1

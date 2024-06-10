@@ -48,9 +48,7 @@ def test_shared_memory_array():
     assert np.array_equal(updated_data, new_data)
 
     # Tests reading data from a disconnected array, which is expected to fail.
-    disconnected_array = SharedMemoryArray(
-        "test_array", prototype.shape, prototype.dtype, None
-    )
+    disconnected_array = SharedMemoryArray("test_array", prototype.shape, prototype.dtype, None)
     with pytest.raises(
         RuntimeError,
         match="Cannot read data as the class is not connected to a shared memory array.",
@@ -108,9 +106,7 @@ def test_shared_memory_array():
         disconnected_array.shape
 
     # Tests accessing the shared array from a different process.
-    process = Process(
-        target=read_from_shared_array, args=(shared_memory_array, new_data)
-    )
+    process = Process(target=read_from_shared_array, args=(shared_memory_array, new_data))
     process.start()
     process.join()
 
@@ -120,16 +116,12 @@ def test_shared_memory_array():
 
     # Create a process to write data to the shared array
     data_to_write = np.array([[10, 20, 30], [40, 50, 60]], dtype=np.int32)
-    write_process = Process(
-        target=write_to_shared_array, args=(shared_array_2, data_to_write)
-    )
+    write_process = Process(target=write_to_shared_array, args=(shared_array_2, data_to_write))
     write_process.start()
     write_process.join()
 
     # Create a process to read data from the shared array
-    read_process = Process(
-        target=read_from_shared_array, args=(shared_array_2, data_to_write)
-    )
+    read_process = Process(target=read_from_shared_array, args=(shared_array_2, data_to_write))
     read_process.start()
     read_process.join()
 
