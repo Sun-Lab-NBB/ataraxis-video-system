@@ -36,6 +36,7 @@ class VideoSystem:
         self._save_process = None
         self._terminator_array = None
         self._img_queue = None
+        self._listener = None
         if multiprocessing.current_process().daemon:
             raise ProcessError("Instantiation method outside of main scope")
 
@@ -65,14 +66,14 @@ class VideoSystem:
         self.running = True
 
         if listen_for_keypress:
-            listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
-            listener.start()  # start to listen on a separate thread
-            listener.join()
+            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
+            self._listener.start()  # start to listen on a separate thread
+
 
     def stop_image_collection(self):
         if self.running == True:
             self._terminator_array.connect()
-            self._terminator_array.write_data(0, np.array([0]))
+            self._terminator_array.write_data(slice(0,1), np.array([0]))
             self._terminator_array.disconnect()
 
 
@@ -80,7 +81,7 @@ class VideoSystem:
     def _stop_image_saving(self):
         if self.running == True:
             self._terminator_array.connect()
-            self._terminator_array.write_data(1, np.array([0]))
+            self._terminator_array.write_data(slice(1,2), np.array([0]))
             self._terminator_array.disconnect()    
 
 
@@ -93,11 +94,13 @@ class VideoSystem:
             self._save_process.join()
             self._input_process.join()
             self.running = False
+            if self._listener is not None:
+                self._listener.stop()
+                self._listener = None
         
-
     def __del__(self):
-        """ """
-        # self.stop()
+        """Ensures that system is stopped upon garbage collection """
+        self.stop()
 
     @staticmethod
     def _delete_files_in_directory(path):
@@ -122,7 +125,7 @@ class VideoSystem:
         VideoSystem._delete_files_in_directory(self.save_directory)
 
     @staticmethod
-    def _input_stream(camera: Camera, img_queue: Queue, terminator_array: SharedMemoryArray, fps: int = None):
+    def _input_stream(camera: Camera, img_queue: Queue, terminator_array: SharedMemoryArray, fps: float = None):
         """Iteratively grabs images from the camera and adds to the img_queue.
 
         This function loops while the third element in terminator_array (index 2) is nonzero. It grabs frames as long as the first element in terminator_array (index 0) is nonzero. This function can be run at a specific fps or as fast as possible. This function is meant to be run as a thread will create an infinite loop if run on its own.
@@ -170,7 +173,7 @@ class VideoSystem:
         return False
 
     @staticmethod
-    def _save_images_loop(img_queue, terminator_array, save_directory, fps=None):
+    def _save_images_loop(img_queue : Queue, terminator_array : SharedMemoryArray, save_directory : str, fps : float = None):
         """Iteratively grabs images from the camera and adds to the img_queue.
 
         This function loops while the second element in terminator_array is nonzero. This function can be run at a specific fps or as fast as possible.
@@ -197,10 +200,10 @@ class VideoSystem:
                         run_timer.reset()
         terminator_array.disconnect()
 
-    def _on_press(self, key, terminator_array) -> bool:
+    def _on_press(self, key, terminator_array: SharedMemoryArray) -> bool:
         """Changes terminator flags on specific key presses
 
-        Stops listener when both terminator flags have been set to 0. Stops the listener if video_system has stopped 
+        Stops listener if both terminator flags have been set to 0. Stops the listener if video_system has stopped 
         running.
 
         Args:

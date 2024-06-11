@@ -20,12 +20,12 @@ class Camera:
 
     @property
     def isConnected(self):
-        return self.vid == None
+        return self.vid is not None
 
     def grab_frame(self):
         if self.vid:
             ret, frame = self.vid.read()
-            print(ret)
+            # print(ret)
             return frame
         else:
             print("Exception raised")  # to be deleted
