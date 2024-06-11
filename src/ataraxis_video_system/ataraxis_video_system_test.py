@@ -3,12 +3,10 @@ import pytest
 import cv2
 import os
 from multiprocessing import Process, Queue, ProcessError
-import multiprocessing
 import numpy as np
 from pynput import keyboard
 from shared_memory_array import SharedMemoryArray
-from ataraxis_video_system import VideoSystem
-from camera import Camera
+from ataraxis_video_system import VideoSystem, Camera
 from PIL import Image, ImageDraw, ImageChops
 import random
 import time
@@ -26,13 +24,10 @@ def camera():
     return Camera()
 
 @pytest.fixture
-def video_system(camera):
-    with tempfile.TemporaryDirectory() as temp_dir:
-        metadata_path = os.path.join(temp_dir, 'test_metadata')
-        os.makedirs(metadata_path, exist_ok=True)
-        yield VideoSystem(metadata_path, camera)
+def video_system(camera, temp_directory):
+    yield VideoSystem(temp_directory, camera)
 
-def test__delete_files_in_directory(temp_directory):
+def test_delete_files_in_directory(temp_directory):
     test_directory = temp_directory
 
     for i in range(10):
@@ -110,7 +105,7 @@ def test_delete_images(video_system):
     with pytest.raises(FileNotFoundError):
         video_system.delete_images()
 
-def test__input_stream(camera):
+def test_input_stream(camera):
     test_queue = Queue()
 
     # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
@@ -195,7 +190,7 @@ def test__input_stream(camera):
     assert test_queue.qsize() == 0
 
 
-def test__save_frame(temp_directory):
+def test_save_frame(temp_directory):
     test_directory = temp_directory
 
     num_images = 25
@@ -221,7 +216,7 @@ def test__save_frame(temp_directory):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         assert images_are_equal(PIL_path, os.path.join(test_directory, 'img' + str(i) + '.png'))
 
-def test__save_images_loop(temp_directory):
+def test_save_images_loop(temp_directory):
     test_directory = temp_directory
 
     test_queue = Queue()
@@ -324,25 +319,25 @@ def test_start(video_system):
 
     assert len(os.listdir(test_directory)) == 0
 
-    assert not video_system.running
+    assert not video_system._running
     assert not video_system._input_process
     assert not video_system._save_process
     assert not video_system._terminator_array
-    assert not video_system._img_queue
-    assert not video_system.camera.isConnected
+    assert not video_system._image_queue
+    assert not video_system.camera.is_connected
 
     video_system.start()
 
-    assert video_system.running
+    assert video_system._running
     assert video_system._input_process
     assert video_system._save_process
     assert video_system._terminator_array
-    assert video_system._img_queue
+    assert video_system._image_queue
 
     time.sleep(3)
         
     assert len(os.listdir(test_directory)) > 0
-    assert video_system._img_queue.qsize() > 0
+    assert video_system._image_queue.qsize() > 0
 
     video_system.stop()
 
@@ -351,28 +346,28 @@ def test_stop_image_collection(video_system):
     video_system.start()
     time.sleep(3)
     video_system.stop_image_collection()
-    images_taken = video_system._img_queue.qsize()
+    images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     time.sleep(3)
     # Once you stop taking images, the size of the queue should start decreasing
-    assert images_taken > video_system._img_queue.qsize()
+    assert images_taken > video_system._image_queue.qsize()
 
     # Once you stop taking images, the number of saved images should continue to increase
     assert len(os.listdir(test_directory)) > images_saved
 
     video_system.stop()
 
-def test__stop_image_saving(video_system):
+def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
     video_system.start()
     time.sleep(3)
     video_system._stop_image_saving()
-    images_taken = video_system._img_queue.qsize()
+    images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     time.sleep(3)
 
     # Once you stop saving images, the size of the queue should continue to increase
-    assert images_taken < video_system._img_queue.qsize()
+    assert images_taken < video_system._image_queue.qsize()
 
     # Once you stop saving images, the number of saved images should remain the same
     assert len(os.listdir(test_directory)) == images_saved
@@ -384,17 +379,17 @@ def test_stop(video_system):
     video_system.start()
     time.sleep(3)
     video_system.stop()
-    images_taken = video_system._img_queue.qsize()
+    images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     time.sleep(3)
 
     # Once you stop the video system, the size of the queue should continue to increase
-    assert images_taken == video_system._img_queue.qsize()
+    assert images_taken == video_system._image_queue.qsize()
 
     # Once you stop the video system, the number of saved images should remain the same
     assert len(os.listdir(test_directory)) == images_saved
 
-    assert not video_system.running
+    assert not video_system._running
 
 
 def test_key_listener(video_system):
@@ -407,20 +402,20 @@ def test_key_listener(video_system):
     controller.press('q')
     controller.release('q')
 
-    images_taken = video_system._img_queue.qsize()
+    images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
 
     time.sleep(3)
 
     # Once you stop taking images, the size of the queue should start decreasing
-    assert images_taken > video_system._img_queue.qsize()
+    assert images_taken > video_system._image_queue.qsize()
     # Once you stop taking images, the number of saved images should continue to increase
     assert len(os.listdir(test_directory)) > images_saved
 
     controller.press('w')
     controller.release('w')
 
-    images_taken = video_system._img_queue.qsize()
+    images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
 
     time.sleep(3)
@@ -428,10 +423,24 @@ def test_key_listener(video_system):
     assert True
 
     # Once you stop the video system, the size of the queue should continue to increase
-    assert images_taken == video_system._img_queue.qsize()
+    assert images_taken == video_system._image_queue.qsize()
 
     # Once you stop the video system, the number of saved images should remain the same
     assert len(os.listdir(test_directory)) == images_saved
 
-    assert not video_system.running
+    assert not video_system._running
 
+def test_camera(camera):
+    assert not camera.is_connected
+
+    with pytest.raises(Exception):
+        camera.grab_frame()
+
+    camera.connect()
+    assert camera.is_connected
+
+    frame = camera.grab_frame()
+    assert frame is not None
+
+    camera.disconnect()
+    assert not camera.is_connected
