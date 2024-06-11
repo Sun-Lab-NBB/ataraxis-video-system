@@ -327,5 +327,5 @@ def test__save_images_loop(temp_directory):
 
     assert 1 < len(os.listdir(test_directory))  < 4
 
-def test_on_press():
+def test__on_press():
     pass

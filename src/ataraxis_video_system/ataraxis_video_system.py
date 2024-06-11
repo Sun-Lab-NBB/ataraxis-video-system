@@ -31,6 +31,7 @@ class VideoSystem:
     def __init__(self, save_directory: str, camera: Camera):
         self.save_directory = save_directory
         self.camera = camera
+        self.running = False
         self._input_process = None
         self._save_process = None
         self._terminator_array = None
@@ -38,7 +39,7 @@ class VideoSystem:
         if multiprocessing.current_process().daemon:
             raise ProcessError("Instantiation method outside of main scope")
 
-    def start(self):
+    def start(self, listen_for_keypress = False):
         """Starts the video system until terminated by keypress.
 
         Pressing q ends image collection, Pressing w ends image saving.
@@ -50,44 +51,49 @@ class VideoSystem:
         prototype = np.array([1, 1, 1], dtype=np.int32)  # First entry represents whether input stream is active, second entry represents whether output stream is active
         self._terminator_array = SharedMemoryArray.create_array("terminator_array", prototype,)
 
-        listener = keyboard.Listener(
-            on_press=lambda x: self.on_press(
-                x,
-                self._terminator_array,
-            )
-        )
         self._input_process = Process(
             target=VideoSystem._input_stream,
-            args=(
-                self.camera,
-                self._img_queue,
-                self._terminator_array,
-                None,
-            ),
+            args=(self.camera, self._img_queue, self._terminator_array, None)
         )
         self._save_process = Process(
             target=VideoSystem._save_images_loop,
-            args=(
-                self._img_queue,
-                self._terminator_array,
-                self.save_directory,
-                1,
-            ),
+            args=(self._img_queue, self._terminator_array, self.save_directory, 1)
         )
 
-        listener.start()  # start to listen on a separate thread
         self._input_process.start()
         self._save_process.start()
+        self.running = True
 
-        listener.join()
+        if listen_for_keypress:
+            listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
+            listener.start()  # start to listen on a separate thread
+            listener.join()
+
+    def stop_image_collection(self):
+        if self.running == True:
+            self._terminator_array.connect()
+            self._terminator_array.write_data(0, np.array([0]))
+            self._terminator_array.disconnect()
+
+
+    # possibly delete this function
+    def _stop_image_saving(self):
+        if self.running == True:
+            self._terminator_array.connect()
+            self._terminator_array.write_data(1, np.array([0]))
+            self._terminator_array.disconnect()    
+
 
     def stop(self):
-        self._img_queue = Queue() # A weak way to empty queue
-        self._terminator_array.connect()
-        self._terminator_array.write_data(2, np.array([0]))
-        self._terminator_array.disconnect()
-        self._save_process.join()
-        self._input_process.join()
+        if self.running == True:
+            self._img_queue = Queue() # A weak way to empty queue
+            self._terminator_array.connect()
+            self._terminator_array.write_data(slice(0, 3), np.array([0, 0, 0]))
+            self._terminator_array.disconnect()
+            self._save_process.join()
+            self._input_process.join()
+            self.running = False
+        
 
     def __del__(self):
         """ """
@@ -163,17 +169,6 @@ class VideoSystem:
             return True
         return False
 
-    # No way yet to implement correctly
-    # @staticmethod
-    # def _empty_queue(q: Queue):
-    #     """Generic method to empty a multiprocessing queue.
-
-    #     Args:
-    #         q: the queue to be emptied
-    #     """
-    #     q = Queue()
-    #     return q
-
     @staticmethod
     def _save_images_loop(img_queue, terminator_array, save_directory, fps=None):
         """Iteratively grabs images from the camera and adds to the img_queue.
@@ -202,33 +197,31 @@ class VideoSystem:
                         run_timer.reset()
         terminator_array.disconnect()
 
-    def on_press(self, key, terminator_array) -> bool:
+    def _on_press(self, key, terminator_array) -> bool:
         """Changes terminator flags on specific key presses
 
-        Stops listener when both terminator flags have been set to 0
+        Stops listener when both terminator flags have been set to 0. Stops the listener if video_system has stopped 
+        running.
 
         Args:
             key: the key that was pressed
             terminator_array: A multiprocessing array to hold terminate flags
         """
-        terminator_array.connect()
-
         try:
             if key.char == "q":
-                terminator_array.write_data(
-                    0,
-                    np.array([0]),
-                )
+                self.stop_image_collection()
                 print("Stopped taking images")
             elif key.char == "w":
-                terminator_array.write_data(
-                    1,
-                    np.array([0]),
-                )
+                self._stop_image_saving()
                 print("Stopped saving images")
         except AttributeError:
             pass
-        if not terminator_array.read_data(0) and not terminator_array.read_data(1):
-            terminator_array.disconnect()
-            self.stop()
-            return False  # stop listener
+        if self.running:
+            terminator_array.connect()
+            if not terminator_array.read_data(0) and not terminator_array.read_data(1):
+                terminator_array.disconnect()
+                self.stop()
+                return False  # stop listener
+        else:
+            return False
+        
