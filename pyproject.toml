@@ -95,8 +95,8 @@ dev = [
 line-length = 120  # Maximum column length is set to 120 for this project.
 src = ["src"]  # The name of the source directory
 
-# Excludes 'service' .py files, such as sphinx configuration file. Add any other .py service files you may have to this
-# list.
+# Excludes 'service' .py files, such as sphinx configuration file. Add any other .py service files you may have to add 
+# to this list.
 extend-exclude = [
     "conf.py",
 ]
@@ -140,7 +140,7 @@ keep-runtime-typing = true
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-# MyPy configuration section. MyPy is used to enforce typing in python and verify that all varaibles are correctly
+# MyPy configuration section. MyPy is used to enforce typing in python and verify that all variables are correctly
 # typed. This is used by tox 'lint' command.
 [tool.mypy]
 disallow_untyped_defs = true # Enforces function annotation
@@ -156,7 +156,7 @@ exclude = [
     "tutorials/",  # Ignores tutorials folder
 ]
 
-# This is used by the '-test' tox command to aggreagte coverage data produced during pytest runtime.
+# This is used by the '-test' tox command to aggregate coverage data produced during pytest runtime.
 [tool.coverage.paths]
 
 # Maps coverage measured in site-packages to source files in src

@@ -203,5 +203,3 @@ cython_debug/
 /docs/source/doxygen/
 .DS_Store
 /conda_dist/
-/tutorials/
-/resources/
