@@ -1,31 +1,36 @@
-import pytest
+import os
+import random
+import tempfile
+import time
+from multiprocessing import Process, ProcessError, Queue
 
 import cv2
-import os
-from multiprocessing import Process, Queue, ProcessError
 import numpy as np
+import pytest
+from PIL import Image, ImageChops, ImageDraw
 from pynput import keyboard
 from shared_memory_array import SharedMemoryArray
-from ataraxis_video_system import VideoSystem, Camera
-from PIL import Image, ImageDraw, ImageChops
-import random
-import time
-import tempfile
+
+from ataraxis_video_system import Camera, VideoSystem
+
 
 @pytest.fixture
 def temp_directory():
     with tempfile.TemporaryDirectory() as temp_dir:
-        metadata_path = os.path.join(temp_dir, 'test_metadata')
+        metadata_path = os.path.join(temp_dir, "test_metadata")
         os.makedirs(metadata_path, exist_ok=True)
-        yield(metadata_path)
+        yield (metadata_path)
+
 
 @pytest.fixture
 def camera():
     return Camera()
 
+
 @pytest.fixture
 def video_system(camera, temp_directory):
     yield VideoSystem(temp_directory, camera)
+
 
 def test_delete_files_in_directory(temp_directory):
     test_directory = temp_directory
@@ -69,6 +74,7 @@ def random_color(seed):
     b = random.randint(0, 255)
     return (r, g, b)
 
+
 def images_are_equal(image1_path, image2_path):
     image1 = Image.open(image1_path)
     image2 = Image.open(image2_path)
@@ -99,11 +105,11 @@ def test_delete_images(video_system):
     video_system.delete_images()
     assert not os.listdir(test_directory)
 
-
     # Test that system raises an error if writing to a directory that doesn't exist
     os.rmdir(test_directory)
     with pytest.raises(FileNotFoundError):
         video_system.delete_images()
+
 
 def test_input_stream(camera):
     test_queue = Queue()
@@ -195,7 +201,6 @@ def test_save_frame(temp_directory):
 
     num_images = 25
     test_queue = Queue()
-    
 
     for i in range(num_images):
         img = create_image(i * 10)
@@ -203,7 +208,7 @@ def test_save_frame(temp_directory):
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
         test_queue.put(cv_img)
-    
+
     # Test if video system correctly saves all images
     for i in range(num_images):
         assert VideoSystem._save_frame(test_queue, test_directory, i)
@@ -214,14 +219,15 @@ def test_save_frame(temp_directory):
     # Test if image saving was performed correctly
     for i in range(num_images):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
-        assert images_are_equal(PIL_path, os.path.join(test_directory, 'img' + str(i) + '.png'))
+        assert images_are_equal(PIL_path, os.path.join(test_directory, "img" + str(i) + ".png"))
+
 
 def test_save_images_loop(temp_directory):
     test_directory = temp_directory
 
     test_queue = Queue()
 
-    # Add images to the queue 
+    # Add images to the queue
     num_images = 25
     for i in range(num_images):
         img = create_image(i * 10)
@@ -269,10 +275,7 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_array4", prototype)
     test_array.connect()
 
-    save_process = Process(
-        target=VideoSystem._save_images_loop,
-        args=(test_queue, test_array, test_directory)
-    )
+    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
     save_process.start()
     time.sleep(3)
     test_array.write_data(slice(2, 3), np.array([0]))
@@ -301,17 +304,14 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_array4", prototype)
     test_array.connect()
 
-    save_process = Process(
-        target=VideoSystem._save_images_loop,
-        args=(test_queue, test_array, test_directory, 1)
-    )
+    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
     save_process.start()
     time.sleep(3)
     test_array.write_data(slice(2, 3), np.array([0]))
     save_process.join()
     test_array.disconnect()
 
-    assert 1 < len(os.listdir(test_directory))  < 4
+    assert 1 < len(os.listdir(test_directory)) < 4
 
 
 def test_start(video_system):
@@ -335,11 +335,12 @@ def test_start(video_system):
     assert video_system._image_queue
 
     time.sleep(3)
-        
+
     assert len(os.listdir(test_directory)) > 0
     assert video_system._image_queue.qsize() > 0
 
     video_system.stop()
+
 
 def test_stop_image_collection(video_system):
     test_directory = video_system.save_directory
@@ -357,6 +358,7 @@ def test_stop_image_collection(video_system):
 
     video_system.stop()
 
+
 def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
     video_system.start()
@@ -373,6 +375,7 @@ def test_stop_image_saving(video_system):
     assert len(os.listdir(test_directory)) == images_saved
 
     video_system.stop()
+
 
 def test_stop(video_system):
     test_directory = video_system.save_directory
@@ -396,11 +399,11 @@ def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
 
-    video_system.start(listen_for_keypress = True)
+    video_system.start(listen_for_keypress=True)
     time.sleep(3)
 
-    controller.press('q')
-    controller.release('q')
+    controller.press("q")
+    controller.release("q")
 
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
@@ -412,8 +415,8 @@ def test_key_listener(video_system):
     # Once you stop taking images, the number of saved images should continue to increase
     assert len(os.listdir(test_directory)) > images_saved
 
-    controller.press('w')
-    controller.release('w')
+    controller.press("w")
+    controller.release("w")
 
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
@@ -429,6 +432,7 @@ def test_key_listener(video_system):
     assert len(os.listdir(test_directory)) == images_saved
 
     assert not video_system._running
+
 
 def test_camera(camera):
     assert not camera.is_connected

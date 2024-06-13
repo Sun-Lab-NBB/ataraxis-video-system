@@ -1,0 +1,167 @@
+# Defines the build system used for the project. For pure-python projects, uses the hatchling build system, which is
+# used internally by scikit-build for our C-extension projects.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Project metdata section. Provides the genral ID information about the project.
+[project]
+name = "ataraxis-video-system"
+version = "1.0.0"
+description = """
+A library that combines OpenCV, GenTL, and FFMPEG to interface with and flexibly record and manipulate the visual data
+from a wide range of cameras.
+"""
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Jacob Groner", email = "jrg349@cornell.edu" },
+    { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
+]
+maintainers = [
+    { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
+]
+
+keywords = ["OpenCV", "GenTL", "Harvesters", "FFMPEG", "video recording", "camera interface", "video processing"]
+
+classifiers = [
+    # Development status
+    "Development Status :: 5 - Production/Stable",
+    # Intended audience and project topic
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Video",
+    # License
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    # Supported Python Versions
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    # Supported OS systems
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X"
+]
+
+# Project-wide dependencies
+dependencies = [
+    "numpy",
+    "pynput",
+    "opencv-python",
+]
+
+[project.urls]
+Homepage = "https://github.com/Sun-Lab-NBB/HighPrecisionTimer"
+Documentation = "https://high-precision-timer-docs.netlify.app/"
+
+# Specifies the dependecies for various build configurations. Mostly, these configurations are used together with 'tox'
+# tasks to install the required packages prior to running those tasks.
+[project.optional-dependencies]
+lint = [
+    "mypy",
+    "ruff",
+]
+
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "coverage[toml]",
+]
+
+doc = [
+    "sphinx",
+    "importlib_metadata",
+    "sphinx-rtd-theme",
+    "sphinx-click",
+]
+
+build = [
+    "hatchling",
+]
+
+# A shorhand specification that installs tox and all packages required for the tox tasks. This specification can be used
+# by developers to quickly install all necessary compontents for tox-based project building automation.
+dev = [
+    "tox",
+    "ataraxis-video-system[lint]",
+    "ataraxis-video-system[test]",
+    "ataraxis-video-system[doc]",
+    "ataraxis-video-system[build]",
+]
+
+# Ruff section. This section is used to configure Ruff runtime, which is used by the tox 'lint' command.
+[tool.ruff]
+line-length = 120  # Maximum column length is set to 120 for this project.
+src = ["src"]  # The name of the source directory
+
+# Excludes 'service' .py files, such as sphinx configuration file. Add any other .py service files you may have to this
+# list.
+extend-exclude = [
+    "conf.py",
+]
+
+# Same as the 'basepython' version in the tox.ini 'lint' section, see comments for that section for more details.
+target-version = "py310"
+# Checks for all potential violations and uses the exclusions below to target-disable specific ones.
+lint.select = ["ALL"]
+
+# General ignore directives.
+lint.ignore = [
+    "COM812", # Conflicts with the formatter
+    "ISC001", # Conflicts with the formatter
+    "ANN101", # "missing-type-self"
+    "PT001", # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT004", # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT005", # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "PT023", # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "D107", # Project-specific, __init__ is documented inside the main class docstring where applicable
+    "D205", # Bugs out for file descriptions
+    "PLW0603", # While global statement usage is not ideal, it greatly streamlines certain development patterns
+    "T201", # Print is frequently used throughout the project for information reporting
+]
+
+# Additional, file-specific 'ignore' directives.
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = [
+    "F401", # Imported but unused
+    "F403", # Wildcard imports
+]
+"docs/**" = [
+    "INP001", # Requires __init__.py, but docs folder is not a package.
+]
+
+[tool.ruff.lint.pyupgrade]
+# Preserves types, even if a file imports `from __future__ import annotations`
+# (https://github.com/astral-sh/ruff/issues/5434)
+keep-runtime-typing = true
+
+# Specifies the docstring style
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# MyPy configuration section. MyPy is used to enforce typing in python and verify that all varaibles are correctly
+# typed. This is used by tox 'lint' command.
+[tool.mypy]
+disallow_untyped_defs = true # Enforces function annotation
+warn_unused_ignores = true  # Warns against using 'type: ignore' for packages that have type stubs available.
+exclude = [
+    "high-precision-python-timer-\\d+", # Ignores temporary folder created by setuptools when building the sdist
+    "venv.*/", # Ignores virtual environments
+    "build/", # Ignores the sdist folder
+    "dist/", # Ignores the wheel folder
+    "docs/", # Ignores the sphinx files stored inside the docs folder
+    "tests/",   # Ignores the tests folder, as tests frequently (and purposefully) violate safety to test exceptions.
+    "resources/",  # Ignores resources folder
+    "tutorials/",  # Ignores tutorials folder
+]
+
+# This is used by the '-test' tox command to aggreagte coverage data produced during pytest runtime.
+[tool.coverage.paths]
+
+# Maps coverage measured in site-packages to source files in src
+source = ["src/", ".tox/*/lib/python*/site-packages/"]
+
+# Same as above, specifies the output directory for the coverage .html report
+[tool.coverage.html]
+directory = "reports/coverage_html"

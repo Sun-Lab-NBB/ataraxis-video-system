@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="SXPX_Data_Analysis" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="/opt/homebrew/Caskroom/mambaforge/base/envs/ataraxis_acquisition_osx_m1" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="/opt/homebrew/Caskroom/mambaforge/base/envs/avs_dev_osx" project-jdk-type="Python SDK" />
 </project>

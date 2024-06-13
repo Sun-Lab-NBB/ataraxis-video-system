@@ -1,8 +1,9 @@
-import numpy as np
-from multiprocessing.shared_memory import SharedMemory
-from multiprocessing import Lock
-from typing import Optional, Union, Tuple
 import textwrap
+from multiprocessing import Lock
+from multiprocessing.shared_memory import SharedMemory
+from typing import Optional, Tuple, Union
+
+import numpy as np
 
 
 class SharedMemoryArray:
