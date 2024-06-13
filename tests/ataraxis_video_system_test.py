@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 from PIL import Image, ImageChops, ImageDraw
 from pynput import keyboard
-from shared_memory_array import SharedMemoryArray
 
-from ataraxis_video_system import Camera, VideoSystem
+from ataraxis_video_system.shared_memory_array import SharedMemoryArray
+from ataraxis_video_system.video_system import Camera, VideoSystem
 
 
 @pytest.fixture

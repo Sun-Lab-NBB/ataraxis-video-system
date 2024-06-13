@@ -68,6 +68,7 @@ test = [
     "pytest-cov",
     "pytest-xdist",
     "coverage[toml]",
+    "pillow",
 ]
 
 doc = [

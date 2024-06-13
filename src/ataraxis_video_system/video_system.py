@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 from high_precision_timer.precision_timer import PrecisionTimer
 from pynput import keyboard
+
 from ataraxis_video_system.shared_memory_array import SharedMemoryArray
 
 
