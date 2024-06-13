@@ -51,8 +51,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Sun-Lab-NBB/HighPrecisionTimer"
-Documentation = "https://high-precision-timer-docs.netlify.app/"
+Homepage = "https://github.com/Sun-Lab-NBB/AtaraxisVideoSystem"
+Documentation = "STUB"
 
 # Specifies the dependecies for various build configurations. Mostly, these configurations are used together with 'tox'
 # tasks to install the required packages prior to running those tasks.
@@ -146,14 +146,12 @@ convention = "google"
 disallow_untyped_defs = true # Enforces function annotation
 warn_unused_ignores = true  # Warns against using 'type: ignore' for packages that have type stubs available.
 exclude = [
-    "high-precision-python-timer-\\d+", # Ignores temporary folder created by setuptools when building the sdist
+    "ataraxis-video-system-\\d+", # Ignores temporary folder created by setuptools when building the sdist
     "venv.*/", # Ignores virtual environments
     "build/", # Ignores the sdist folder
     "dist/", # Ignores the wheel folder
     "docs/", # Ignores the sphinx files stored inside the docs folder
     "tests/",   # Ignores the tests folder, as tests frequently (and purposefully) violate safety to test exceptions.
-    "resources/",  # Ignores resources folder
-    "tutorials/",  # Ignores tutorials folder
 ]
 
 # This is used by the '-test' tox command to aggregate coverage data produced during pytest runtime.

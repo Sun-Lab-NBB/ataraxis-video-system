@@ -1,20 +1,19 @@
-.. ataraxis-video-system documentation master file, created by
-   sphinx-quickstart on Thu Jun 13 12:58:02 2024.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. Main documentation page file, determines the overall layout of the static documentation .html page (after it is
+   rendered with Sphinx) and allows linking additional sub-pages. Use it to build the skeleton of the documentation
+   website.
 
-Welcome to ataraxis-video-system's documentation!
-=================================================
+.. Includes the Welcome page. This is the page that will be displayed whenever the user navigates to the documentation
+   website.
+.. include:: welcome.rst
 
+.. Adds the left-hand-side navigation panel to the documentation website. Uses the API file to generate content list.
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
+   :hidden:
 
+   api
 
-
-Indices and tables
+Index
 ==================
-
 * :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
