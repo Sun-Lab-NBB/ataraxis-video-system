@@ -1,6 +1,7 @@
 # First, import the VideoSystem and Camera classes
-from ataraxis_video_system.video_system import VideoSystem, Camera
 import time
+
+from ataraxis_video_system.video_system import Camera, VideoSystem
 
 # Since the video system uses multiprocessing, it should always be called within '__main__' scope
 if __name__ == "__main__":

@@ -48,6 +48,7 @@ dependencies = [
     "numpy",
     "pynput",
     "opencv-python",
+    "high-precision-timer",
 ]
 
 [project.urls]

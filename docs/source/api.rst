@@ -5,7 +5,7 @@
 Ataraxis Video System API
 =========================
 
-.. automodule:: ataraxis_video_system.ataraxis_video_system
+.. automodule:: ataraxis_video_system.video_system
    :members:
    :undoc-members:
    :show-inheritance:
