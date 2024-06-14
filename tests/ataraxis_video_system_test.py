@@ -32,6 +32,19 @@ def video_system(camera, temp_directory):
     yield VideoSystem(temp_directory, camera)
 
 
+def increment_name(name):
+    """Way to change a string to potentially make it unique"""
+    lst = []
+    i = len(name) - 1
+    while i >= 0 and name[i].isnumeric():
+        lst.append(name[i])
+        i -= 1
+    if lst:
+        lst.reverse()
+        return name[: i + 1] + str(int("".join(lst)) + 1)
+    return name + "0"
+
+
 def test_delete_files_in_directory(temp_directory):
     test_directory = temp_directory
 
@@ -117,13 +130,15 @@ def test_input_stream(camera):
     # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
 
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array1", bad_prototype1)
+
+    test_array = SharedMemoryArray.create_array("test_input_array1", bad_prototype1)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
     assert test_queue.qsize() == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array2", bad_prototype2)
+
+    test_array = SharedMemoryArray.create_array("test_input_array2", bad_prototype1)
     VideoSystem._input_stream(camera, test_queue, test_array)
 
     assert test_queue.qsize() == 0
@@ -131,7 +146,8 @@ def test_input_stream(camera):
     # Bad prototype 3: with first element 0 and third element 1, loop will run but will take no pictures
 
     bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array3", bad_prototype3)
+
+    test_array = SharedMemoryArray.create_array("test_input_array3", bad_prototype1)
     test_array.connect()
 
     input_stream_process = Process(
@@ -153,7 +169,7 @@ def test_input_stream(camera):
     # Run input_stream as fast as possible for three seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array = SharedMemoryArray.create_array("test_input_array4", prototype)
     test_array.connect()
 
     input_stream_process = Process(
@@ -176,7 +192,7 @@ def test_input_stream(camera):
 
     # Run input_stream at 1 fps for 3 seconds
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array = SharedMemoryArray.create_array("test_input_array5", prototype)
     test_array.connect()
 
     input_stream_process = Process(
@@ -243,13 +259,13 @@ def test_save_images_loop(temp_directory):
     # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
 
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array1", bad_prototype1)
+    test_array = SharedMemoryArray.create_array("test_save_array1", bad_prototype1)
     VideoSystem._save_images_loop(test_queue, test_array, test_directory)
 
     assert len(os.listdir(test_directory)) == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array2", bad_prototype2)
+    test_array = SharedMemoryArray.create_array("test_save_array2", bad_prototype2)
     VideoSystem._save_images_loop(test_queue, test_array, test_directory)
 
     assert len(os.listdir(test_directory)) == 0
@@ -257,7 +273,7 @@ def test_save_images_loop(temp_directory):
     # Bad prototype 3: with second element 0 and third element 1, loop will run but save no images
 
     bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array3", bad_prototype3)
+    test_array = SharedMemoryArray.create_array("test_save_array3", bad_prototype3)
     test_array.connect()
 
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
@@ -272,7 +288,7 @@ def test_save_images_loop(temp_directory):
     # Run sav_images_loop as fast as possible for three seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array = SharedMemoryArray.create_array("test_save_array4", prototype)
     test_array.connect()
 
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
@@ -301,7 +317,7 @@ def test_save_images_loop(temp_directory):
     # Run sav_images_loop at 1 fps for 3 seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array("test_array4", prototype)
+    test_array = SharedMemoryArray.create_array("test_save_array5", prototype)
     test_array.connect()
 
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
@@ -326,7 +342,16 @@ def test_start(video_system):
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
 
-    video_system.start()
+    i = 0
+    name = "terminator_array"
+    test_array = None
+    while i < 100:
+        try:
+            video_system.start(terminator_array_name=name)
+            i = 100
+        except FileExistsError:
+            name = increment_name(name)
+            i += 1
 
     assert video_system._running
     assert video_system._input_process
@@ -344,7 +369,19 @@ def test_start(video_system):
 
 def test_stop_image_collection(video_system):
     test_directory = video_system.save_directory
-    video_system.start()
+
+    # i = 0
+    # name = "terminator_array"
+    # test_array = None
+    # while i < 100:
+    #     try:
+    #         video_system.start(terminator_array_name=name)
+    #         i = 100
+    #     except FileExistsError:
+    #         name = increment_name(name)
+    #         i += 1
+    video_system.start(terminator_array_name="terminator_array1")
+
     time.sleep(3)
     video_system.stop_image_collection()
     images_taken = video_system._image_queue.qsize()
@@ -361,7 +398,19 @@ def test_stop_image_collection(video_system):
 
 def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
-    video_system.start()
+
+    # i = 0
+    # name = "terminator_array"
+    # test_array = None
+    # while i < 100:
+    #     try:
+    #         video_system.start(terminator_array_name=name)
+    #         i = 100
+    #     except FileExistsError:
+    #         name = increment_name(name)
+    #         i += 1
+    video_system.start(terminator_array_name="terminator_array2")
+
     time.sleep(3)
     video_system._stop_image_saving()
     images_taken = video_system._image_queue.qsize()
@@ -379,7 +428,19 @@ def test_stop_image_saving(video_system):
 
 def test_stop(video_system):
     test_directory = video_system.save_directory
-    video_system.start()
+
+    # i = 0
+    # name = "terminator_array"
+    # test_array = None
+    # while i < 100:
+    #     try:
+    #         video_system.start(terminator_array_name=name)
+    #         i = 100
+    #     except FileExistsError:
+    #         name = increment_name(name)
+    #         i += 1
+    video_system.start(terminator_array_name="terminator_array3")
+
     time.sleep(3)
     video_system.stop()
     images_taken = video_system._image_queue.qsize()
@@ -399,7 +460,18 @@ def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
 
-    video_system.start(listen_for_keypress=True)
+    # i = 0
+    # name = "terminator_array"
+    # test_array = None
+    # while i < 100:
+    #     try:
+    #         video_system.start(listen_for_keypress=True, terminator_array_name=name)
+    #         i = 100
+    #     except FileExistsError:
+    #         name = increment_name(name)
+    #         i += 1
+    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array4")
+
     time.sleep(3)
 
     controller.press("q")

@@ -44,9 +44,12 @@ class Camera:
 
         Raises:
             Exception if camera isn't connected.
+
         """
         if self._vid:
             ret, frame = self._vid.read()
+            # if not ret:
+            #     raise Exception("camera did not yield an image")
             return frame
         else:
             raise Exception("camera not connected")
@@ -98,15 +101,17 @@ class VideoSystem:
 
     @staticmethod
     def _empty_function() -> None:
-        """An function that passes to be used as target to a process"""
+        """A function that passes to be used as target to a process"""
         pass
 
-    def start(self, listen_for_keypress: bool = False) -> None:
+    def start(self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array") -> None:
         """Starts the video system.
 
         Args:
             listen_for_keypress: If true, the video system will stop image collection when the 'q' key is pressed and
                 stop image saving when the 'w' key is pressed.
+            terminator_array_name: The name of the shared_memory_array to be created. When running multiple
+                video_systems concurrently, each terminator_array should have a unique name.
 
         Raises:
             ProcessError: If the function is created not within the '__main__' scope
@@ -132,7 +137,7 @@ class VideoSystem:
             [1, 1, 1], dtype=np.int32
         )  # First entry represents whether input stream is active, second entry represents whether output stream is active
         self._terminator_array = SharedMemoryArray.create_array(
-            "terminator_array",
+            terminator_array_name,
             prototype,
         )
 
@@ -306,7 +311,7 @@ class VideoSystem:
                         run_timer.reset()
         terminator_array.disconnect()
 
-    def _on_press(self, key: keyboard.Key | keyboard.KeyCode, terminator_array: SharedMemoryArray) -> bool:
+    def _on_press(self, key: keyboard.Key | keyboard.KeyCode, terminator_array: SharedMemoryArray) -> bool | None:
         """Changes terminator flags on specific key presses.
 
         Stops listener if both terminator flags have been set to 0. Stops the listener if video_system has stopped
@@ -333,3 +338,4 @@ class VideoSystem:
                 return False  # stop listener
         else:
             return False
+        return
