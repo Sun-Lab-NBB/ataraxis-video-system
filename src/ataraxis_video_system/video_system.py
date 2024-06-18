@@ -92,6 +92,7 @@ class VideoSystem:
 
         self.save_directory: str = save_directory
         self.camera: Camera = camera
+        self._save_type = 'png'
         self._running: bool = False
         self._input_process: Process | None = None
         self._save_process: Process | None = None
@@ -104,7 +105,7 @@ class VideoSystem:
         """A function that passes to be used as target to a process"""
         pass
 
-    def start(self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array") -> None:
+    def start(self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array", save_type : str = 'png') -> None:
         """Starts the video system.
 
         Args:
@@ -128,37 +129,44 @@ class VideoSystem:
 
         if in_unprotected_scope:
             raise ProcessError("Instantiation method outside of '__main__' scope")
+        
+        if save_type in ['tif', 'png', 'jpg']:
+            self._save_type = save_type
+            self.delete_images()
 
-        self.delete_images()
+            self._image_queue = Queue()
 
-        self._image_queue = Queue()
+            prototype = np.array(
+                [1, 1, 1], dtype=np.int32
+            )  # First entry represents whether input stream is active, second entry represents whether output stream is active
+            self._terminator_array = SharedMemoryArray.create_array(
+                terminator_array_name,
+                prototype,
+            )
 
-        prototype = np.array(
-            [1, 1, 1], dtype=np.int32
-        )  # First entry represents whether input stream is active, second entry represents whether output stream is active
-        self._terminator_array = SharedMemoryArray.create_array(
-            terminator_array_name,
-            prototype,
-        )
+            self._input_process = Process(
+                target=VideoSystem._input_stream,
+                args=(self.camera, self._image_queue, self._terminator_array, None),
+                daemon=True,
+            )
+            self._save_process = Process(
+                target=VideoSystem._save_images_loop,
+                args=(self._image_queue, self._terminator_array, self.save_directory, 1),
+                daemon=True,
+            )
 
-        self._input_process = Process(
-            target=VideoSystem._input_stream,
-            args=(self.camera, self._image_queue, self._terminator_array, None),
-            daemon=True,
-        )
-        self._save_process = Process(
-            target=VideoSystem._save_images_loop,
-            args=(self._image_queue, self._terminator_array, self.save_directory, 1),
-            daemon=True,
-        )
+            self._input_process.start()
+            self._save_process.start()
+            self._running = True
 
-        self._input_process.start()
-        self._save_process.start()
-        self._running = True
-
-        if listen_for_keypress:
-            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
-            self._listener.start()  # start to listen on a separate thread
+            if listen_for_keypress:
+                self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
+                self._listener.start()  # start to listen on a separate thread
+        elif save_type == 'mp4':
+            self._save_type = save_type
+            pass
+        else:
+            raise Exception(f'{save_type} is an invalid save type')
 
     def stop_image_collection(self) -> None:
         """Stops image collection."""
