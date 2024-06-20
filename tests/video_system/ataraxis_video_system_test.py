@@ -11,7 +11,7 @@ from PIL import Image, ImageChops, ImageDraw
 from pynput import keyboard
 
 from ataraxis_video_system.shared_memory_array import SharedMemoryArray
-from ataraxis_video_system.video_system import Camera, VideoSystem
+from ataraxis_video_system import Camera, VideoSystem
 
 
 @pytest.fixture

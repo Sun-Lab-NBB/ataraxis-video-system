@@ -8,10 +8,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ataraxis-video-system"
 version = "1.0.0"
-description = """
-A library that combines OpenCV, GenTL, and FFMPEG to interface with and flexibly record and manipulate the visual data
-from a wide range of cameras.
-"""
+description = "Interfaces with a wide range of cameras to flexibly record visual stream data as images or videos."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -23,7 +20,7 @@ maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
 ]
 
-keywords = ["OpenCV", "GenTL", "Harvesters", "FFMPEG", "video recording", "camera interface", "video processing"]
+keywords = ["OpenCV", "GenTL", "Harvesters", "FFMPEG", "video recording", "camera interface"]
 
 classifiers = [
     # Development status
@@ -46,40 +43,54 @@ classifiers = [
 # Project-wide dependencies
 dependencies = [
     "numpy",
+    "click",
     "pynput",
     "opencv-python",
-    "high-precision-timer",
+    "ffmpeg-python",
+    "pillow",
+    "ataraxis-time",
+    "pyyaml",
 ]
 
 [project.urls]
-Homepage = "https://github.com/Sun-Lab-NBB/AtaraxisVideoSystem"
-Documentation = "STUB"
+Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
+Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/overview"
 
-# Specifies the dependecies for various build configurations. Mostly, these configurations are used together with 'tox'
-# tasks to install the required packages prior to running those tasks.
+# Specifies the dependecies for various build configurations. These are primarily used by tox and generally do not
+# need to be altered during adoption.
 [project.optional-dependencies]
 lint = [
     "mypy",
     "ruff",
 ]
-
+stubs = [
+    "mypy<1.5.0"
+]
 test = [
+    "hatchling",
     "pytest",
     "pytest-cov",
     "pytest-xdist",
     "coverage[toml]",
-    "pillow",
 ]
-
-doc = [
+coverage = [
+    "junitparser",
+    "coverage[toml]",
+]
+docs = [
     "sphinx",
     "importlib_metadata",
     "sphinx-rtd-theme",
     "sphinx-click",
 ]
-
 build = [
+    "twine",
     "hatchling",
+    "build",
+]
+upload = [
+    "twine",
+    "grayskull",
 ]
 
 # A shorhand specification that installs tox and all packages required for the tox tasks. This specification can be used
@@ -88,17 +99,34 @@ dev = [
     "tox",
     "ataraxis-video-system[lint]",
     "ataraxis-video-system[test]",
-    "ataraxis-video-system[doc]",
+    "ataraxis-video-system[coverage]",
+    "ataraxis-video-system[docs]",
     "ataraxis-video-system[build]",
+    "ataraxis-video-system[upload]",
 ]
+
+# Use this section to expose some scripts as a short command callable from the shell. The line below is just an
+# example. Generally, this section is what you can use to expose benchmark and cli- / hid-controlled runtimes.
+[project.scripts]
+# benchmark = "YOUR_PROJECT_NAME:benchmark"
+
+# Specifies files that should not be included in the source-code distribution, but are also not part of gitignore.
+[tool.hatch.build.targets.sdist]
+exclude = [".github", "recipe"]
+
+# Specifies the library structure. In the vast majority of cases, this should be pointing to the 'main' library
+# package stored directly under 'src' directory. This arrangement assumes there is a single 'library' package and
+# nothing else under /src directory.
+[tool.hatch.build.targets.wheel]
+sources = ["src"]
 
 # Ruff section. This section is used to configure Ruff runtime, which is used by the tox 'lint' command.
 [tool.ruff]
 line-length = 120  # Maximum column length is set to 120 for this project.
 src = ["src"]  # The name of the source directory
 
-# Excludes 'service' .py files, such as sphinx configuration file. Add any other .py service files you may have to add 
-# to this list.
+# Excludes 'service' .py files, such as sphinx configuration file. Add any other .py service files you may have to this
+# list.
 extend-exclude = [
     "conf.py",
 ]
@@ -142,21 +170,25 @@ keep-runtime-typing = true
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-# MyPy configuration section. MyPy is used to enforce typing in python and verify that all variables are correctly
-# typed. This is used by tox 'lint' command.
+# MyPy configuration section. MyPy is used to enforce typing in python and verify that all varaibles are correctly
+# typed. This is used by tox 'lint' command. Note, for mypy to work correctly, you may need to manually resolve any
+# stubs issues (tox -e stubs to resolve locally or see mypy output hints to resolve pacakge-related errors).
 [tool.mypy]
 disallow_untyped_defs = true # Enforces function annotation
 warn_unused_ignores = true  # Warns against using 'type: ignore' for packages that have type stubs available.
 exclude = [
     "ataraxis-video-system-\\d+", # Ignores temporary folder created by setuptools when building the sdist
     "venv.*/", # Ignores virtual environments
-    "build/", # Ignores the sdist folder
-    "dist/", # Ignores the wheel folder
-    "docs/", # Ignores the sphinx files stored inside the docs folder
-    "tests/",   # Ignores the tests folder, as tests frequently (and purposefully) violate safety to test exceptions.
+    "build/",  # Ignores the sdist folder
+    "dist/",   # Ignores the wheel folder
+    "docs/",   # Ignores the sphinx files stored inside the docs folder
+    "stubs/",  # Ignores stubs folder (stubgen output target)
+    "recipe/",  # Ignores recipe folder (grayskull output target)
+    "tests/",   # Ignores the tests folder, as tests frequently (and purposefully) violate typing to test exceptions.
+    "automation.py"  # Ignores the automation file
 ]
 
-# This is used by the '-test' tox command to aggregate coverage data produced during pytest runtime.
+# This is used by the '-test' tox command to aggreagte coverage data produced during pytest runtime.
 [tool.coverage.paths]
 
 # Maps coverage measured in site-packages to source files in src

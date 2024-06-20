@@ -15,7 +15,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-videoCapture = cv2.VideoCapture("src\\ffmpeg\\earth_rotation.avi")
+videoCapture = cv2.VideoCapture("src\\ffmpeg_backend\\earth_rotation.avi")
 
 process = (
     ffmpeg.input(
@@ -27,7 +27,7 @@ process = (
             int(videoCapture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(videoCapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         ),
     )
-    .output("src\\ffmpeg\\earth_rotation.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+    .output("src\\ffmpeg_backend\\earth_rotation.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
     .overwrite_output()
     .run_async(pipe_stdin=True)
 )

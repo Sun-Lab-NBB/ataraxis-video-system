@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Black">
-    <option name="sdkName" value="SXPX_Data_Analysis" />
+    <option name="cmdArguments" value="--line-length 120" />
+    <option name="enabledOnReformat" value="true" />
+    <option name="pathToExecutable" value="C:\Users\ikond\miniforge3\Scripts\black.exe" />
+    <option name="sdkName" value="axt_dev_win64" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="/opt/homebrew/Caskroom/mambaforge/base/envs/avs_dev_osx" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="axvs_dev_win64" project-jdk-type="Python SDK" />
 </project>

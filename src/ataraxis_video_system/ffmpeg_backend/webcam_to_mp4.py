@@ -27,13 +27,13 @@ process = (
             int(videoCapture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(videoCapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         ),
     )
-    .output("src\\ffmpeg\\webcam.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+    .output("src\\ffmpeg_backend\\webcam.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
     .overwrite_output()
     .run_async(pipe_stdin=True)
 )
 
 
-# ffmpeg -codecs
+# ffmpeg_backend -codecs
 
 # nvenc
 

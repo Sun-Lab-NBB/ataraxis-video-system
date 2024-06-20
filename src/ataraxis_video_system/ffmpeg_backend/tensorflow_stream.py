@@ -1,15 +1,15 @@
-"""Example streaming ffmpeg numpy processing.
+"""Example streaming ffmpeg_backend numpy processing.
 
-Demonstrates using ffmpeg to decode video input, process the frames in
-python, and then encode video output using ffmpeg.
+Demonstrates using ffmpeg_backend to decode video input, process the frames in
+python, and then encode video output using ffmpeg_backend.
 
-This example uses two ffmpeg processes - one to decode the input video
+This example uses two ffmpeg_backend processes - one to decode the input video
 and one to encode an output video - while the raw frame processing is
 done in python with numpy.
 
 At a high level, the signal graph looks like this:
 
-  (input video) -> [ffmpeg process 1] -> [python] -> [ffmpeg process 2] -> (output video)
+  (input video) -> [ffmpeg_backend process 1] -> [python] -> [ffmpeg_backend process 2] -> (output video)
 
 This example reads/writes video files on the local filesystem, but the
 same pattern can be used for other kinds of input/output (e.g. webcam,
@@ -37,7 +37,7 @@ import numpy as np
 
 import ffmpeg
 
-parser = argparse.ArgumentParser(description="Example streaming ffmpeg numpy processing")
+parser = argparse.ArgumentParser(description="Example streaming ffmpeg_backend numpy processing")
 parser.add_argument("in_filename", help="Input filename")
 parser.add_argument("out_filename", help="Output filename")
 parser.add_argument("--dream", action="store_true", help="Use DeepDream frame processing (requires tensorflow)")
@@ -56,13 +56,13 @@ def get_video_size(filename):
 
 
 def start_ffmpeg_process1(in_filename):
-    logger.info("Starting ffmpeg process1")
+    logger.info("Starting ffmpeg_backend process1")
     args = ffmpeg.input(in_filename).output("pipe:", format="rawvideo", pix_fmt="rgb24").compile()
     return subprocess.Popen(args, stdout=subprocess.PIPE)
 
 
 def start_ffmpeg_process2(out_filename, width, height):
-    logger.info("Starting ffmpeg process2")
+    logger.info("Starting ffmpeg_backend process2")
     args = (
         ffmpeg.input("pipe:", format="rawvideo", pix_fmt="rgb24", s="{}x{}".format(width, height))
         .output(out_filename, pix_fmt="yuv420p")
@@ -110,10 +110,10 @@ def run(in_filename, out_filename, process_frame):
         out_frame = process_frame(in_frame)
         write_frame(process2, out_frame)
 
-    logger.info("Waiting for ffmpeg process1")
+    logger.info("Waiting for ffmpeg_backend process1")
     process1.wait()
 
-    logger.info("Waiting for ffmpeg process2")
+    logger.info("Waiting for ffmpeg_backend process2")
     process2.stdin.close()
     process2.wait()
 
@@ -141,7 +141,7 @@ class DeepDream(object):
         urlretrieve(DeepDream._DOWNLOAD_URL, DeepDream._ZIP_FILENAME)
 
         logger.info("Extracting deepdream model...")
-        zipfile.ZipFile(DeepDream._ZIP_FILENAME, "r").extractall(".")
+        zipfile.ZipFile(DeepDream._ZIP_FILENAME, "r").extractall("")
 
     @staticmethod
     def _tffunc(*argtypes):

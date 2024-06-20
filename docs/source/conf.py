@@ -3,16 +3,16 @@ import importlib_metadata
 import sphinx_rtd_theme
 
 project = 'ataraxis-video-system'
-copyright = '2024, Ivan Kondratyev (Inkaros) & Jacob Groner & Sun Lab'
+copyright = '2024, Ivan Kondratyev (Inkaros) & Sun Lab'
 authors = ['Ivan Kondratyev (Inkaros)', 'Jacob Groner']
 release = importlib_metadata.version("ataraxis-video-system")  # Extracts project version from the metadata .toml file.
 
 # -- General configuration ---------------------------------------------------
 extensions = [
-    'sphinx.ext.autodoc',  # To build documentation from docstrings
-    'sphinx.ext.napoleon',  # To read google-style docstrings
-    'sphinx_rtd_theme',  # To format the documentation html using ReadTheDocs format
-    'sphinx_click'  # To read docstrings and command-line argument data from click-wrapped functions.
+    'sphinx.ext.autodoc',  # To build documentation from python source code docstrings.
+    'sphinx.ext.napoleon',  # To read google-style docstrings (works with autodoc module).
+    'sphinx_rtd_theme',  # To format the documentation html using ReadTheDocs format.
+    'sphinx_click'  # To read docstrings and command-line arguments from click-wrapped python functions.
 ]
 
 templates_path = ['_templates']
