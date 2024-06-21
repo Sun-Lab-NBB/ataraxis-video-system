@@ -10,8 +10,8 @@ import pytest
 from PIL import Image, ImageChops, ImageDraw
 from pynput import keyboard
 
-from ataraxis_video_system.shared_memory_array import SharedMemoryArray
 from ataraxis_video_system import Camera, VideoSystem
+from ataraxis_video_system.video_system.shared_memory_array import SharedMemoryArray
 
 
 @pytest.fixture
@@ -124,6 +124,7 @@ def test_delete_images(video_system):
         video_system.delete_images()
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_input_stream(camera):
     test_queue = Queue()
 
@@ -330,6 +331,7 @@ def test_save_images_loop(temp_directory):
     assert 1 < len(os.listdir(test_directory)) < 4
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_start(video_system):
     test_directory = video_system.save_directory
 
@@ -367,6 +369,7 @@ def test_start(video_system):
     video_system.stop()
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_stop_image_collection(video_system):
     test_directory = video_system.save_directory
 
@@ -396,6 +399,7 @@ def test_stop_image_collection(video_system):
     video_system.stop()
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
 
@@ -426,6 +430,7 @@ def test_stop_image_saving(video_system):
     video_system.stop()
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_stop(video_system):
     test_directory = video_system.save_directory
 
@@ -456,6 +461,7 @@ def test_stop(video_system):
     assert not video_system._running
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
@@ -506,6 +512,7 @@ def test_key_listener(video_system):
     assert not video_system._running
 
 
+@pytest.mark.xdist_group(name="uses_camera_group")
 def test_camera(camera):
     assert not camera.is_connected
 

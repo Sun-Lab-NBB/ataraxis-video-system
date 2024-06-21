@@ -5,6 +5,7 @@ from typing import Optional, Tuple, Union
 
 import numpy as np
 
+
 class SharedMemoryArray:
     """A wrapper around an n-dimensional numpy array object that exposes methods for accessing the array buffer from
     multiple processes.

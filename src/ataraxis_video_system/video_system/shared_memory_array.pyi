@@ -1,6 +1,7 @@
-import numpy as np
 from multiprocessing.shared_memory import SharedMemory
 from typing import Optional
+
+import numpy as np
 
 class SharedMemoryArray:
     def __init__(self, name: str, shape: tuple, datatype: np.dtype, buffer: Optional[SharedMemory]) -> None: ...

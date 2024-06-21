@@ -1,17 +1,18 @@
 import multiprocessing
 import os
 from multiprocessing import Process, ProcessError, Queue
-
+import ffmpeg
 import cv2
 import numpy as np
 from ataraxis_time import PrecisionTimer
 from pynput import keyboard
+from typing import Literal, get_args
+
 
 from .shared_memory_array import SharedMemoryArray
 
-
 class Camera:
-    """A wrapper clase for an opencv VideoCapture object.
+    """A wrapper class for an opencv VideoCapture object.
 
     Attributes:
         _vid: opencv video capture object.
@@ -61,10 +62,12 @@ class VideoSystem:
     Args:
         save_directory: location where system saves images.
         camera: camera for image collection.
+        save_format: the format in which to save camera data
 
     Attributes:
         save_directory: location where system saves images.
         camera: camera for image collection.
+        _save_format: the format in which to save camera data
         _running: whether or not the video system is running.
         _input_process: multiprocessing process to control image collection.
         _save_process: multiprocessing process to control image saving.
@@ -75,9 +78,12 @@ class VideoSystem:
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
+        Exeption: If save format is specified to an invalid format.
     """
 
-    def __init__(self, save_directory: str, camera: Camera):
+    Save_Format_Type = Literal['png', 'jpg', 'tif', 'mp4']
+
+    def __init__(self, save_directory: str, camera: Camera, save_format : Save_Format_Type = 'png'):
         # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
         in_unprotected_scope: bool = False
         try:
@@ -89,10 +95,13 @@ class VideoSystem:
 
         if in_unprotected_scope:
             raise ProcessError("Instantiation method outside of '__main__' scope")
+        
+        if save_format not in get_args(VideoSystem.Save_Format_Type):
+            raise Exception('Invalid save format.')
 
         self.save_directory: str = save_directory
         self.camera: Camera = camera
-        self._save_type = 'png'
+        self._save_format  = save_format
         self._running: bool = False
         self._input_process: Process | None = None
         self._save_process: Process | None = None
@@ -105,7 +114,9 @@ class VideoSystem:
         """A function that passes to be used as target to a process"""
         pass
 
-    def start(self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array", save_type : str = 'png') -> None:
+    def start(
+        self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array", save_format: Save_Format_Type | None = None
+    ) -> None:
         """Starts the video system.
 
         Args:
@@ -113,9 +124,11 @@ class VideoSystem:
                 stop image saving when the 'w' key is pressed.
             terminator_array_name: The name of the shared_memory_array to be created. When running multiple
                 video_systems concurrently, each terminator_array should have a unique name.
+            save_format: the format in which to save camera data
 
         Raises:
-            ProcessError: If the function is created not within the '__main__' scope
+            ProcessError: If the function is created not within the '__main__' scope.
+            Exeption: If save format is specified to an invalid format.
         """
 
         # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
@@ -130,8 +143,13 @@ class VideoSystem:
         if in_unprotected_scope:
             raise ProcessError("Instantiation method outside of '__main__' scope")
         
-        if save_type in ['tif', 'png', 'jpg']:
-            self._save_type = save_type
+        if save_format is not None:
+            if save_format in get_args(VideoSystem.Save_Format_Type):
+                self._save_format = save_format
+            else:
+                raise Exception('Invalid save format.')
+
+        if save_format in {"tif", "png", "jpg"}:
             self.delete_images()
 
             self._image_queue = Queue()
@@ -162,11 +180,9 @@ class VideoSystem:
             if listen_for_keypress:
                 self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
                 self._listener.start()  # start to listen on a separate thread
-        elif save_type == 'mp4':
-            self._save_type = save_type
+        elif self._save_format == "mp4":
             pass
-        else:
-            raise Exception(f'{save_type} is an invalid save type')
+
 
     def stop_image_collection(self) -> None:
         """Stops image collection."""
@@ -318,6 +334,25 @@ class VideoSystem:
                     if fps:
                         run_timer.reset()
         terminator_array.disconnect()
+
+
+    @staticmethod
+    def _save_mp4():
+        process = (
+            ffmpeg.input(
+                "pipe:",
+                framerate="{}".format(videoCapture.get(cv2.CAP_PROP_FPS)),
+                format="rawvideo",
+                pix_fmt="bgr24",
+                s="{}x{}".format(
+                    int(videoCapture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(videoCapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                ),
+            )
+            .output("src\\ffmpeg_backend\\webcam.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+            .overwrite_output()
+            .run_async(pipe_stdin=True)
+        )
+
 
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode, terminator_array: SharedMemoryArray) -> bool | None:
         """Changes terminator flags on specific key presses.

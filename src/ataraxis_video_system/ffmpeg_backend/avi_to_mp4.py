@@ -3,9 +3,8 @@ import sys
 import time
 
 import cv2
-import numpy
-
 import ffmpeg
+import numpy
 
 logger = logging.getLogger("Writer")
 logger.setLevel("INFO")

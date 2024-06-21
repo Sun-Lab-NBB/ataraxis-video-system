@@ -253,11 +253,11 @@ def is_valid_pypirc(file_path: str) -> bool:
     config_validator = configparser.ConfigParser()
     config_validator.read(file_path)
     return (
-            config_validator.has_section("pypi")
-            and config_validator.has_option("pypi", "username")
-            and config_validator.has_option("pypi", "password")
-            and config_validator.get("pypi", "username") == "__token__"
-            and config_validator.get("pypi", "password").startswith("pypi-")
+        config_validator.has_section("pypi")
+        and config_validator.has_option("pypi", "username")
+        and config_validator.has_option("pypi", "password")
+        and config_validator.get("pypi", "username") == "__token__"
+        and config_validator.get("pypi", "password").startswith("pypi-")
     )
 
 
@@ -458,10 +458,10 @@ def import_env() -> None:
 
 
 def get_export_command(
-        cmdlet_name: Literal["conda", "mamba"],
-        env_name: str,
-        yml_path: str,
-        spec_path,
+    cmdlet_name: Literal["conda", "mamba"],
+    env_name: str,
+    yml_path: str,
+    spec_path,
 ) -> tuple[str, str]:
     """Resolves the appropriate environment .yml and spec.txt export commands based on the platform OS version.
 
@@ -827,11 +827,11 @@ def adopt_project(library_name: str, project_name: str, author_name: str, email:
     markers: dict[str, str] = {
         "YOUR_LIBRARY_NAME": library_name,  # Library name placeholder
         "YOUR-PROJECT-NAME": project_name,  # Project name placeholder
-        "YOUR_AUTHOR_NAME" : author_name,  # Author name placeholder
-        "YOUR_EMAIL"       : email,  # Author email placeholder
-        "YOUR_ENV_NAME"    : env_name,  # Environment base-name placeholder
-        "template_ext"     : env_name,  # The initial environment base-name used by c-extension projects
-        "template_pure"    : env_name,  # The initial environment base-name used by pure-python projects
+        "YOUR_AUTHOR_NAME": author_name,  # Author name placeholder
+        "YOUR_EMAIL": email,  # Author email placeholder
+        "YOUR_ENV_NAME": env_name,  # Environment base-name placeholder
+        "template_ext": env_name,  # The initial environment base-name used by c-extension projects
+        "template_pure": env_name,  # The initial environment base-name used by pure-python projects
     }
 
     # A tuple that stores the files whose content will be scanned for the presence of markers. All other files will not

@@ -33,9 +33,8 @@ import os
 import subprocess
 import zipfile
 
-import numpy as np
-
 import ffmpeg
+import numpy as np
 
 parser = argparse.ArgumentParser(description="Example streaming ffmpeg_backend numpy processing")
 parser.add_argument("in_filename", help="Input filename")

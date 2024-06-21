@@ -3,9 +3,8 @@ import sys
 import time
 
 import cv2
-import numpy
-
 import ffmpeg
+import numpy as np
 
 # logger = logging.getLogger("Writer")
 # logger.setLevel("INFO")
@@ -56,7 +55,7 @@ start = time.time()
 while time.time() - start <= vid_len:
     ret, image = videoCapture.read()
     if ret:
-        process.stdin.write(image.astype(numpy.uint8).tobytes())
+        process.stdin.write(image.astype(np.uint8).tobytes())
         frames += 1
 # elapsed = time.time() - start
 # logger.info("%d frames" % frames)
