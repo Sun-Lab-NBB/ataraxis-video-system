@@ -1,11 +1,9 @@
 from typing import Literal, get_args
 
-T = Literal['png', 'jpg', 'mp4']
-s: T = 'jpg'
+T = Literal["png", "jpg", "mp4"]
+s: T = "jpg"
 
 print(s in get_args(T))
-
-
 
 
 # import cv2
