@@ -1,0 +1,37 @@
+name: axvs_dev_win
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - click
+  - pynput
+  - opencv
+  - ffmpeg-python
+  - pytest
+  - tox
+  - pytest-cov
+  - pytest-xdist
+  - coverage
+  - junitparser
+  - sphinx
+  - importlib_metadata
+  - sphinx-rtd-theme
+  - sphinx-click
+  - mypy
+  - ruff
+  - build
+  - twine
+  - grayskull
+  - hatchling
+  - black
+  - pillow
+  - ca-certificates
+  - openssl
+  - pip:
+      - ataraxis-automation==1.0.5
+      - ataraxis-time==1.0.4
+      - pyyaml==6.0.1
+      - tox-uv==1.9.0
+      - tqdm==4.66.4
+      - uv==0.2.15
