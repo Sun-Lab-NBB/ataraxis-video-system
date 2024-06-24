@@ -8,11 +8,11 @@ from .vsc import Camera, VideoSystem
 def interactive_run():
     print('hello')
     vs = VideoSystem("imgs", Camera())  # Create the system using the built-in camera class
-    vs.start()  # Start the system, activates camera and begins taking and saving images
-    time.sleep(5)
-    vs.stop_image_collection()  # Stop the camera from taking any more pictures but continue image saving
-    time.sleep(5)
-    vs.stop()  # End the system, discarding any unsaved images
+    vs.start(save_format='mp4')  # Start the system, activates camera and begins taking and saving images
+    # time.sleep(5)
+    # vs.stop_image_collection()  # Stop the camera from taking any more pictures but continue image saving
+    # time.sleep(5)
+    # vs.stop()  # End the system, discarding any unsaved images
 
 
 # if __name__ == "__main__":

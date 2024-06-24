@@ -26,7 +26,7 @@ process = (
             int(videoCapture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(videoCapture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         ),
     )
-    .output("src\\ffmpeg_backend\\webcam.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+    .output("src\\ataraxis_video_system\\ffmpeg_backend\\webcam.mp4", vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
     .overwrite_output()
     .run_async(pipe_stdin=True)
 )
@@ -48,18 +48,15 @@ process = (
 # h264_mf
 # hevc
 
+
 vid_len = 6
-frames = 0
 start = time.time()
 
 while time.time() - start <= vid_len:
     ret, image = videoCapture.read()
     if ret:
         process.stdin.write(image.astype(np.uint8).tobytes())
-        frames += 1
-# elapsed = time.time() - start
-# logger.info("%d frames" % frames)
-# logger.info("%4.1f FPS, elapsed time: %4.2f seconds" % (frames / elapsed, elapsed))
+        
 del videoCapture
 
 process.stdin.close()
