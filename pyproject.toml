@@ -87,7 +87,7 @@ dev = [
 # Use this section to expose some scripts as a short command callable from the shell. The line below is just an
 # example. Generally, this section is what you can use to expose benchmark and cli- / hid-controlled runtimes.
 [project.scripts]
-# benchmark = "YOUR_PROJECT_NAME:benchmark"
+interactive-run = "ataraxis_video_system.video_system.interactive_run:interactive_run"
 
 # Specifies files that should not be included in the source-code distribution, but are also not part of gitignore.
 [tool.hatch.build.targets.sdist]

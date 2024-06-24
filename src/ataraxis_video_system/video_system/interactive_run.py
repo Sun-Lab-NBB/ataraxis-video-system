@@ -2,10 +2,11 @@
 import time
 
 # from video_system.video_system import Camera, VideoSystem
-from vsc import Camera, VideoSystem
+from .vsc import Camera, VideoSystem
 
 # Since the video system uses multiprocessing, it should always be called within '__main__' scope
-if __name__ == "__main__":
+def interactive_run():
+    print('hello')
     vs = VideoSystem("imgs", Camera())  # Create the system using the built-in camera class
     vs.start()  # Start the system, activates camera and begins taking and saving images
     time.sleep(5)
