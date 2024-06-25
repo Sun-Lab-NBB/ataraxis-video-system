@@ -1,37 +1,24 @@
 import multiprocessing
 import os
 from multiprocessing import Process, ProcessError, Queue
-from typing import Any, Dict, Literal, get_args
 
 import cv2
-import ffmpeg
 import numpy as np
-from ataraxis_time import PrecisionTimer
+from high_precision_timer.precision_timer import PrecisionTimer
 from pynput import keyboard
 
-from .shared_memory_array import SharedMemoryArray
-
-# Used in many functions to convert between units
-Precision_Type = Literal["ns", "us", "ms", "s"]
-unit_conversion: Dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
-precision: Precision_Type = "ms"
+from ataraxis_video_system.shared_memory_array import SharedMemoryArray
 
 
 class Camera:
-    """A wrapper class for an opencv VideoCapture object.
+    """A wrapper clase for an opencv VideoCapture object.
 
     Attributes:
         _vid: opencv video capture object.
     """
 
     def __init__(self) -> None:
-        self.specs = {}
         self._vid: cv2.VideoCapture | None = None
-        self.connect()
-        self.specs["fps"] = self._vid.get(cv2.CAP_PROP_FPS)
-        self.specs["frame_width"] = self._vid.get(cv2.CAP_PROP_FRAME_WIDTH)
-        self.specs["frame_height"] = self._vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        self.disconnect()
 
     def __del__(self) -> None:
         """Ensures that camera is disconnected upon garbage collection."""
@@ -40,9 +27,6 @@ class Camera:
     def connect(self) -> None:
         """Connects to camera and prepares for image collection."""
         self._vid = cv2.VideoCapture(0)
-
-    def get_videoCapture(self):
-        return self._vid
 
     def disconnect(self) -> None:
         """Disconnects from camera."""
@@ -55,7 +39,7 @@ class Camera:
         """Whether or not the camera is connected."""
         return self._vid is not None
 
-    def grab_frame(self) -> np.typing.NDArray[np.uint8]:
+    def grab_frame(self) -> np.ndarray:
         """Grabs an image from the camera.
 
         Raises:
@@ -77,12 +61,10 @@ class VideoSystem:
     Args:
         save_directory: location where system saves images.
         camera: camera for image collection.
-        save_format: the format in which to save camera data
 
     Attributes:
         save_directory: location where system saves images.
         camera: camera for image collection.
-        _save_format: the format in which to save camera data
         _running: whether or not the video system is running.
         _input_process: multiprocessing process to control image collection.
         _save_process: multiprocessing process to control image saving.
@@ -93,12 +75,9 @@ class VideoSystem:
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
-        Exeption: If save format is specified to an invalid format.
     """
 
-    Save_Format_Type = Literal["png", "jpg", "tif", "mp4"]
-
-    def __init__(self, save_directory: str, camera: Camera, save_format: Save_Format_Type = "png"):
+    def __init__(self, save_directory: str, camera: Camera):
         # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
         in_unprotected_scope: bool = False
         try:
@@ -111,19 +90,14 @@ class VideoSystem:
         if in_unprotected_scope:
             raise ProcessError("Instantiation method outside of '__main__' scope")
 
-        if save_format not in get_args(VideoSystem.Save_Format_Type):
-            raise Exception("Invalid save format.")
-
         self.save_directory: str = save_directory
         self.camera: Camera = camera
-        self._save_format = save_format
+        self._save_type = "png"
         self._running: bool = False
-
         self._input_process: Process | None = None
         self._save_process: Process | None = None
         self._terminator_array: SharedMemoryArray | None = None
         self._image_queue: Queue | None = None
-
         self._listener: keyboard.Listener | None = None
 
     @staticmethod
@@ -132,10 +106,7 @@ class VideoSystem:
         pass
 
     def start(
-        self,
-        listen_for_keypress: bool = False,
-        terminator_array_name: str = "terminator_array",
-        save_format: Save_Format_Type | None = None,
+        self, listen_for_keypress: bool = False, terminator_array_name: str = "terminator_array", save_type: str = "png"
     ) -> None:
         """Starts the video system.
 
@@ -144,11 +115,9 @@ class VideoSystem:
                 stop image saving when the 'w' key is pressed.
             terminator_array_name: The name of the shared_memory_array to be created. When running multiple
                 video_systems concurrently, each terminator_array should have a unique name.
-            save_format: the format in which to save camera data
 
         Raises:
-            ProcessError: If the function is created not within the '__main__' scope.
-            Exeption: If save format is specified to an invalid format.
+            ProcessError: If the function is created not within the '__main__' scope
         """
 
         # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
@@ -163,52 +132,43 @@ class VideoSystem:
         if in_unprotected_scope:
             raise ProcessError("Instantiation method outside of '__main__' scope")
 
-        if save_format is not None:
-            if save_format in get_args(VideoSystem.Save_Format_Type):
-                self._save_format = save_format
-            else:
-                raise Exception("Invalid save format.")
+        if save_type in ["tif", "png", "jpg"]:
+            self._save_type = save_type
+            self.delete_images()
 
-        self.delete_images()
+            self._image_queue = Queue()
 
-        self._image_queue = Queue()
+            prototype = np.array(
+                [1, 1, 1], dtype=np.int32
+            )  # First entry represents whether input stream is active, second entry represents whether output stream is active
+            self._terminator_array = SharedMemoryArray.create_array(
+                terminator_array_name,
+                prototype,
+            )
 
-        prototype = np.array(
-            [1, 1, 1], dtype=np.int32
-        )  # First entry represents whether input stream is active, second entry represents whether output stream is active
-
-        self._terminator_array = SharedMemoryArray.create_array(
-            terminator_array_name,
-            prototype,
-        )
-
-        self._input_process = Process(
-            target=VideoSystem._input_stream,
-            args=(self.camera, self._image_queue, self._terminator_array, None),
-            daemon=True,
-        )
-
-        if self._save_format in {"tif", "png", "jpg"}:
+            self._input_process = Process(
+                target=VideoSystem._input_stream,
+                args=(self.camera, self._image_queue, self._terminator_array, None),
+                daemon=True,
+            )
             self._save_process = Process(
                 target=VideoSystem._save_images_loop,
                 args=(self._image_queue, self._terminator_array, self.save_directory, 1),
                 daemon=True,
             )
-        elif self._save_format == "mp4":
-            self._save_process = Process(
-                target=VideoSystem._save_video_loop,
-                args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs, None),
-                daemon=True,
-            )
 
-        self._input_process.start()
-        self._save_process.start()
+            self._input_process.start()
+            self._save_process.start()
+            self._running = True
 
-        if listen_for_keypress:
-            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
-            self._listener.start()  # start to listen on a separate thread
-
-        self._running = True
+            if listen_for_keypress:
+                self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
+                self._listener.start()  # start to listen on a separate thread
+        elif save_type == "mp4":
+            self._save_type = save_type
+            pass
+        else:
+            raise Exception(f"{save_type} is an invalid save type")
 
     def stop_image_collection(self) -> None:
         """Stops image collection."""
@@ -234,12 +194,10 @@ class VideoSystem:
             self._terminator_array.disconnect()
             self._save_process.join()
             self._input_process.join()
-
+            self._running = False
             if self._listener is not None:
                 self._listener.stop()
                 self._listener = None
-
-            self._running = False
 
     # def __del__(self):
     #     """Ensures that system is stopped upon garbage collection. """
@@ -286,15 +244,20 @@ class VideoSystem:
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
 
+        unit_conversion = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
+        precision = "ms"
+
         img_queue.cancel_join_thread()
         camera.connect()
         terminator_array.connect()
         run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
+        frames: int = 0
         first: bool = True
         while terminator_array.read_data(2):
             if terminator_array.read_data(0):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     img_queue.put(camera.grab_frame())
+                    frames += 1
                     if fps:
                         run_timer.reset()
         camera.disconnect()
@@ -324,7 +287,7 @@ class VideoSystem:
     def _save_images_loop(
         img_queue: Queue, terminator_array: SharedMemoryArray, save_directory: str, fps: float | None = None
     ) -> None:
-        """Iteratively grabs images from the img_queue and saves them as png files.
+        """Iteratively grabs images from the camera and adds to the img_queue.
 
         This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
         the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
@@ -339,9 +302,13 @@ class VideoSystem:
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
 
+        unit_conversion: dict = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
+        precision: str = "ms"
+
         terminator_array.connect()
         num_imgs_saved: int = 0
         run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
+        frames: int = 0
         img_queue.cancel_join_thread()
         while terminator_array.read_data(2):
             if terminator_array.read_data(1):
@@ -349,68 +316,10 @@ class VideoSystem:
                     saved = VideoSystem._save_frame(img_queue, save_directory, num_imgs_saved)
                     if saved:
                         num_imgs_saved += 1
+                    frames += 1
                     if fps:
                         run_timer.reset()
         terminator_array.disconnect()
-
-    @staticmethod
-    def _save_video_loop(
-        img_queue: Queue,
-        terminator_array: SharedMemoryArray,
-        save_directory: str,
-        camera_specs: Dict[str, Any],
-        fps: float | None = None,
-    ) -> None:
-        """Iteratively grabs images from the img_queue and adds them to an mp4 file.
-
-        This creates runs the ffmpeg image saving process on a separate thread. It iteratively grabs images from the
-        queue on the main thread.
-
-        This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
-        the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
-        own.
-
-        Args:
-            img_queue: A multiprocessing queue to hold images before saving.
-            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 1 is zero
-                and completes when index 2 is zero.
-            save_directory: relative path to location  where images are to be saved.
-            camera_specs: a dictionary containing specifications of the camera. Specifically the dictionary must contain
-                the camera's frames per second, denoted 'fps', and the camera frame size denoted by 'frame_width' and
-                'frame_height'.
-            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
-        """
-        filename = os.path.join(save_directory, "video.mp4")
-
-        ffmpeg_process = (
-            ffmpeg.input(
-                "pipe:",
-                framerate="{}".format(camera_specs["fps"]),
-                format="rawvideo",
-                pix_fmt="bgr24",
-                s="{}x{}".format(int(camera_specs["frame_width"]), int(camera_specs["frame_height"])),
-            )
-            .output(filename, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
-
-        terminator_array.connect()
-        num_imgs_saved: int = 0
-        run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
-        img_queue.cancel_join_thread()
-        while terminator_array.read_data(2):
-            if terminator_array.read_data(1):
-                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    if not img_queue.empty():
-                        image = img_queue.get()
-                        ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
-                    if fps:
-                        run_timer.reset()
-        terminator_array.disconnect()
-        ffmpeg_process.stdin.close()
-        ffmpeg_process.wait()
 
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode, terminator_array: SharedMemoryArray) -> bool | None:
         """Changes terminator flags on specific key presses.
@@ -439,4 +348,4 @@ class VideoSystem:
                 return False  # stop listener
         else:
             return False
-        return None
+        return

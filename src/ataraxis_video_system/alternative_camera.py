@@ -1,5 +1,3 @@
-from typing import Any
-
 import cv2
 import numpy as np
 
@@ -42,7 +40,7 @@ class Camera:
         """Whether or not the camera is connected."""
         return self._connected
 
-    def grab_frame(self) -> np.typing.NDArray[Any]:
+    def grab_frame(self) -> np.ndarray:
         """Grabs an image from the camera.
 
         Raises:

@@ -119,7 +119,7 @@ class SharedMemoryArray:
         # Returns the instantiated and connected class object to caller.
         return shared_memory_array
 
-    def connect(self) -> None:
+    def connect(self):
         """Connects to the shared memory buffer that stores the array data, allowing to manipulate access and manipulate
          the data through this class.
 
@@ -132,7 +132,7 @@ class SharedMemoryArray:
         self._array = np.ndarray(shape=self._shape, dtype=self._datatype, buffer=self._buffer.buf)
         self._is_connected = True  # Sets the connection flag
 
-    def disconnect(self) -> None:
+    def disconnect(self):
         """Disconnects the class from the shared memory buffer.
 
         This method should be called whenever the process no longer requires shared buffer access.
