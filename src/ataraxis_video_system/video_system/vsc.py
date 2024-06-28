@@ -1,7 +1,8 @@
 import multiprocessing
 import os
-from multiprocessing import Process, ProcessError, Queue
-from typing import Any, Dict, Literal, get_args
+from multiprocessing import Process, ProcessError
+from multiprocessing import Queue as UntypedQueue
+from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 
 import cv2
 import ffmpeg
@@ -15,6 +16,28 @@ from .shared_memory_array import SharedMemoryArray
 Precision_Type = Literal["ns", "us", "ms", "s"]
 unit_conversion: Dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
 precision: Precision_Type = "ms"
+
+T = TypeVar("T")
+
+
+class Queue(Generic[T]):
+    def __init__(self) -> None:
+        self._queue = UntypedQueue()  # type: ignore
+
+    def put(self, item: T) -> None:
+        self._queue.put(item)
+
+    def get(self) -> T:
+        return cast(T, self._queue.get())
+
+    def empty(self) -> bool:
+        return self._queue.empty()
+
+    def qsize(self) -> int:
+        return self._queue.qsize()
+
+    def cancel_join_thread(self) -> None:
+        return self._queue.cancel_join_thread()
 
 
 class Camera:
@@ -126,7 +149,7 @@ class VideoSystem:
         self._input_process: Process | None = None
         self._save_process: Process | None = None
         self._terminator_array: SharedMemoryArray | None = None
-        self._image_queue: Queue | None = None
+        self._image_queue: Queue[Any] | None = None
 
         self._listener: keyboard.Listener | None = None
 
@@ -296,7 +319,7 @@ class VideoSystem:
 
     @staticmethod
     def _input_stream(
-        camera: Camera, img_queue: Queue, terminator_array: SharedMemoryArray, fps: float | None = None
+        camera: Camera, img_queue: Queue[Any], terminator_array: SharedMemoryArray, fps: float | None = None
     ) -> None:
         """Iteratively grabs images from the camera and adds to the img_queue.
 
@@ -312,7 +335,6 @@ class VideoSystem:
                 and completes when index 2 is zero.
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
-
         img_queue.cancel_join_thread()
         camera.connect()
         terminator_array.connect()
@@ -328,7 +350,7 @@ class VideoSystem:
         terminator_array.disconnect()
 
     @staticmethod
-    def _save_frame(img_queue: Queue, save_directory: str, img_id: int) -> bool:
+    def _save_frame(img_queue: Queue[Any], save_directory: str, img_id: int) -> bool:
         """Saves one frame as a png image.
 
         Does nothing if there are no images in the queue.
@@ -349,7 +371,7 @@ class VideoSystem:
 
     @staticmethod
     def _save_images_loop(
-        img_queue: Queue, terminator_array: SharedMemoryArray, save_directory: str, fps: float | None = None
+        img_queue: Queue[Any], terminator_array: SharedMemoryArray, save_directory: str, fps: float | None = None
     ) -> None:
         """Iteratively grabs images from the img_queue and saves them as png files.
 
@@ -382,7 +404,7 @@ class VideoSystem:
 
     @staticmethod
     def _save_video_loop(
-        img_queue: Queue,
+        img_queue: Queue[Any],
         terminator_array: SharedMemoryArray,
         save_directory: str,
         camera_specs: Dict[str, Any],
