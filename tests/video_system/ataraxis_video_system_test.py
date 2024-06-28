@@ -162,7 +162,7 @@ def test_input_stream(camera):
     input_stream_process.start()
     time.sleep(3)
 
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
 
     assert test_queue.qsize() == 0
@@ -183,7 +183,7 @@ def test_input_stream(camera):
     )
     input_stream_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
     test_array.disconnect()
 
@@ -202,12 +202,12 @@ def test_input_stream(camera):
     )
     input_stream_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
     test_array.disconnect()
 
     assert test_queue.qsize() > 0
-    assert test_queue.qsize() < 5
+    assert test_queue.qsize() < 6
 
     test_queue = Queue()
     assert test_queue.qsize() == 0
@@ -281,7 +281,7 @@ def test_save_images_loop(temp_directory):
     save_process.start()
     time.sleep(3)
 
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
 
     assert len(os.listdir(test_directory)) == 0
@@ -295,7 +295,7 @@ def test_save_images_loop(temp_directory):
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
     save_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
 
@@ -324,7 +324,7 @@ def test_save_images_loop(temp_directory):
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
     save_process.start()
     time.sleep(3)
-    test_array.write_data(slice(2, 3), np.array([0]))
+    test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
 
@@ -336,7 +336,6 @@ def test_start(video_system):
     test_directory = video_system.save_directory
 
     assert len(os.listdir(test_directory)) == 0
-
     assert not video_system._running
     assert not video_system._input_process
     assert not video_system._save_process

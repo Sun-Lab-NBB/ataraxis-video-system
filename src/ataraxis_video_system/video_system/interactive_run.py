@@ -7,7 +7,7 @@ from .vsc import Camera, VideoSystem
 
 # Since the video system uses multiprocessing, it should always be called within '__main__' scope
 def interactive_run() -> None:
-    print("hello")
+    print("today1")
     vs = VideoSystem("imgs", Camera())  # Create the system using the built-in camera class
     vs.start(
         save_format="mp4", listen_for_keypress=True

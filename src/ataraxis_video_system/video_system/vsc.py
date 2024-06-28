@@ -21,16 +21,20 @@ class Camera:
     """A wrapper class for an opencv VideoCapture object.
 
     Attributes:
+        specs: dictionary holding the specifications of the camera. This includes fps, frame_width, frame_height
         _vid: opencv video capture object.
     """
 
     def __init__(self) -> None:
-        self.specs = {}
+        self.specs: Dict[str, Any] = {}
         self._vid: cv2.VideoCapture | None = None
         self.connect()
-        self.specs["fps"] = self._vid.get(cv2.CAP_PROP_FPS)
-        self.specs["frame_width"] = self._vid.get(cv2.CAP_PROP_FRAME_WIDTH)
-        self.specs["frame_height"] = self._vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        if self._vid is not None:
+            self.specs["fps"] = self._vid.get(cv2.CAP_PROP_FPS)
+            self.specs["frame_width"] = self._vid.get(cv2.CAP_PROP_FRAME_WIDTH)
+            self.specs["frame_height"] = self._vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        else:
+            raise Exception("could not connect to video camera")
         self.disconnect()
 
     def __del__(self) -> None:
@@ -41,7 +45,7 @@ class Camera:
         """Connects to camera and prepares for image collection."""
         self._vid = cv2.VideoCapture(0)
 
-    def get_videoCapture(self):
+    def get_videoCapture(self) -> cv2.VideoCapture | None:
         return self._vid
 
     def disconnect(self) -> None:
@@ -55,7 +59,7 @@ class Camera:
         """Whether or not the camera is connected."""
         return self._vid is not None
 
-    def grab_frame(self) -> np.typing.NDArray[np.uint8]:
+    def grab_frame(self) -> np.typing.NDArray[Any]:
         """Grabs an image from the camera.
 
         Raises:
@@ -200,9 +204,15 @@ class VideoSystem:
                 args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs, None),
                 daemon=True,
             )
+        if self._input_process is not None:
+            self._input_process.start()
+        else:
+            raise Exception("input process not initialized")
 
-        self._input_process.start()
-        self._save_process.start()
+        if self._save_process is not None:
+            self._save_process.start()
+        else:
+            raise Exception("save process is not initialized")
 
         if listen_for_keypress:
             self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
@@ -213,27 +223,44 @@ class VideoSystem:
     def stop_image_collection(self) -> None:
         """Stops image collection."""
         if self._running == True:
-            self._terminator_array.connect()
-            self._terminator_array.write_data(slice(0, 1), np.array([0]))
-            self._terminator_array.disconnect()
+            if self._terminator_array is not None:
+                self._terminator_array.connect()
+                self._terminator_array.write_data(slice(0, 1), np.array([0], dtype=np.int32))
+                self._terminator_array.disconnect()
+            else:
+                raise Exception("terminator array not initialized")
 
     # possibly delete this function
     def _stop_image_saving(self) -> None:
         """Stops image saving."""
         if self._running == True:
-            self._terminator_array.connect()
-            self._terminator_array.write_data(slice(1, 2), np.array([0]))
-            self._terminator_array.disconnect()
+            if self._terminator_array is not None:
+                self._terminator_array.connect()
+                self._terminator_array.write_data(slice(1, 2), np.array([0], dtype=np.int32))
+                self._terminator_array.disconnect()
+            else:
+                raise Exception("terminator array not initialized")
 
     def stop(self) -> None:
         """Stops image collection and saving. Ends all processes."""
         if self._running == True:
             self._image_queue = Queue()  # A weak way to empty queue
-            self._terminator_array.connect()
-            self._terminator_array.write_data(slice(0, 3), np.array([0, 0, 0]))
-            self._terminator_array.disconnect()
-            self._save_process.join()
-            self._input_process.join()
+            if self._terminator_array is not None:
+                self._terminator_array.connect()
+                self._terminator_array.write_data(slice(0, 3), np.array([0, 0, 0], dtype=np.int32))
+                self._terminator_array.disconnect()
+            else:
+                raise Exception("terminator array not initialized")
+
+            if self._save_process is not None:
+                self._save_process.join()
+            else:
+                raise Exception("save process not initialized")
+
+            if self._input_process is not None:
+                self._input_process.join()
+            else:
+                raise Exception("input process not initialized")
 
             if self._listener is not None:
                 self._listener.stop()
@@ -289,7 +316,7 @@ class VideoSystem:
         img_queue.cancel_join_thread()
         camera.connect()
         terminator_array.connect()
-        run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
+        run_timer: PrecisionTimer = PrecisionTimer(precision)
         first: bool = True
         while terminator_array.read_data(2):
             if terminator_array.read_data(0):
@@ -341,7 +368,7 @@ class VideoSystem:
 
         terminator_array.connect()
         num_imgs_saved: int = 0
-        run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
+        run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
         while terminator_array.read_data(2):
             if terminator_array.read_data(1):
@@ -398,7 +425,7 @@ class VideoSystem:
 
         terminator_array.connect()
         num_imgs_saved: int = 0
-        run_timer: PrecisionTimer | None = PrecisionTimer(precision) if fps else None
+        run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
         while terminator_array.read_data(2):
             if terminator_array.read_data(1):

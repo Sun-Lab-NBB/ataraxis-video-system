@@ -33,7 +33,8 @@ class Camera:
         """Disconnects from camera."""
         if self._connected:
             if Camera.num_connected == 1:
-                Camera.video_capture.release()
+                if Camera.video_capture is not None:
+                    Camera.video_capture.release()
             self._connected = False
             Camera.num_connected -= 1
 
@@ -49,7 +50,7 @@ class Camera:
             Exception if camera isn't connected.
 
         """
-        if self._connected:
+        if self._connected and Camera.video_capture is not None:
             ret, frame = Camera.video_capture.read()
             # if not ret:
             #     raise Exception("camera did not yield an image")
