@@ -68,9 +68,6 @@ class Camera:
         """Connects to camera and prepares for image collection."""
         self._vid = cv2.VideoCapture(0)
 
-    def get_videoCapture(self) -> cv2.VideoCapture | None:
-        return self._vid
-
     def disconnect(self) -> None:
         """Disconnects from camera."""
         if self._vid:
@@ -120,7 +117,7 @@ class VideoSystem:
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
-        Exeption: If save format is specified to an invalid format.
+        ValueError: If save format is specified to an invalid format.
     """
 
     Save_Format_Type = Literal["png", "jpg", "tif", "mp4"]
@@ -139,7 +136,7 @@ class VideoSystem:
             raise ProcessError("Instantiation method outside of '__main__' scope")
 
         if save_format not in get_args(VideoSystem.Save_Format_Type):
-            raise Exception("Invalid save format.")
+            raise ValueError("Invalid save format.")
 
         self.save_directory: str = save_directory
         self.camera: Camera = camera
@@ -175,10 +172,10 @@ class VideoSystem:
 
         Raises:
             ProcessError: If the function is created not within the '__main__' scope.
-            Exeption: If save format is specified to an invalid format.
+            ValueError: If save format is specified to an invalid format.
         """
 
-        # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
+        # Check to see if class was run from within __name__ = "__main__" or equivalent scope
         in_unprotected_scope: bool = False
         try:
             p = multiprocessing.Process(target=VideoSystem._empty_function)
@@ -194,7 +191,7 @@ class VideoSystem:
             if save_format in get_args(VideoSystem.Save_Format_Type):
                 self._save_format = save_format
             else:
-                raise Exception("Invalid save format.")
+                raise ValueError("Invalid save format.")
 
         self.delete_images()
 
@@ -211,31 +208,24 @@ class VideoSystem:
 
         self._input_process = Process(
             target=VideoSystem._input_stream,
-            args=(self.camera, self._image_queue, self._terminator_array, None),
+            args=(self.camera, self._image_queue, self._terminator_array),
             daemon=True,
         )
 
         if self._save_format in {"tif", "png", "jpg"}:
             self._save_process = Process(
                 target=VideoSystem._save_images_loop,
-                args=(self._image_queue, self._terminator_array, self.save_directory, 1),
+                args=(self._image_queue, self._terminator_array, self.save_directory),
                 daemon=True,
             )
-        elif self._save_format == "mp4":
+        else:  # self._save_format == "mp4"
             self._save_process = Process(
                 target=VideoSystem._save_video_loop,
-                args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs, None),
+                args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs),
                 daemon=True,
             )
-        if self._input_process is not None:
-            self._input_process.start()
-        else:
-            raise Exception("input process not initialized")
-
-        if self._save_process is not None:
-            self._save_process.start()
-        else:
-            raise Exception("save process is not initialized")
+        self._input_process.start()
+        self._save_process.start()
 
         if listen_for_keypress:
             self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
@@ -243,15 +233,18 @@ class VideoSystem:
 
         self._running = True
 
-    def stop_image_collection(self) -> None:
+    def stop_image_production(self) -> None:
         """Stops image collection."""
         if self._running == True:
             if self._terminator_array is not None:
                 self._terminator_array.connect()
                 self._terminator_array.write_data(slice(0, 1), np.array([0], dtype=np.int32))
                 self._terminator_array.disconnect()
-            else:
-                raise Exception("terminator array not initialized")
+            else:  # This error should never occur
+                error_message = (
+                    "Failure to start the stop image production process because _terminator_array is not initialized."
+                )
+                raise TypeError(error_message)
 
     # possibly delete this function
     def _stop_image_saving(self) -> None:
@@ -261,8 +254,11 @@ class VideoSystem:
                 self._terminator_array.connect()
                 self._terminator_array.write_data(slice(1, 2), np.array([0], dtype=np.int32))
                 self._terminator_array.disconnect()
-            else:
-                raise Exception("terminator array not initialized")
+            else:  # This error should never occur
+                error_message = (
+                    "Failure to start the stop image saving process because _terminator_array is not initialized."
+                )
+                raise TypeError(error_message)
 
     def stop(self) -> None:
         """Stops image collection and saving. Ends all processes."""
@@ -272,18 +268,21 @@ class VideoSystem:
                 self._terminator_array.connect()
                 self._terminator_array.write_data(slice(0, 3), np.array([0, 0, 0], dtype=np.int32))
                 self._terminator_array.disconnect()
-            else:
-                raise Exception("terminator array not initialized")
+            else:  # This error should never occur
+                error_message = "Failure to start the stop video system  because _terminator_array is not initialized."
+                raise TypeError(error_message)
 
             if self._save_process is not None:
                 self._save_process.join()
-            else:
-                raise Exception("save process not initialized")
+            else:  # This error should never occur
+                error_message = "Failure to start the stop video system  because _save_process is not initialized."
+                raise TypeError(error_message)
 
             if self._input_process is not None:
                 self._input_process.join()
-            else:
-                raise Exception("input process not initialized")
+            else:  # This error should never occur
+                error_message = "Failure to start the stop video system  because _input_process is not initialized."
+                raise TypeError(error_message)
 
             if self._listener is not None:
                 self._listener.stop()
@@ -472,8 +471,9 @@ class VideoSystem:
             terminator_array: A multiprocessing array to hold terminate flags.
         """
         try:
+            print(key.char)
             if key.char == "q":
-                self.stop_image_collection()
+                self.stop_image_production()
                 print("Stopped taking images")
             elif key.char == "w":
                 self._stop_image_saving()

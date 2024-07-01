@@ -57,8 +57,3 @@ class Camera:
             return frame
         else:
             raise Exception("camera not connected")
-
-
-if __name__ == "__main__":
-    save_type = 4
-    print(f"{save_type} is an invalid save type")
