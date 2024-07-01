@@ -383,45 +383,45 @@ def test_save_video_loop(temp_directory, camera):
 
 
 
-# @pytest.mark.xdist_group(name="uses_camera_group")
-# def test_start(video_system):
-#     test_directory = video_system.save_directory
+@pytest.mark.xdist_group(name="uses_camera_group")
+def test_start(video_system):
+    test_directory = video_system.save_directory
 
-#     # Run in the video system in image saving mode
+    # Run in the video system in image saving mode
 
-#     assert len(os.listdir(test_directory)) == 0
-#     assert not video_system._running
-#     assert not video_system._input_process
-#     assert not video_system._save_process
-#     assert not video_system._terminator_array
-#     assert not video_system._image_queue
-#     assert not video_system.camera.is_connected
+    assert len(os.listdir(test_directory)) == 0
+    assert not video_system._running
+    assert not video_system._input_process
+    assert not video_system._save_process
+    assert not video_system._terminator_array
+    assert not video_system._image_queue
+    assert not video_system.camera.is_connected
 
-#     # i = 0
-#     # name = "terminator_array"
-#     # test_array = None
-#     # while i < 100:
-#     #     try:
-#     #         video_system.start(terminator_array_name=name)
-#     #         i = 100
-#     #     except FileExistsError:
-#     #         name = increment_name(name)
-#     #         i += 1
-#     video_system.start(terminator_array_name="terminator_array")
+    # i = 0
+    # name = "terminator_array"
+    # test_array = None
+    # while i < 100:
+    #     try:
+    #         video_system.start(terminator_array_name=name)
+    #         i = 100
+    #     except FileExistsError:
+    #         name = increment_name(name)
+    #         i += 1
+    video_system.start(terminator_array_name="terminator_array")
 
-#     assert video_system._running
-#     assert video_system._input_process
-#     assert video_system._save_process
-#     assert video_system._terminator_array
-#     assert video_system._image_queue
+    assert video_system._running
+    assert video_system._input_process
+    assert video_system._save_process
+    assert video_system._terminator_array
+    assert video_system._image_queue
 
-#     time.sleep(3)
+    time.sleep(3)
 
-#     assert len(os.listdir(test_directory)) > 0
-#     assert video_system._image_queue.qsize() > 0
+    assert len(os.listdir(test_directory)) > 0
+    assert video_system._image_queue.qsize() > 0
 
-#     video_system.stop()
-#     video_system.delete_images()
+    video_system.stop()
+    video_system.delete_images()
 
 
 @pytest.mark.xdist_group(name="uses_camera_group")
