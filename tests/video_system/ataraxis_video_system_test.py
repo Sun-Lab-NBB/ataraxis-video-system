@@ -3,6 +3,7 @@ import random
 import tempfile
 import time
 from multiprocessing import Process, ProcessError, Queue
+from threading import Thread
 
 import cv2
 import numpy as np
@@ -125,7 +126,7 @@ def test_delete_images(video_system):
 
 
 @pytest.mark.xdist_group(name="uses_camera_group")
-def test_input_stream(camera):
+def test_produce_images_loop(camera):
     test_queue = Queue()
 
     # Bad prototypes 1 and 2: when third element is 0, the loop terminates immediately
@@ -133,14 +134,14 @@ def test_input_stream(camera):
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
 
     test_array = SharedMemoryArray.create_array("test_input_array1", bad_prototype1)
-    VideoSystem._input_stream(camera, test_queue, test_array)
+    VideoSystem._produce_images_loop(camera, test_queue, test_array)
 
     assert test_queue.qsize() == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
 
     test_array = SharedMemoryArray.create_array("test_input_array2", bad_prototype1)
-    VideoSystem._input_stream(camera, test_queue, test_array)
+    VideoSystem._produce_images_loop(camera, test_queue, test_array)
 
     assert test_queue.qsize() == 0
 
@@ -152,7 +153,7 @@ def test_input_stream(camera):
     test_array.connect()
 
     input_stream_process = Process(
-        target=VideoSystem._input_stream,
+        target=VideoSystem._produce_images_loop,
         args=(
             camera,
             test_queue,
@@ -160,21 +161,21 @@ def test_input_stream(camera):
         ),
     )
     input_stream_process.start()
-    time.sleep(3)
+    time.sleep(2)
 
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
 
     assert test_queue.qsize() == 0
 
-    # Run input_stream as fast as possible for three seconds
+    # Run input_stream as fast as possible for two seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_input_array4", prototype)
     test_array.connect()
 
     input_stream_process = Process(
-        target=VideoSystem._input_stream,
+        target=VideoSystem._produce_images_loop,
         args=(
             Camera(),
             test_queue,
@@ -182,7 +183,7 @@ def test_input_stream(camera):
         ),
     )
     input_stream_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
     test_array.disconnect()
@@ -197,11 +198,11 @@ def test_input_stream(camera):
     test_array.connect()
 
     input_stream_process = Process(
-        target=VideoSystem._input_stream,
+        target=VideoSystem._produce_images_loop,
         args=(Camera(), test_queue, test_array, 3),
     )
     input_stream_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     input_stream_process.join()
     test_array.disconnect()
@@ -224,14 +225,14 @@ def test_save_frame(temp_directory):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
-        test_queue.put(cv_img)
+        test_queue.put((cv_img, i))
 
     # Test if video system correctly saves all images
     for i in range(num_images):
-        assert VideoSystem._save_frame(test_queue, test_directory, i)
+        assert VideoSystem._save_frame(test_queue, test_directory)
 
     # Test if VideoSystem returns False once queue has been emptied
-    assert not VideoSystem._save_frame(test_queue, test_directory, 31)
+    assert not VideoSystem._save_frame(test_queue, test_directory)
 
     # Test if image saving was performed correctly
     for i in range(num_images):
@@ -251,7 +252,7 @@ def test_save_images_loop(temp_directory):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
-        test_queue.put(cv_img)
+        test_queue.put((cv_img, i))
     VideoSystem._delete_files_in_directory(test_directory)
 
     assert test_queue.qsize() == num_images
@@ -277,24 +278,26 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_save_array3", bad_prototype3)
     test_array.connect()
 
-    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
     save_process.start()
-    time.sleep(3)
+    time.sleep(2)
 
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
 
     assert len(os.listdir(test_directory)) == 0
 
-    # Run save_images_loop as fast as possible for three seconds
+    # Run save_images_loop as fast as possible for two seconds
+
+    print(test_queue.qsize())
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_save_array4", prototype)
     test_array.connect()
 
-    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
     save_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
@@ -309,7 +312,7 @@ def test_save_images_loop(temp_directory):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
-        test_queue.put(cv_img)
+        test_queue.put((cv_img, i))
     VideoSystem._delete_files_in_directory(test_directory)
 
     assert test_queue.qsize() == num_images
@@ -321,13 +324,12 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_save_array5", prototype)
     test_array.connect()
 
-    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
     save_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
-
     assert 1 < len(os.listdir(test_directory)) < 4
 
 
@@ -342,10 +344,10 @@ def test_save_video_loop(temp_directory, camera):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
-        test_queue.put(cv_img)
+        test_queue.put((cv_img, i))
     VideoSystem._delete_files_in_directory(test_directory)
 
-    # Run save_video_loop as fast as possible for three seconds
+    # Run save_video_loop as fast as possible for two seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_save_array5", prototype)
@@ -355,7 +357,7 @@ def test_save_video_loop(temp_directory, camera):
         target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs)
     )
     save_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
@@ -366,7 +368,7 @@ def test_save_video_loop(temp_directory, camera):
 
     assert "video.mp4" not in os.listdir(test_directory)
 
-    # Run save loop at 1 fps for three seconds
+    # Run save loop at 1 fps for two seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_save_array6", prototype)
@@ -376,7 +378,7 @@ def test_save_video_loop(temp_directory, camera):
         target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs, 1)
     )
     save_process.start()
-    time.sleep(3)
+    time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
@@ -414,13 +416,15 @@ def test_start(video_system):
     assert video_system._terminator_array
     assert video_system._image_queue
 
-    time.sleep(3)
+    time.sleep(10)
+    print(video_system._image_queue.qsize())
 
     assert len(os.listdir(test_directory)) > 0
 
     video_system.stop()
     video_system.delete_images()
 
+    assert False
 
 @pytest.mark.xdist_group(name="uses_camera_group")
 def test_mp4_save(video_system):
@@ -444,7 +448,7 @@ def test_mp4_save(video_system):
     assert video_system._terminator_array
     assert video_system._image_queue
 
-    time.sleep(3)
+    time.sleep(2)
 
     video_system.stop()
 
@@ -467,11 +471,11 @@ def test_stop_image_production(video_system):
     #         i += 1
     video_system.start(terminator_array_name="terminator_array2")
 
-    time.sleep(3)
+    time.sleep(2)
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     video_system.stop_image_production()
-    time.sleep(3)
+    time.sleep(2)
     # Once you stop taking images, the size of the queue should start decreasing
     assert images_taken >= video_system._image_queue.qsize()
 
@@ -497,11 +501,11 @@ def test_stop_image_saving(video_system):
     #         i += 1
     video_system.start(terminator_array_name="terminator_array3")
 
-    time.sleep(3)
+    time.sleep(2)
     video_system._stop_image_saving()
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
-    time.sleep(3)
+    time.sleep(2)
 
     # Once you stop saving images, the size of the queue should continue to increase
     assert images_taken < video_system._image_queue.qsize()
@@ -528,11 +532,11 @@ def test_stop(video_system):
     #         i += 1
     video_system.start(terminator_array_name="terminator_array4")
 
-    time.sleep(3)
+    time.sleep(2)
     video_system.stop()
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
-    time.sleep(3)
+    time.sleep(2)
 
     # Once you stop the video system, the size of the queue should continue to increase
     assert images_taken == video_system._image_queue.qsize()
@@ -550,7 +554,7 @@ def test_key_listener(video_system):
 
     video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array5")
 
-    time.sleep(3)
+    time.sleep(2)
 
     # Print random key to make sure key listener can handle all keys without throwing error
     controller.press(keyboard.Key.alt)
@@ -565,7 +569,7 @@ def test_key_listener(video_system):
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
 
-    time.sleep(3)
+    time.sleep(2)
 
     # Once you stop taking images, the size of the queue should start decreasing
     assert images_taken >= video_system._image_queue.qsize()
@@ -581,7 +585,7 @@ def test_key_listener(video_system):
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
 
-    time.sleep(3)
+    time.sleep(2)
 
     # Once you stop the video system, the size of the queue should not continue to increase
     assert images_taken == video_system._image_queue.qsize()
@@ -593,7 +597,7 @@ def test_key_listener(video_system):
 
     # Now check that with manual stopping in interactive mode, the key_listener actually closes
     video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array6")
-    time.sleep(3)
+    time.sleep(2)
 
     assert video_system._running
     video_system.stop()
