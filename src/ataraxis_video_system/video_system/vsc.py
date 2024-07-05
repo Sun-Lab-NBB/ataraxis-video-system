@@ -7,7 +7,9 @@ from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 import cv2
 import ffmpeg
 import numpy as np
+import tifffile as tff
 from ataraxis_time import PrecisionTimer
+from PIL import Image
 from pynput import keyboard
 
 from .shared_memory_array import SharedMemoryArray
@@ -21,6 +23,9 @@ T = TypeVar("T")
 
 
 class Queue(Generic[T]):
+    """A wrapper for a multiprocessing queue object that makes Queue typed. This is used in order to appease mypy type
+    checker"""
+
     def __init__(self) -> None:
         self._queue = UntypedQueue()  # type: ignore
 
@@ -43,21 +48,25 @@ class Queue(Generic[T]):
 class Camera:
     """A wrapper class for an opencv VideoCapture object.
 
+    Args:
+        id: camera id
+
     Attributes:
+        id: camera id
         specs: dictionary holding the specifications of the camera. This includes fps, frame_width, frame_height
         _vid: opencv video capture object.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, id: int = 0) -> None:
         self.specs: Dict[str, Any] = {}
+        self.id = id
         self._vid: cv2.VideoCapture | None = None
         self.connect()
         if self._vid is not None:
             self.specs["fps"] = self._vid.get(cv2.CAP_PROP_FPS)
             self.specs["frame_width"] = self._vid.get(cv2.CAP_PROP_FRAME_WIDTH)
             self.specs["frame_height"] = self._vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        else:
-            raise Exception("could not connect to video camera")
+
         self.disconnect()
 
     def __del__(self) -> None:
@@ -66,7 +75,11 @@ class Camera:
 
     def connect(self) -> None:
         """Connects to camera and prepares for image collection."""
-        self._vid = cv2.VideoCapture(0)
+        self._vid = cv2.VideoCapture(self.id)
+        # try:
+        #     self.grab_frame()
+        # except Exception:
+        #     raise Exception("could not connect to camera")
 
     def disconnect(self) -> None:
         """Disconnects from camera."""
@@ -83,13 +96,13 @@ class Camera:
         """Grabs an image from the camera.
 
         Raises:
-            Exception if camera isn't connected.
+            Exception if camera isn't connected or did not yield an image.
 
         """
         if self._vid:
             ret, frame = self._vid.read()
-            # if not ret:
-            #     raise Exception("camera did not yield an image")
+            if not ret:
+                raise Exception("camera did not yield an image")
             return frame
         else:
             raise Exception("camera not connected")
@@ -120,7 +133,7 @@ class VideoSystem:
         ValueError: If save format is specified to an invalid format.
     """
 
-    Save_Format_Type = Literal["png", "jpg", "tif", "mp4"]
+    Save_Format_Type = Literal["png", "jpg", "tiff", "mp4"]
 
     def __init__(self, save_directory: str, camera: Camera, save_format: Save_Format_Type = "png"):
         # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
@@ -147,6 +160,7 @@ class VideoSystem:
         self._save_process: Process | None = None
         self._terminator_array: SharedMemoryArray | None = None
         self._image_queue: Queue[Any] | None = None
+        
 
         self._listener: keyboard.Listener | None = None
 
@@ -212,7 +226,7 @@ class VideoSystem:
             daemon=True,
         )
 
-        if self._save_format in {"tif", "png", "jpg"}:
+        if self._save_format in {"tiff", "png", "jpg"}:
             self._save_process = Process(
                 target=VideoSystem._save_images_loop,
                 args=(self._image_queue, self._terminator_array, self.save_directory),
@@ -363,8 +377,25 @@ class VideoSystem:
         """
         if not img_queue.empty():  # empty is unreliable way to check if Queue is empty
             frame = img_queue.get()
+            # print(frame.shape)
             filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
+
+            # print(np.min(frame), np.max(frame))
+            # temp = frame[:, :, 0]
+            # frame[:,:,0] = frame[:, :, 1]
+            # frame[:, :, 1]=temp
+
+            # tff.imwrite(
+            #         filename,
+            #         data=frame,
+            #         photometric='rgb',
+            #     )
+            # frame = tff.imread(
+            #     filename
+            # )
+            # filename = filename[:-3] + 'png'
             cv2.imwrite(filename, frame)
+            # print('saved image')
             return True
         return False
 
@@ -416,7 +447,7 @@ class VideoSystem:
 
         This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
         the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
+        fast as possible. This function is meant to be run as a process and will create an infinite loop if run on its
         own.
 
         Args:

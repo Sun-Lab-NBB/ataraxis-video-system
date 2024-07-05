@@ -48,7 +48,8 @@ dependencies = [
     "opencv-python",
     "ffmpeg-python",
     "ataraxis-time",
-    "ataraxis-automation",
+    "ataraxis-automation<2",
+    "tifffile >= 1",
 ]
 
 [project.urls]
@@ -74,6 +75,7 @@ dev = [
     "sphinx-click",
     "mypy",
     "ruff",
+    "types-pillow",
     "build",
     "twine",
     "grayskull",
@@ -82,6 +84,10 @@ dev = [
     "pillow",
     # Packages that may not be available from conda for all supported OS versions.
     "tox-uv",
+]
+
+condarun = [
+    "tifffile >= 1"
 ]
 
 # Use this section to expose some scripts as a short command callable from the shell. The line below is just an
