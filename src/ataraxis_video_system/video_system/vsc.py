@@ -1,7 +1,9 @@
 import multiprocessing
 import os
-from multiprocessing import Process, ProcessError
-from multiprocessing import Queue as UntypedQueue
+from multiprocessing import Pool, Process, ProcessError
+from multiprocessing import Queue as UntypedMPQueue
+from queue import Queue
+from threading import Thread
 from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 
 import cv2
@@ -22,12 +24,12 @@ precision: Precision_Type = "ms"
 T = TypeVar("T")
 
 
-class Queue(Generic[T]):
+class MPQueue(Generic[T]):
     """A wrapper for a multiprocessing queue object that makes Queue typed. This is used in order to appease mypy type
     checker"""
 
     def __init__(self) -> None:
-        self._queue = UntypedQueue()  # type: ignore
+        self._queue = UntypedMPQueue()  # type: ignore
 
     def put(self, item: T) -> None:
         self._queue.put(item)
@@ -115,6 +117,8 @@ class VideoSystem:
         save_directory: location where system saves images.
         camera: camera for image collection.
         save_format: the format in which to save camera data
+        num_processes: number of processes to run the image consumer loop on. Applies only to image saving. 
+        num_threads: The number of image saving threads to run per process. Applies only to image saving.
 
     Attributes:
         save_directory: location where system saves images.
@@ -122,24 +126,34 @@ class VideoSystem:
         _save_format: the format in which to save camera data
         _running: whether or not the video system is running.
         _input_process: multiprocessing process to control image collection.
-        _save_process: multiprocessing process to control image saving.
+        _consumer_processes: list multiprocessing processes to control image saving.
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
         _img_queue: multiprocessing queue to hold images before saving.
         _listener: thread to detect key_presses for key based control of threads.
+        _num_consumer_processes: number of processes to run the image consumer loop on. Applies only to image saving. 
+        _threads_per_process: The number of image saving threads to run per process. Applies only to image saving.
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
         ValueError: If save format is specified to an invalid format.
+        ProcessError: If the computer does not have enough cpu cores.
     """
 
     Save_Format_Type = Literal["png", "jpg", "tiff", "mp4"]
 
-    def __init__(self, save_directory: str, camera: Camera, save_format: Save_Format_Type = "png"):
-        # # Check to see if class was run from within __name__ = "__main__" or equivalent scope
+    def __init__(
+        self,
+        save_directory: str,
+        camera: Camera,
+        save_format: Save_Format_Type = "png",
+        num_processes: int = 3,
+        num_threads: int = 4,
+    ):
+        # Check to see if class was run from within __name__ = "__main__" or equivalent scope
         in_unprotected_scope: bool = False
         try:
-            p = multiprocessing.Process(target=VideoSystem._empty_function)
+            p = Process(target=VideoSystem._empty_function)
             p.start()
             p.join()
         except RuntimeError:
@@ -151,16 +165,23 @@ class VideoSystem:
         if save_format not in get_args(VideoSystem.Save_Format_Type):
             raise ValueError("Invalid save format.")
 
+        num_cores = multiprocessing.cpu_count()
+        if num_processes > num_cores:
+            raise ProcessError(
+                f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores."
+            )
+
         self.save_directory: str = save_directory
         self.camera: Camera = camera
         self._save_format = save_format
+        self._num_consumer_processes = num_processes
+        self._threads_per_process = num_threads
         self._running: bool = False
 
         self._input_process: Process | None = None
-        self._save_process: Process | None = None
+        self._consumer_processes: list[Process] = []
         self._terminator_array: SharedMemoryArray | None = None
-        self._image_queue: Queue[Any] | None = None
-        
+        self._image_queue: MPQueue[Any] | None = None
 
         self._listener: keyboard.Listener | None = None
 
@@ -174,6 +195,8 @@ class VideoSystem:
         listen_for_keypress: bool = False,
         terminator_array_name: str = "terminator_array",
         save_format: Save_Format_Type | None = None,
+        num_processes: int | None = None,
+        num_threads: int | None = None,
     ) -> None:
         """Starts the video system.
 
@@ -183,16 +206,19 @@ class VideoSystem:
             terminator_array_name: The name of the shared_memory_array to be created. When running multiple
                 video_systems concurrently, each terminator_array should have a unique name.
             save_format: the format in which to save camera data
+            num_processes: number of processes to run the image consumer loop on. Applies only to image saving. 
+            num_threads: The number of image saving threads to run per process. Applies only to image saving.
 
         Raises:
             ProcessError: If the function is created not within the '__main__' scope.
             ValueError: If save format is specified to an invalid format.
+            ProcessError: If the computer does not have enough cpu cores.
         """
 
         # Check to see if class was run from within __name__ = "__main__" or equivalent scope
         in_unprotected_scope: bool = False
         try:
-            p = multiprocessing.Process(target=VideoSystem._empty_function)
+            p = Process(target=VideoSystem._empty_function)
             p.start()
             p.join()
         except RuntimeError:
@@ -207,9 +233,20 @@ class VideoSystem:
             else:
                 raise ValueError("Invalid save format.")
 
+        if num_processes is not None:
+            num_cores = multiprocessing.cpu_count()
+            if num_processes > num_cores:
+                raise ProcessError(
+                    f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores."
+                )
+            self._num_consumer_processes = num_processes
+
+        if num_threads is not None:
+            self._threads_per_process = num_threads
+
         self.delete_images()
 
-        self._image_queue = Queue()
+        self._image_queue = MPQueue()
 
         prototype = np.array(
             [1, 1, 1], dtype=np.int32
@@ -221,25 +258,38 @@ class VideoSystem:
         )
 
         self._input_process = Process(
-            target=VideoSystem._input_stream,
+            target=VideoSystem._produce_images_loop,
             args=(self.camera, self._image_queue, self._terminator_array),
             daemon=True,
         )
 
         if self._save_format in {"tiff", "png", "jpg"}:
-            self._save_process = Process(
-                target=VideoSystem._save_images_loop,
-                args=(self._image_queue, self._terminator_array, self.save_directory),
-                daemon=True,
-            )
+            for _ in range(self._num_consumer_processes):
+                self._consumer_processes.append(
+                    Process(
+                        target=VideoSystem._save_images_loop,
+                        args=(
+                            self._image_queue,
+                            self._terminator_array,
+                            self.save_directory,
+                            self._threads_per_process,
+                        ),
+                        daemon=True,
+                    )
+                )
         else:  # self._save_format == "mp4"
-            self._save_process = Process(
-                target=VideoSystem._save_video_loop,
-                args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs),
-                daemon=True,
+            self._consumer_processes.append(
+                Process(
+                    target=VideoSystem._save_video_loop,
+                    args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs),
+                    daemon=True,
+                )
             )
+
+        # Start save processes first to minimize queue buildup
+        for process in self._consumer_processes:
+            process.start()
         self._input_process.start()
-        self._save_process.start()
 
         if listen_for_keypress:
             self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
@@ -277,7 +327,7 @@ class VideoSystem:
     def stop(self) -> None:
         """Stops image collection and saving. Ends all processes."""
         if self._running == True:
-            self._image_queue = Queue()  # A weak way to empty queue
+            self._image_queue = MPQueue()  # A weak way to empty queue
             if self._terminator_array is not None:
                 self._terminator_array.connect()
                 self._terminator_array.write_data(slice(0, 3), np.array([0, 0, 0], dtype=np.int32))
@@ -286,17 +336,14 @@ class VideoSystem:
                 error_message = "Failure to start the stop video system  because _terminator_array is not initialized."
                 raise TypeError(error_message)
 
-            if self._save_process is not None:
-                self._save_process.join()
-            else:  # This error should never occur
-                error_message = "Failure to start the stop video system  because _save_process is not initialized."
-                raise TypeError(error_message)
-
             if self._input_process is not None:
                 self._input_process.join()
             else:  # This error should never occur
                 error_message = "Failure to start the stop video system  because _input_process is not initialized."
                 raise TypeError(error_message)
+
+            for process in self._consumer_processes:
+                process.join()
 
             if self._listener is not None:
                 self._listener.stop()
@@ -331,8 +378,8 @@ class VideoSystem:
         VideoSystem._delete_files_in_directory(self.save_directory)
 
     @staticmethod
-    def _input_stream(
-        camera: Camera, img_queue: Queue[Any], terminator_array: SharedMemoryArray, fps: float | None = None
+    def _produce_images_loop(
+        camera: Camera, img_queue: MPQueue[Any], terminator_array: SharedMemoryArray, fps: float | None = None
     ) -> None:
         """Iteratively grabs images from the camera and adds to the img_queue.
 
@@ -352,18 +399,19 @@ class VideoSystem:
         camera.connect()
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
-        first: bool = True
+        n_images_produced = 0
         while terminator_array.read_data(2):
             if terminator_array.read_data(0):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    img_queue.put(camera.grab_frame())
+                    img_queue.put((camera.grab_frame(), n_images_produced))
+                    n_images_produced += 1
                     if fps:
                         run_timer.reset()
         camera.disconnect()
         terminator_array.disconnect()
 
     @staticmethod
-    def _save_frame(img_queue: Queue[Any], save_directory: str, img_id: int) -> bool:
+    def _save_frame(img_queue: MPQueue[Any], save_directory: str) -> bool:
         """Saves one frame as a png image.
 
         Does nothing if there are no images in the queue.
@@ -371,12 +419,11 @@ class VideoSystem:
         Args:
             img_queue: A multiprocessing queue to hold images before saving.
             save_directory: relative path to location  where image is to be saved.
-            img_id: id tag for image.
         Returns:
             True if an image was saved, otherwise False.
         """
         if not img_queue.empty():  # empty is unreliable way to check if Queue is empty
-            frame = img_queue.get()
+            frame, img_id = img_queue.get()
             # print(frame.shape)
             filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
 
@@ -400,8 +447,20 @@ class VideoSystem:
         return False
 
     @staticmethod
+    def _frame_saver(q: Queue[Any], save_directory: str) -> None:
+        while True:
+            frame, img_id = q.get()
+            filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
+            cv2.imwrite(filename, frame)
+            q.task_done()
+
+    @staticmethod
     def _save_images_loop(
-        img_queue: Queue[Any], terminator_array: SharedMemoryArray, save_directory: str, fps: float | None = None
+        img_queue: MPQueue[Any],
+        terminator_array: SharedMemoryArray,
+        save_directory: str,
+        num_threads: int,
+        fps: float | None = None,
     ) -> None:
         """Iteratively grabs images from the img_queue and saves them as png files.
 
@@ -418,23 +477,27 @@ class VideoSystem:
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
 
+        q: Queue[Any] = Queue()
+        for i in range(num_threads):
+            worker = Thread(target=VideoSystem._frame_saver, args=(q, save_directory))
+            worker.setDaemon(True)
+            worker.start()
+
         terminator_array.connect()
-        num_imgs_saved: int = 0
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
         while terminator_array.read_data(2):
             if terminator_array.read_data(1):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    saved = VideoSystem._save_frame(img_queue, save_directory, num_imgs_saved)
-                    if saved:
-                        num_imgs_saved += 1
+                    q.put(img_queue.get())
+                    # VideoSystem._save_frame(img_queue, save_directory)
                     if fps:
                         run_timer.reset()
         terminator_array.disconnect()
 
     @staticmethod
     def _save_video_loop(
-        img_queue: Queue[Any],
+        img_queue: MPQueue[Any],
         terminator_array: SharedMemoryArray,
         save_directory: str,
         camera_specs: Dict[str, Any],
@@ -483,7 +546,7 @@ class VideoSystem:
             if terminator_array.read_data(1):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     if not img_queue.empty():
-                        image = img_queue.get()
+                        image, _ = img_queue.get()
                         ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
                     if fps:
                         run_timer.reset()

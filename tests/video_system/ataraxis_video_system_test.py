@@ -243,16 +243,28 @@ def test_save_frame(temp_directory):
 def test_save_images_loop(temp_directory):
     test_directory = temp_directory
 
+    num_images = 25
     test_queue = Queue()
 
-    # Add images to the queue
-    num_images = 25
     for i in range(num_images):
         img = create_image(i * 10)
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
         test_queue.put((cv_img, i))
+
+    test_directory = temp_directory
+
+    num_images = 25
+    test_queue = Queue()
+
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put((cv_img, i))
+    assert True
     VideoSystem._delete_files_in_directory(test_directory)
 
     assert test_queue.qsize() == num_images
@@ -262,13 +274,13 @@ def test_save_images_loop(temp_directory):
 
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_save_array1", bad_prototype1)
-    VideoSystem._save_images_loop(test_queue, test_array, test_directory)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
 
     assert len(os.listdir(test_directory)) == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array("test_save_array2", bad_prototype2)
-    VideoSystem._save_images_loop(test_queue, test_array, test_directory)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
 
     assert len(os.listdir(test_directory)) == 0
 
@@ -278,7 +290,7 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_save_array3", bad_prototype3)
     test_array.connect()
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
     save_process.start()
     time.sleep(2)
 
@@ -295,7 +307,7 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_save_array4", prototype)
     test_array.connect()
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
     save_process.start()
     time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
@@ -324,13 +336,17 @@ def test_save_images_loop(temp_directory):
     test_array = SharedMemoryArray.create_array("test_save_array5", prototype)
     test_array.connect()
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 1))
+    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5, 1))
     save_process.start()
     time.sleep(2)
     test_array.write_data(slice(2, 3), np.array([0], dtype=np.int32))
     save_process.join()
     test_array.disconnect()
     assert 1 < len(os.listdir(test_directory)) < 4
+
+    # Empty the queue
+    test_queue = Queue()
+    assert False
 
 
 def test_save_video_loop(temp_directory, camera):
@@ -425,6 +441,7 @@ def test_start(video_system):
     video_system.delete_images()
 
     assert False
+
 
 @pytest.mark.xdist_group(name="uses_camera_group")
 def test_mp4_save(video_system):
