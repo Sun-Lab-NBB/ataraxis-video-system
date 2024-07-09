@@ -410,7 +410,6 @@ def test_start(video_system):
     assert len(os.listdir(test_directory)) == 0
     assert not video_system._running
     assert not video_system._input_process
-    assert not video_system._save_process
     assert not video_system._terminator_array
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
@@ -429,7 +428,6 @@ def test_start(video_system):
 
     assert video_system._running
     assert video_system._input_process
-    assert video_system._save_process
     assert video_system._terminator_array
     assert video_system._image_queue
 
@@ -453,7 +451,6 @@ def test_mp4_save(video_system):
     assert len(os.listdir(test_directory)) == 0
     assert not video_system._running
     assert not video_system._input_process
-    assert not video_system._save_process
     assert not video_system._terminator_array
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
@@ -462,7 +459,6 @@ def test_mp4_save(video_system):
 
     assert video_system._running
     assert video_system._input_process
-    assert video_system._save_process
     assert video_system._terminator_array
     assert video_system._image_queue
 
