@@ -1,5 +1,5 @@
 import os
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 from threading import Thread
 import multiprocessing
@@ -39,6 +39,9 @@ class MPQueue(Generic[T]):
 
     def get(self) -> T:
         return cast(T, self._queue.get())
+
+    def get_nowait(self) -> T:
+        return cast(T, self._queue.get_nowait())
 
     def empty(self) -> bool:
         return self._queue.empty()
@@ -347,6 +350,9 @@ class VideoSystem:
             for process in self._consumer_processes:
                 process.join()
 
+            # Empty joined processes from list to prepare for the system being started again
+            self._consumer_processes = []
+
             if self._listener is not None:
                 self._listener.stop()
                 self._listener = None
@@ -402,8 +408,8 @@ class VideoSystem:
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         n_images_produced = 0
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=0, convert_output=True):
+        while terminator_array.read_data(index=2, convert_output=True)[0]:
+            if terminator_array.read_data(index=0, convert_output=True)[0]:
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     img_queue.put((camera.grab_frame(), n_images_produced))
                     n_images_produced += 1
@@ -450,11 +456,15 @@ class VideoSystem:
 
     @staticmethod
     def _frame_saver(q: Queue[Any], save_directory: str) -> None:
-        while True:
+        terminated = False
+        while not terminated:
             frame, img_id = q.get()
-            filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
-            cv2.imwrite(filename, frame)
-            q.task_done()
+            if img_id != -1:
+                filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
+                cv2.imwrite(filename, frame)
+                q.task_done()
+            else:
+                terminated = True
 
     @staticmethod
     def _save_images_loop(
@@ -478,24 +488,34 @@ class VideoSystem:
             save_directory: relative path to location where images are to be saved.
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
-
         q: Queue[Any] = Queue()
+        workers = []
         for i in range(num_threads):
-            worker = Thread(target=VideoSystem._frame_saver, args=(q, save_directory))
+            workers.append(Thread(target=VideoSystem._frame_saver, args=(q, save_directory)))
+        for worker in workers:
             worker.daemon = True
             worker.start()
 
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=1, convert_output=True):
+        while terminator_array.read_data(index=2, convert_output=True)[0]:
+            if terminator_array.read_data(index=1, convert_output=True)[0]:
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    q.put(img_queue.get())
+                    try:
+                        img = img_queue.get_nowait()
+                        q.put(img)
+                    except Empty:
+                        pass
                     # VideoSystem._save_frame(img_queue, save_directory)
                     if fps:
                         run_timer.reset()
         terminator_array.disconnect()
+        for _ in range(num_threads):
+            q.put((None, -1))
+
+        for worker in workers:
+            worker.join()
 
     @staticmethod
     def _save_video_loop(
@@ -543,8 +563,8 @@ class VideoSystem:
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=1, convert_output=True):
+        while terminator_array.read_data(index=2, convert_output=True)[0]:
+            if terminator_array.read_data(index=1, convert_output=True)[0]:
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     if not img_queue.empty():
                         image, _ = img_queue.get()
@@ -566,7 +586,6 @@ class VideoSystem:
             terminator_array: A multiprocessing array to hold terminate flags.
         """
         try:
-            print(key.char)
             if key.char == "q":
                 self.stop_image_production()
                 print("Stopped taking images")
@@ -577,8 +596,9 @@ class VideoSystem:
             pass
         if self._running:
             terminator_array.connect()
-            if not terminator_array.read_data(index=0, convert_output=True) and not terminator_array.read_data(
-                index=1, convert_output=True
+            if (
+                not terminator_array.read_data(index=0, convert_output=True)[0]
+                and not terminator_array.read_data(index=1, convert_output=True)[0]
             ):
                 terminator_array.disconnect()
                 self.stop()

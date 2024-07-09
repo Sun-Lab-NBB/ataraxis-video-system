@@ -253,18 +253,6 @@ def test_save_images_loop(temp_directory):
         img.save(PIL_path)
         cv_img = cv2.imread(PIL_path)
         test_queue.put((cv_img, i))
-
-    test_directory = temp_directory
-
-    num_images = 25
-    test_queue = MPQueue()
-
-    for i in range(num_images):
-        img = create_image(i * 10)
-        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
-        img.save(PIL_path)
-        cv_img = cv2.imread(PIL_path)
-        test_queue.put((cv_img, i))
     assert True
     VideoSystem._delete_files_in_directory(test_directory)
 
@@ -297,20 +285,19 @@ def test_save_images_loop(temp_directory):
 
     test_array.write_data(index=2, data=0)
     save_process.join()
+    test_array.disconnect()
 
     assert len(os.listdir(test_directory)) == 0
 
     # Run save_images_loop as fast as possible for two seconds
 
-    print(test_queue.qsize())
-
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array(name="test_save_array4", prototype=prototype)
+    test_array = SharedMemoryArray.create_array(name="test_save_array47", prototype=prototype)
     test_array.connect()
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
+    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
     save_process.start()
-    time.sleep(2)
+    time.sleep(3)
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
@@ -344,10 +331,6 @@ def test_save_images_loop(temp_directory):
     save_process.join()
     test_array.disconnect()
     assert 1 < len(os.listdir(test_directory)) < 4
-
-    # Empty the queue
-    test_queue = MPQueue()
-    assert False
 
 
 def test_save_video_loop(temp_directory, camera):
@@ -431,15 +414,12 @@ def test_start(video_system):
     assert video_system._terminator_array
     assert video_system._image_queue
 
-    time.sleep(10)
-    print(video_system._image_queue.qsize())
+    time.sleep(5)
 
     assert len(os.listdir(test_directory)) > 0
-
     video_system.stop()
     video_system.delete_images()
-
-    assert False
+    assert len(os.listdir(test_directory)) == 0
 
 
 @pytest.mark.xdist_group(name="uses_camera_group")
@@ -689,19 +669,6 @@ def test_type_errors(video_system):
 
     video_system.start()
 
-    temp = video_system._save_process
-    video_system._save_process = None
-
-    with pytest.raises(TypeError):
-        video_system.stop()
-
-    video_system._save_process = temp
-
-    video_system.start()
-    video_system.stop()
-
-    video_system.start()
-
     temp = video_system._input_process
     video_system._input_process = None
 
@@ -709,6 +676,11 @@ def test_type_errors(video_system):
         video_system.stop()
 
     video_system._input_process = temp
+    for process in video_system._consumer_processes:
+        process.join()
+
+        # Empty joined processes from list to prepare for the system being started again
+    video_system._consumer_processes = []
 
     video_system.start()
     video_system.stop()

@@ -1,3 +1,8 @@
+import numpy as np
+from ataraxis_data_structures import SharedMemoryArray
+
+from ataraxis_video_system.video_system.vsc import MPQueue
+
 from .vsc import Camera, VideoSystem
 
 
