@@ -17,7 +17,7 @@ import ffmpeg  # type: ignore
 from pynput import keyboard
 import tifffile as tff
 from numpy.typing import NDArray
-from ataraxis_time import PrecisionTimer  # type: ignore
+from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import SharedMemoryArray
 
 # Used in many functions to convert between units
@@ -297,7 +297,8 @@ class VideoSystem:
         self._input_process.start()
 
         if listen_for_keypress:
-            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, self._terminator_array))
+            terminator_array: SharedMemoryArray = self._terminator_array
+            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, terminator_array))  # type: ignore
             self._listener.start()  # start to listen on a separate thread
 
         self._running = True
@@ -408,8 +409,8 @@ class VideoSystem:
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         n_images_produced = 0
-        while terminator_array.read_data(index=2, convert_output=True)[0]:
-            if terminator_array.read_data(index=0, convert_output=True)[0]:
+        while terminator_array.read_data(index=2, convert_output=True):
+            if terminator_array.read_data(index=0, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     img_queue.put((camera.grab_frame(), n_images_produced))
                     n_images_produced += 1
@@ -499,8 +500,8 @@ class VideoSystem:
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True)[0]:
-            if terminator_array.read_data(index=1, convert_output=True)[0]:
+        while terminator_array.read_data(index=2, convert_output=True):
+            if terminator_array.read_data(index=1, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     try:
                         img = img_queue.get_nowait()
@@ -563,8 +564,8 @@ class VideoSystem:
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
         img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True)[0]:
-            if terminator_array.read_data(index=1, convert_output=True)[0]:
+        while terminator_array.read_data(index=2, convert_output=True):
+            if terminator_array.read_data(index=1, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
                     if not img_queue.empty():
                         image, _ = img_queue.get()
@@ -575,7 +576,9 @@ class VideoSystem:
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
 
-    def _on_press(self, key: keyboard.Key | keyboard.KeyCode, terminator_array: SharedMemoryArray) -> bool | None:
+    def _on_press(
+        self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray
+    ) -> bool | None:
         """Changes terminator flags on specific key presses.
 
         Stops listener if both terminator flags have been set to 0. Stops the listener if video_system has stopped
@@ -585,20 +588,18 @@ class VideoSystem:
             key: the key that was pressed.
             terminator_array: A multiprocessing array to hold terminate flags.
         """
-        try:
+        if key is not None and hasattr(key, "char"):
             if key.char == "q":
                 self.stop_image_production()
                 print("Stopped taking images")
             elif key.char == "w":
                 self._stop_image_saving()
                 print("Stopped saving images")
-        except AttributeError:
-            pass
+
         if self._running:
             terminator_array.connect()
-            if (
-                not terminator_array.read_data(index=0, convert_output=True)[0]
-                and not terminator_array.read_data(index=1, convert_output=True)[0]
+            if not terminator_array.read_data(index=0, convert_output=True) and not terminator_array.read_data(
+                index=1, convert_output=True
             ):
                 terminator_array.disconnect()
                 self.stop()
