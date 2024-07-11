@@ -10,7 +10,6 @@ from multiprocessing import (
     ProcessError,
 )
 
-from PIL import Image
 import cv2
 import numpy as np
 import ffmpeg  # type: ignore
@@ -77,9 +76,9 @@ class Camera:
 
         self.disconnect()
 
-    def __del__(self) -> None:
-        """Ensures that camera is disconnected upon garbage collection."""
-        self.disconnect()
+    # def __del__(self) -> None:
+    #     """Ensures that camera is disconnected upon garbage collection."""
+    #     self.disconnect()
 
     def connect(self) -> None:
         """Connects to camera and prepares for image collection."""
@@ -307,9 +306,7 @@ class VideoSystem:
         """Stops image collection."""
         if self._running:
             if self._terminator_array is not None:
-                self._terminator_array.connect()
                 self._terminator_array.write_data(index=0, data=0)
-                self._terminator_array.disconnect()
             else:  # This error should never occur
                 error_message = (
                     "Failure to start the stop image production process because _terminator_array is not initialized."
@@ -321,9 +318,7 @@ class VideoSystem:
         """Stops image saving."""
         if self._running:
             if self._terminator_array is not None:
-                self._terminator_array.connect()
                 self._terminator_array.write_data(index=1, data=0)
-                self._terminator_array.disconnect()
             else:  # This error should never occur
                 error_message = (
                     "Failure to start the stop image saving process because _terminator_array is not initialized."
@@ -335,9 +330,7 @@ class VideoSystem:
         if self._running:
             self._image_queue = MPQueue()  # A weak way to empty queue
             if self._terminator_array is not None:
-                self._terminator_array.connect()
                 self._terminator_array.write_data(index=(0, 3), data=[0, 0, 0])
-                self._terminator_array.disconnect()
             else:  # This error should never occur
                 error_message = "Failure to start the stop video system  because _terminator_array is not initialized."
                 raise TypeError(error_message)
@@ -357,6 +350,10 @@ class VideoSystem:
             if self._listener is not None:
                 self._listener.stop()
                 self._listener = None
+
+            self._terminator_array.disconnect()
+            if self._terminator_array._buffer is not None:
+                self._terminator_array._buffer.unlink()  # kill terminator array
 
             self._running = False
 
@@ -461,7 +458,10 @@ class VideoSystem:
         while not terminated:
             frame, img_id = q.get()
             if img_id != -1:
-                filename = os.path.join(save_directory, "img" + str(img_id) + ".png")
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                filename = os.path.join(save_directory, "img" + str(img_id) + ".tiff")
+                # tff.imwrite(filename, frame_rgb, compression='zlib', compressionargs={'level': 9})
+
                 cv2.imwrite(filename, frame)
                 q.task_done()
             else:
@@ -597,11 +597,9 @@ class VideoSystem:
                 print("Stopped saving images")
 
         if self._running:
-            terminator_array.connect()
             if not terminator_array.read_data(index=0, convert_output=True) and not terminator_array.read_data(
                 index=1, convert_output=True
             ):
-                terminator_array.disconnect()
                 self.stop()
                 return False  # stop listener
         else:

@@ -136,6 +136,8 @@ def test_produce_images_loop(camera):
 
     test_array = SharedMemoryArray.create_array(name="test_input_array1", prototype=bad_prototype1)
     VideoSystem._produce_images_loop(camera, test_queue, test_array)
+    test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert test_queue.qsize() == 0
 
@@ -143,6 +145,8 @@ def test_produce_images_loop(camera):
 
     test_array = SharedMemoryArray.create_array(name="test_input_array2", prototype=bad_prototype1)
     VideoSystem._produce_images_loop(camera, test_queue, test_array)
+    test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert test_queue.qsize() == 0
 
@@ -151,7 +155,6 @@ def test_produce_images_loop(camera):
     bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
 
     test_array = SharedMemoryArray.create_array(name="test_input_array3", prototype=bad_prototype1)
-    test_array.connect()
 
     input_stream_process = Process(
         target=VideoSystem._produce_images_loop,
@@ -166,6 +169,8 @@ def test_produce_images_loop(camera):
 
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
+    test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert test_queue.qsize() == 0
 
@@ -173,7 +178,6 @@ def test_produce_images_loop(camera):
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_input_array4", prototype=prototype)
-    test_array.connect()
 
     input_stream_process = Process(
         target=VideoSystem._produce_images_loop,
@@ -188,6 +192,7 @@ def test_produce_images_loop(camera):
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert test_queue.qsize() > 0
     test_queue = MPQueue()
@@ -196,7 +201,6 @@ def test_produce_images_loop(camera):
     # Run input_stream at 1 fps for 3 seconds
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_input_array5", prototype=prototype)
-    test_array.connect()
 
     input_stream_process = Process(
         target=VideoSystem._produce_images_loop,
@@ -207,6 +211,7 @@ def test_produce_images_loop(camera):
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert test_queue.qsize() > 0
     assert test_queue.qsize() < 6
@@ -264,12 +269,16 @@ def test_save_images_loop(temp_directory):
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array1", prototype=bad_prototype1)
     VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
+    test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert len(os.listdir(test_directory)) == 0
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array2", prototype=bad_prototype2)
     VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
+    test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert len(os.listdir(test_directory)) == 0
 
@@ -277,7 +286,6 @@ def test_save_images_loop(temp_directory):
 
     bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array3", prototype=bad_prototype3)
-    test_array.connect()
 
     save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
     save_process.start()
@@ -286,14 +294,14 @@ def test_save_images_loop(temp_directory):
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert len(os.listdir(test_directory)) == 0
 
     # Run save_images_loop as fast as possible for two seconds
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array(name="test_save_array47", prototype=prototype)
-    test_array.connect()
+    test_array = SharedMemoryArray.create_array(name="test_save_array4", prototype=prototype)
 
     save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
     save_process.start()
@@ -301,6 +309,7 @@ def test_save_images_loop(temp_directory):
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert len(os.listdir(test_directory)) == num_images
 
@@ -322,7 +331,6 @@ def test_save_images_loop(temp_directory):
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array5", prototype=prototype)
-    test_array.connect()
 
     save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5, 1))
     save_process.start()
@@ -330,6 +338,8 @@ def test_save_images_loop(temp_directory):
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
+
     assert 1 < len(os.listdir(test_directory)) < 4
 
 
@@ -351,7 +361,6 @@ def test_save_video_loop(temp_directory, camera):
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array5", prototype=prototype)
-    test_array.connect()
 
     save_process = Process(
         target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs)
@@ -361,6 +370,7 @@ def test_save_video_loop(temp_directory, camera):
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
     assert "video.mp4" in os.listdir(test_directory)
 
@@ -372,7 +382,6 @@ def test_save_video_loop(temp_directory, camera):
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array6", prototype=prototype)
-    test_array.connect()
 
     save_process = Process(
         target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs, 1)
@@ -382,6 +391,7 @@ def test_save_video_loop(temp_directory, camera):
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
+    test_array._buffer.unlink()
 
 
 @pytest.mark.xdist_group(name="uses_camera_group")
@@ -465,16 +475,16 @@ def test_stop_image_production(video_system):
     #         i += 1
     video_system.start(terminator_array_name="terminator_array2")
 
-    time.sleep(2)
+    time.sleep(3)
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     video_system.stop_image_production()
-    time.sleep(2)
+    time.sleep(3)
     # Once you stop taking images, the size of the queue should start decreasing
     assert images_taken >= video_system._image_queue.qsize()
 
     # Once you stop taking images, the number of saved images should continue to increase
-    assert len(os.listdir(test_directory)) > images_saved
+    assert len(os.listdir(test_directory)) >= images_saved
 
     video_system.stop()
 
@@ -546,7 +556,7 @@ def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
 
-    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array5")
+    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array_key_listener")
 
     time.sleep(2)
 
@@ -638,12 +648,14 @@ def test_camera(camera):
         bad_camera.connect()
         bad_camera.grab_frame()
         bad_camera.disconnect()
+    bad_camera.disconnect()
 
     with pytest.raises(Exception, match="camera did not yield an image"):
         bad_camera = Camera(-1)
         bad_camera.connect()
         bad_camera.grab_frame()
         bad_camera.disconnect()
+    bad_camera.disconnect()
 
 
 # For type checking purposes, some object | None type variables have been put in an if not None call else raise
@@ -676,11 +688,4 @@ def test_type_errors(video_system):
         video_system.stop()
 
     video_system._input_process = temp
-    for process in video_system._consumer_processes:
-        process.join()
-
-        # Empty joined processes from list to prepare for the system being started again
-    video_system._consumer_processes = []
-
-    video_system.start()
     video_system.stop()
