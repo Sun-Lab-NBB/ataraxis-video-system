@@ -534,7 +534,7 @@ def test_stop(video_system):
     #     except FileExistsError:
     #         name = increment_name(name)
     #         i += 1
-    video_system.start(terminator_array_name="terminator_array4")
+    video_system.start(terminator_array_name="terminator_array4", num_processes=5, num_threads=6)
 
     time.sleep(2)
     video_system.stop()

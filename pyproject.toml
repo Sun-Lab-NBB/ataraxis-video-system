@@ -51,6 +51,7 @@ dependencies = [
     "ataraxis-base-utilities>=1",
     "ataraxis-data-structures>=0",
     "tifffile >=2024",
+    "imagecodecs >= 2024, < 2025",
 ]
 
 [project.urls]
@@ -69,6 +70,7 @@ conda_run = [
     "pynput>=1",
     "ffmpeg-python>=0",
     "tifffile >=2024",
+    "imagecodecs >= 2024, < 2025",
 ]
 
 # Depepndencies known to be installable with conda for all development platforms (OSX ARM64, WIN AMD64, LIN AMD64).
