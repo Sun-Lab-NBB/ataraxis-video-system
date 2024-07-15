@@ -121,28 +121,28 @@ class VideoSystem:
     Args:
         save_directory: location where the system saves images.
         camera: camera for image collection.
-        save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is 
+        save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
-        tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-            relevant when save_format is specified as 'tiff.' 
+        tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+            relevant when save_format is specified as 'tiff.'
         jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-            compression value is only relevant when save_format is specified as 'jpg.' 
+            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+            compression value is only relevant when save_format is specified as 'jpg.'
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
     Attributes:
         save_directory: location where the system saves images.
         camera: camera for image collection.
-        _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is 
+        _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
-        _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-            relevant when save_format is specified as 'tiff.' 
+        _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+            relevant when save_format is specified as 'tiff.'
         _jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-            compression value is only relevant when save_format is specified as 'jpg.' 
+            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+            compression value is only relevant when save_format is specified as 'jpg.'
         _running: whether or not the video system is running.
         _input_process: multiprocessing process to control the image collection.
         _consumer_processes: list multiprocessing processes to control image saving.
@@ -168,8 +168,8 @@ class VideoSystem:
         save_directory: str,
         camera: Camera,
         save_format: Save_Format_Type = "png",
-        tiff_compression_level : int = 6,
-        jpeg_quality:int  = 95,
+        tiff_compression_level: int = 6,
+        jpeg_quality: int = 95,
         num_processes: int = 3,
         num_threads: int = 4,
     ):
@@ -179,18 +179,20 @@ class VideoSystem:
             p = Process(target=VideoSystem._empty_function)
             p.start()
             p.join()
-        except RuntimeError:
+        except RuntimeError:  # pragma: no cover
             in_unprotected_scope = True
 
         if in_unprotected_scope:
-            raise ProcessError("Instantiation method outside of '__main__' scope")
+            raise ProcessError("Instantiation method outside of '__main__' scope")  # pragma: no cover
 
         if save_format not in get_args(VideoSystem.Save_Format_Type):
             raise ValueError(f"'{save_format}' is an invalid save format. Expects 'png', 'jpg', or 'tiff'.")
-        
+
         if not 0 <= tiff_compression_level <= 9:
-            raise ValueError(f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.")
-        
+            raise ValueError(
+                f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive."
+            )
+
         if not 0 <= jpeg_quality <= 100:
             raise ValueError(f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.")
 
@@ -226,8 +228,8 @@ class VideoSystem:
         listen_for_keypress: bool = False,
         terminator_array_name: str = "terminator_array",
         save_format: Save_Format_Type | None = None,
-        tiff_compression_level : int | None = None,
-        jpeg_quality:int | None = None,
+        tiff_compression_level: int | None = None,
+        jpeg_quality: int | None = None,
         num_processes: int | None = None,
         num_threads: int | None = None,
     ) -> None:
@@ -240,12 +242,12 @@ class VideoSystem:
                 video_systems concurrently, each terminator_array should have a unique name.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-                relevant when save_format is specified as 'tiff.' 
+            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+                relevant when save_format is specified as 'tiff.'
             jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-                compression value is only relevant when save_format is specified as 'jpg.' 
+                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+                compression value is only relevant when save_format is specified as 'jpg.'
             num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
             num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -263,29 +265,33 @@ class VideoSystem:
             p = Process(target=VideoSystem._empty_function)
             p.start()
             p.join()
-        except RuntimeError:
+        except RuntimeError:  # pragma: no cover
             in_unprotected_scope = True
 
         if in_unprotected_scope:
-            raise ProcessError("Instantiation method outside of '__main__' scope")
+            raise ProcessError("Instantiation method outside of '__main__' scope")  # pragma: no cover
 
         if save_format is not None:
             if save_format in get_args(VideoSystem.Save_Format_Type):
                 self._save_format = save_format
             else:
                 raise ValueError("Invalid save format.")
-            
+
         if tiff_compression_level is not None:
             if 0 <= tiff_compression_level <= 9:
                 self._tiff_compression_level = tiff_compression_level
             else:
-                raise ValueError(f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.")
-            
+                raise ValueError(
+                    f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive."
+                )
+
         if jpeg_quality is not None:
             if 0 <= jpeg_quality <= 100:
                 self._jpeg_quality = jpeg_quality
             else:
-                raise ValueError(f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.")
+                raise ValueError(
+                    f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive."
+                )
 
         if num_processes is not None:
             num_cores = multiprocessing.cpu_count()
@@ -469,7 +475,7 @@ class VideoSystem:
         terminator_array.disconnect()
 
     @staticmethod
-    def imwrite(filename : str, data : NDArray[Any], tiff_compression_level : int = 6, jpeg_quality : int = 95) -> None:
+    def imwrite(filename: str, data: NDArray[Any], tiff_compression_level: int = 6, jpeg_quality: int = 95) -> None:
         """Saves an image to a specified file.
 
         Args:
@@ -477,27 +483,30 @@ class VideoSystem:
             data: pixel data of image.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-                relevant when save_format is specified as 'tiff.' 
+            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+                relevant when save_format is specified as 'tiff.'
             jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-                compression value is only relevant when save_format is specified as 'jpg.' 
+                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+                compression value is only relevant when save_format is specified as 'jpg.'
         """
         save_format = os.path.splitext(filename)[1][1:]
         if save_format in {"tiff", "tif"}:
             img_rgb = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
-            tff.imwrite(filename, img_rgb, compression='zlib', compressionargs={'level': tiff_compression_level}) # 0 to 9 default is 6
+            tff.imwrite(
+                filename, img_rgb, compression="zlib", compressionargs={"level": tiff_compression_level}
+            )  # 0 to 9 default is 6
         elif save_format in {"jpg", "jpeg"}:
-            cv2.imwrite(filename, data, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]) # 0 to 100 default is 95
-        else: # save_format == "png"
+            cv2.imwrite(filename, data, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])  # 0 to 100 default is 95
+        else:  # save_format == "png"
             cv2.imwrite(filename, data)
-        
 
     @staticmethod
-    def _frame_saver(q: Queue[Any], save_directory: str, save_format : str, tiff_compression_level : int, jpeg_quality : int) -> None:
-        """A method that iteratively gets an image from a queue and saves it to save_directory. This method loops until 
-        it pulls an image off the queue whose id is 0. This loop is not meant to be called directly, rather it is meant 
+    def _frame_saver(
+        q: Queue[Any], save_directory: str, save_format: str, tiff_compression_level: int, jpeg_quality: int
+    ) -> None:
+        """A method that iteratively gets an image from a queue and saves it to save_directory. This method loops until
+        it pulls an image off the queue whose id is 0. This loop is not meant to be called directly, rather it is meant
         to be the target of a separate thread.
 
         Args:
@@ -505,31 +514,33 @@ class VideoSystem:
             save_directory: relative path to location where image is to be saved.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-                relevant when save_format is specified as 'tiff.' 
+            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+                relevant when save_format is specified as 'tiff.'
             jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-                compression value is only relevant when save_format is specified as 'jpg.' 
+                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+                compression value is only relevant when save_format is specified as 'jpg.'
         """
         terminated = False
         while not terminated:
             frame, img_id = q.get()
             if img_id != -1:
                 filename = os.path.join(save_directory, "img" + str(img_id) + "." + save_format)
-                VideoSystem.imwrite(filename, frame, tiff_compression_level=tiff_compression_level, jpeg_quality=jpeg_quality)
-                q.task_done()
+                VideoSystem.imwrite(
+                    filename, frame, tiff_compression_level=tiff_compression_level, jpeg_quality=jpeg_quality
+                )
             else:
                 terminated = True
+            q.task_done()
 
     @staticmethod
     def _save_images_loop(
         img_queue: MPQueue[Any],
         terminator_array: SharedMemoryArray,
         save_directory: str,
-        save_format : str, 
-        tiff_compression_level : int, 
-        jpeg_quality : int,
+        save_format: str,
+        tiff_compression_level: int,
+        jpeg_quality: int,
         num_threads: int,
         fps: float | None = None,
     ) -> None:
@@ -547,18 +558,23 @@ class VideoSystem:
             save_directory: relative path to location where images are to be saved.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but 
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only 
-                relevant when save_format is specified as 'tiff.' 
+            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
+                relevant when save_format is specified as 'tiff.'
             jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This 
-                compression value is only relevant when save_format is specified as 'jpg.' 
+                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
+                compression value is only relevant when save_format is specified as 'jpg.'
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
         q: Queue[Any] = Queue()
         workers = []
         for i in range(num_threads):
-            workers.append(Thread(target=VideoSystem._frame_saver, args=(q, save_directory, save_format, tiff_compression_level, jpeg_quality)))
+            workers.append(
+                Thread(
+                    target=VideoSystem._frame_saver,
+                    args=(q, save_directory, save_format, tiff_compression_level, jpeg_quality),
+                )
+            )
         for worker in workers:
             worker.daemon = True
             worker.start()
@@ -637,9 +653,9 @@ class VideoSystem:
                         ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
                     if fps:
                         run_timer.reset()
-        terminator_array.disconnect()
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
+        terminator_array.disconnect()
 
     def _on_press(
         self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray

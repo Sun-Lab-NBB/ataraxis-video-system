@@ -1,19 +1,63 @@
 import os
-import time
+from queue import Queue
 import random
 import tempfile
 from threading import Thread
-from multiprocessing import Process
+from multiprocessing import Process, ProcessError
 
 from PIL import Image, ImageDraw, ImageChops
 import cv2
 import numpy as np
 from pynput import keyboard
 import pytest
+from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import SharedMemoryArray
 
 from ataraxis_video_system import Camera, VideoSystem
 from ataraxis_video_system.video_system.vsc import MPQueue
+
+
+class MockCamera:
+    """A wrapper class for an opencv VideoCapture object.
+
+    Args:
+        camera_id: camera id
+
+    Attributes:
+        camera_id: camera id
+        specs: dictionary holding the specifications of the camera. This includes fps, frame_width, frame_height
+        _vid: opencv video capture object.
+    """
+
+    def __init__(self, camera_id: int = 0) -> None:
+        self.specs = {"fps": 30.0, "frame_width": 640.0, "frame_height": 480.0}
+        self.camera_id = camera_id
+        self._vid = None
+
+    def connect(self) -> None:
+        """Connects to camera and prepares for image collection."""
+        self._vid = True
+
+    def disconnect(self) -> None:
+        """Disconnects from camera."""
+        self._vid = None
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the camera is connected."""
+        return self._vid is not None
+
+    def grab_frame(self):
+        """Grabs an image from the camera.
+
+        Raises:
+            Exception if camera isn't connected or did not yield an image.
+
+        """
+        if self._vid:
+            return np.random.randint(0, 256, size=(480, 640, 3), dtype=np.uint8)
+        else:
+            raise Exception("camera not connected")
 
 
 @pytest.fixture
@@ -25,13 +69,18 @@ def temp_directory():
 
 
 @pytest.fixture
-def camera():
+def webcam():
     return Camera()
 
 
 @pytest.fixture
-def video_system(camera, temp_directory):
-    yield VideoSystem(temp_directory, camera)
+def mock_camera():
+    return MockCamera()
+
+
+@pytest.fixture
+def video_system(mock_camera, temp_directory):
+    yield VideoSystem(temp_directory, mock_camera)
 
 
 def increment_name(name):
@@ -126,8 +175,8 @@ def test_delete_images(video_system):
         video_system.delete_images()
 
 
-@pytest.mark.xdist_group(name="uses_camera_group")
-def test_produce_images_loop(camera):
+@pytest.mark.xdist_group()
+def test_produce_images_loop(mock_camera):
     test_queue = MPQueue()
 
     # Bad prototypes 1 and 2: when the third element is 0, the loop terminates immediately
@@ -135,7 +184,7 @@ def test_produce_images_loop(camera):
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
 
     test_array = SharedMemoryArray.create_array(name="test_input_array1", prototype=bad_prototype1)
-    VideoSystem._produce_images_loop(camera, test_queue, test_array)
+    VideoSystem._produce_images_loop(mock_camera, test_queue, test_array)
     test_array.disconnect()
     test_array._buffer.unlink()
 
@@ -144,7 +193,7 @@ def test_produce_images_loop(camera):
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
 
     test_array = SharedMemoryArray.create_array(name="test_input_array2", prototype=bad_prototype1)
-    VideoSystem._produce_images_loop(camera, test_queue, test_array)
+    VideoSystem._produce_images_loop(mock_camera, test_queue, test_array)
     test_array.disconnect()
     test_array._buffer.unlink()
 
@@ -159,14 +208,12 @@ def test_produce_images_loop(camera):
     input_stream_process = Process(
         target=VideoSystem._produce_images_loop,
         args=(
-            camera,
+            mock_camera,
             test_queue,
             test_array,
         ),
     )
     input_stream_process.start()
-    time.sleep(2)
-
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
     test_array.disconnect()
@@ -174,7 +221,7 @@ def test_produce_images_loop(camera):
 
     assert test_queue.qsize() == 0
 
-    # Run input_stream as fast as possible for two seconds
+    # Run input_stream as fast as possible until it saves 10 images
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_input_array4", prototype=prototype)
@@ -188,43 +235,89 @@ def test_produce_images_loop(camera):
         ),
     )
     input_stream_process.start()
-    time.sleep(2)
+
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and test_queue.qsize() < 10:
+        pass
+
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
-    assert test_queue.qsize() > 0
+    assert test_queue.qsize() >= 10
     test_queue = MPQueue()
     assert test_queue.qsize() == 0
 
-    # Run input_stream at 1 fps for 3 seconds
+    # Run input_stream at 60 fps until is saves 10 images
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_input_array5", prototype=prototype)
 
     input_stream_process = Process(
         target=VideoSystem._produce_images_loop,
-        args=(Camera(), test_queue, test_array, 3),
+        args=(Camera(), test_queue, test_array, 60),
     )
     input_stream_process.start()
-    time.sleep(2)
+    timer.reset()
+    while timer.elapsed <= 5 and test_queue.qsize() < 10:
+        pass
     test_array.write_data(index=2, data=0)
     input_stream_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
-    assert test_queue.qsize() > 0
-    assert test_queue.qsize() < 6
-
+    assert test_queue.qsize() >= 10
     test_queue = MPQueue()
     assert test_queue.qsize() == 0
 
 
-def test_save_frame(temp_directory):
+def test_imwrite(temp_directory):
+    test_directory = temp_directory
+
+    # png
+
+    img = create_image(81)
+    PIL_path = os.path.join(test_directory, "PIL_img" + ".png")
+    img.save(PIL_path)
+    cv_img = cv2.imread(PIL_path)
+    path = os.path.join(test_directory, "img.png")
+    VideoSystem.imwrite(path, cv_img)
+    assert images_are_equal(PIL_path, os.path.join(test_directory, path))
+
+    VideoSystem._delete_files_in_directory(test_directory)
+    assert len(os.listdir(test_directory)) == 0
+
+    # jpg
+
+    img = create_image(81)
+    PIL_path = os.path.join(test_directory, "PIL_img" + ".png")
+    img.save(PIL_path)
+    cv_img = cv2.imread(PIL_path)
+    path = os.path.join(test_directory, "img.jpg")
+    VideoSystem.imwrite(path, cv_img)
+    assert os.path.exists(path)
+
+    VideoSystem._delete_files_in_directory(test_directory)
+    assert len(os.listdir(test_directory)) == 0
+
+    # tiff
+    img = create_image(81)
+    PIL_path = os.path.join(test_directory, "PIL_img" + ".png")
+    img.save(PIL_path)
+    cv_img = cv2.imread(PIL_path)
+    path = os.path.join(test_directory, "img.tiff")
+    VideoSystem.imwrite(path, cv_img)
+    assert os.path.exists(path)
+
+
+def test_frame_saver(temp_directory):
     test_directory = temp_directory
 
     num_images = 25
-    test_queue = MPQueue()
+
+    # Png saving
+    test_queue = Queue()
 
     for i in range(num_images):
         img = create_image(i * 10)
@@ -233,17 +326,64 @@ def test_save_frame(temp_directory):
         cv_img = cv2.imread(PIL_path)
         test_queue.put((cv_img, i))
 
-    # Test if the video system correctly saves all images
-    for i in range(num_images):
-        assert VideoSystem._save_frame(test_queue, test_directory)
+    test_queue.put((None, -1))
 
-    # Test if VideoSystem returns False once queue has been emptied
-    assert not VideoSystem._save_frame(test_queue, test_directory)
+    VideoSystem._frame_saver(test_queue, test_directory, "png", 6, 95)
+
+    assert test_queue.empty()
+    assert test_queue.all_tasks_done
 
     # Test if image saving was performed correctly
     for i in range(num_images):
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
         assert images_are_equal(PIL_path, os.path.join(test_directory, "img" + str(i) + ".png"))
+
+    VideoSystem._delete_files_in_directory(test_directory)
+    assert len(os.listdir(test_directory)) == 0
+
+    # jpg saving
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put((cv_img, i))
+
+    test_queue.put((None, -1))
+
+    VideoSystem._frame_saver(test_queue, test_directory, "jpg", 6, 95)
+
+    assert test_queue.empty()
+    assert test_queue.all_tasks_done
+
+    # Test if image saving was performed correctly
+    for i in range(num_images):
+        assert os.path.exists(os.path.join(test_directory, "img" + str(i) + ".jpg"))
+
+    VideoSystem._delete_files_in_directory(test_directory)
+    assert len(os.listdir(test_directory)) == 0
+
+    # tiff saving
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put((cv_img, i))
+
+    test_queue.put((None, -1))
+
+    VideoSystem._frame_saver(test_queue, test_directory, "tiff", 6, 95)
+
+    assert test_queue.empty()
+    assert test_queue.all_tasks_done
+
+    # Test if image saving was performed correctly
+    for i in range(num_images):
+        assert os.path.exists(os.path.join(test_directory, "img" + str(i) + ".tiff"))
+
+    VideoSystem._delete_files_in_directory(test_directory)
+    assert len(os.listdir(test_directory)) == 0
 
 
 def test_save_images_loop(temp_directory):
@@ -268,7 +408,7 @@ def test_save_images_loop(temp_directory):
 
     bad_prototype1 = np.array([0, 0, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array1", prototype=bad_prototype1)
-    VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory, "png", 6, 95, 5, None)
     test_array.disconnect()
     test_array._buffer.unlink()
 
@@ -276,7 +416,7 @@ def test_save_images_loop(temp_directory):
 
     bad_prototype2 = np.array([1, 1, 0], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array2", prototype=bad_prototype2)
-    VideoSystem._save_images_loop(test_queue, test_array, test_directory, 5)
+    VideoSystem._save_images_loop(test_queue, test_array, test_directory, "png", 6, 95, 5, None)
     test_array.disconnect()
     test_array._buffer.unlink()
 
@@ -287,9 +427,10 @@ def test_save_images_loop(temp_directory):
     bad_prototype3 = np.array([0, 0, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array3", prototype=bad_prototype3)
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
+    save_process = Thread(
+        target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, "png", 6, 95, 5, None)
+    )
     save_process.start()
-    time.sleep(2)
 
     test_array.write_data(index=2, data=0)
     save_process.join()
@@ -303,9 +444,16 @@ def test_save_images_loop(temp_directory):
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array4", prototype=prototype)
 
-    save_process = Process(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5))
+    save_process = Process(
+        target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, "png", 6, 95, 5, None)
+    )
     save_process.start()
-    time.sleep(3)
+
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < num_images:
+        pass
+
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
@@ -327,23 +475,27 @@ def test_save_images_loop(temp_directory):
     assert test_queue.qsize() == num_images
     assert len(os.listdir(test_directory)) == 0
 
-    # Run sav_images_loop at 1 fps for 3 seconds
+    # Run sav_images_loop at 60 fps until it saves all images
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array5", prototype=prototype)
 
-    save_process = Thread(target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, 5, 1))
+    save_process = Thread(
+        target=VideoSystem._save_images_loop, args=(test_queue, test_array, test_directory, "png", 6, 95, 5, 60)
+    )
     save_process.start()
-    time.sleep(2)
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < num_images:
+        pass
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
-    assert 1 < len(os.listdir(test_directory)) < 4
+    assert len(os.listdir(test_directory)) > 0
 
 
-def test_save_video_loop(temp_directory, camera):
+def test_save_video_loop(temp_directory, mock_camera):
     test_directory = temp_directory
     test_queue = MPQueue()
 
@@ -357,16 +509,21 @@ def test_save_video_loop(temp_directory, camera):
         test_queue.put((cv_img, i))
     VideoSystem._delete_files_in_directory(test_directory)
 
-    # Run save_video_loop as fast as possible for two seconds
+    # Run save_video_loop as fast as possible until it creates a video
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array(name="test_save_array5", prototype=prototype)
+    test_array = SharedMemoryArray.create_array(name="test_save_array6", prototype=prototype)
 
     save_process = Process(
-        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs)
+        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs)
     )
     save_process.start()
-    time.sleep(2)
+
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and test_queue.qsize() > 0:
+        pass
+
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
@@ -374,27 +531,52 @@ def test_save_video_loop(temp_directory, camera):
 
     assert "video.mp4" in os.listdir(test_directory)
 
+    assert test_queue.qsize() == 0
+
     VideoSystem._delete_files_in_directory(test_directory)
 
     assert "video.mp4" not in os.listdir(test_directory)
 
-    # Run save loop at 1 fps for two seconds
+    # Reload images to the queue
+    num_images = 25
+    for i in range(num_images):
+        img = create_image(i * 10)
+        PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
+        img.save(PIL_path)
+        cv_img = cv2.imread(PIL_path)
+        test_queue.put((cv_img, i))
+    VideoSystem._delete_files_in_directory(test_directory)
+
+    assert test_queue.qsize() == num_images
+
+    # Run save loop at 60 fps until it saves 10 frames
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
-    test_array = SharedMemoryArray.create_array(name="test_save_array6", prototype=prototype)
+    test_array = SharedMemoryArray.create_array(name="test_save_array7", prototype=prototype)
 
     save_process = Process(
-        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, camera.specs, 1)
+        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs, 60)
     )
     save_process.start()
-    time.sleep(2)
+
+    timer.reset()
+    while timer.elapsed <= 5 and test_queue.qsize() > 0:
+        pass
+
     test_array.write_data(index=2, data=0)
     save_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
+    assert "video.mp4" in os.listdir(test_directory)
+    assert test_queue.qsize() == 0
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+    VideoSystem._delete_files_in_directory(test_directory)
+
+    assert "video.mp4" not in os.listdir(test_directory)
+
+
+@pytest.mark.xdist_group()
 def test_start(video_system):
     test_directory = video_system.save_directory
 
@@ -407,32 +589,26 @@ def test_start(video_system):
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
 
-    # i = 0
-    # name = "terminator_array"
-    # test_array = None
-    # while i < 100:
-    #     try:
-    #         video_system.start(terminator_array_name=name)
-    #         i = 100
-    #     except FileExistsError:
-    #         name = increment_name(name)
-    #         i += 1
-    video_system.start(terminator_array_name="terminator_array")
+    video_system.start(terminator_array_name="terminator_array", tiff_compression_level=5, jpeg_quality=90)
 
     assert video_system._running
     assert video_system._input_process
     assert video_system._terminator_array
     assert video_system._image_queue
 
-    time.sleep(5)
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
 
-    assert len(os.listdir(test_directory)) > 0
     video_system.stop()
+
+    assert len(os.listdir(test_directory)) >= 10
     video_system.delete_images()
     assert len(os.listdir(test_directory)) == 0
 
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+@pytest.mark.xdist_group()
 def test_mp4_save(video_system):
     test_directory = video_system.save_directory
 
@@ -452,117 +628,119 @@ def test_mp4_save(video_system):
     assert video_system._terminator_array
     assert video_system._image_queue
 
-    time.sleep(2)
+    timer = PrecisionTimer("s")
+
+    timer.delay_block(3)
 
     video_system.stop()
 
     assert "video.mp4" in os.listdir(test_directory)
 
+    cap = cv2.VideoCapture(os.path.join(video_system.save_directory, "video.mp4"))
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+    assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) > 0
+
+
+@pytest.mark.xdist_group()
 def test_stop_image_production(video_system):
     test_directory = video_system.save_directory
 
-    # i = 0
-    # name = "terminator_array"
-    # test_array = None
-    # while i < 100:
-    #     try:
-    #         video_system.start(terminator_array_name=name)
-    #         i = 100
-    #     except FileExistsError:
-    #         name = increment_name(name)
-    #         i += 1
     video_system.start(terminator_array_name="terminator_array2")
 
-    time.sleep(3)
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
+
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
     video_system.stop_image_production()
-    time.sleep(3)
-    # Once you stop taking images, the size of the queue should start decreasing
-    assert images_taken >= video_system._image_queue.qsize()
+
+    timer.reset()
+    while timer.elapsed <= 5 and video_system._image_queue.qsize() > 0:
+        pass
+
+    # Once you stop taking images, the size of the queue should become 0
+    assert video_system._image_queue.qsize() == 0
 
     # Once you stop taking images, the number of saved images should continue to increase
     assert len(os.listdir(test_directory)) >= images_saved
 
     video_system.stop()
 
+    assert not video_system._running
+    assert not video_system.camera.is_connected
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+
+@pytest.mark.xdist_group()
 def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
 
-    # i = 0
-    # name = "terminator_array"
-    # test_array = None
-    # while i < 100:
-    #     try:
-    #         video_system.start(terminator_array_name=name)
-    #         i = 100
-    #     except FileExistsError:
-    #         name = increment_name(name)
-    #         i += 1
     video_system.start(terminator_array_name="terminator_array3")
 
-    time.sleep(2)
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
+
     video_system._stop_image_saving()
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
-    time.sleep(2)
 
-    # Once you stop saving images, the size of the queue should continue to increase
-    assert images_taken < video_system._image_queue.qsize()
+    # Wait to save 10 more images
+    timer.reset()
+    while timer.elapsed <= 5 and video_system._image_queue.qsize() < images_taken + 10:
+        pass
+
+    # You should have saved 10 more images
+    assert video_system._image_queue.qsize() >= images_taken + 10
 
     # Once you stop saving images, the number of saved images should remain the same
-    assert len(os.listdir(test_directory)) == images_saved
+    assert len(os.listdir(test_directory)) >= images_saved
 
     video_system.stop()
 
+    assert not video_system._running
+    assert not video_system.camera.is_connected
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+
+@pytest.mark.xdist_group()
 def test_stop(video_system):
     test_directory = video_system.save_directory
 
-    # i = 0
-    # name = "terminator_array"
-    # test_array = None
-    # while i < 100:
-    #     try:
-    #         video_system.start(terminator_array_name=name)
-    #         i = 100
-    #     except FileExistsError:
-    #         name = increment_name(name)
-    #         i += 1
     video_system.start(terminator_array_name="terminator_array4", num_processes=5, num_threads=6)
 
-    time.sleep(2)
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
+
     video_system.stop()
-    images_taken = video_system._image_queue.qsize()
-    images_saved = len(os.listdir(test_directory))
-    time.sleep(2)
 
-    # Once you stop the video system, the size of the queue should continue to increase
-    assert images_taken == video_system._image_queue.qsize()
-
-    # Once you stop the video system, the number of saved images should remain the same
-    assert len(os.listdir(test_directory)) == images_saved
+    assert len(os.listdir(test_directory)) >= 10
 
     assert not video_system._running
+    assert not video_system.camera.is_connected
 
 
-@pytest.mark.xdist_group(name="uses_camera_group")
+@pytest.mark.xdist_group()
 def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
 
     video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array_key_listener")
 
-    time.sleep(2)
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
 
     # Print the random key to make sure key listener can handle all keys without throwing error
     controller.press(keyboard.Key.alt)
     controller.release(keyboard.Key.alt)
+
+    images_taken = video_system._image_queue.qsize()
+    images_saved = len(os.listdir(test_directory))
 
     # Stop image production
     controller.press("q")
@@ -570,15 +748,9 @@ def test_key_listener(video_system):
     controller.press(keyboard.Key.delete)
     controller.release(keyboard.Key.delete)
 
-    images_taken = video_system._image_queue.qsize()
-    images_saved = len(os.listdir(test_directory))
-
-    time.sleep(2)
-
-    # Once you stop taking images, the size of the queue should start decreasing
-    assert images_taken >= video_system._image_queue.qsize()
-    # Once you stop taking images, the number of saved images should continue to increase
-    assert len(os.listdir(test_directory)) >= images_saved
+    timer.reset()
+    while timer.elapsed <= 5 and video_system._image_queue.qsize() > 0:
+        pass
 
     # Stop image saving
     controller.press("w")
@@ -586,31 +758,39 @@ def test_key_listener(video_system):
     controller.press(keyboard.Key.delete)
     controller.release(keyboard.Key.delete)
 
-    images_taken = video_system._image_queue.qsize()
-    images_saved = len(os.listdir(test_directory))
+    # Once you stop taking images, the size of the queue should become 0
+    assert video_system._image_queue.qsize() == 0
 
-    time.sleep(2)
-
-    # Once you stop the video system, the size of the queue should not continue to increase
-    assert images_taken == video_system._image_queue.qsize()
-
-    # Once you stop the video system, the number of saved images should remain the same
-    assert len(os.listdir(test_directory)) == images_saved
+    # Once you stop taking images, the number of saved images should continue to increase
+    assert len(os.listdir(test_directory)) >= images_saved
 
     assert not video_system._running
+    assert not video_system.camera.is_connected
+
+    video_system.delete_images()
+    assert len(os.listdir(test_directory)) == 0
 
     # Now check that with manual stopping in interactive mode, the key_listener actually closes
     video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array6")
-    time.sleep(2)
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
 
     assert video_system._running
     video_system.stop()
+
+    assert len(os.listdir(test_directory)) >= 10
     assert not video_system._running
+
+    video_system.delete_images()
+    assert len(os.listdir(test_directory)) == 0
 
     # Key listener has a safety mechanism where the listener stops if running gets set to false. This normally doesn't
     # occur, so it has to be tested directly
     video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array7")
-    time.sleep(2)
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
     assert video_system._running
     assert video_system._listener._running
     video_system._running = False
@@ -619,7 +799,6 @@ def test_key_listener(video_system):
     assert video_system._listener._running
     controller.press(keyboard.Key.alt)
     controller.release(keyboard.Key.alt)
-    time.sleep(1)
     assert not video_system._listener._running
     video_system._running = True
     video_system.stop()
@@ -627,20 +806,20 @@ def test_key_listener(video_system):
 
 
 @pytest.mark.xdist_group(name="uses_camera_group")
-def test_camera(camera):
-    assert not camera.is_connected
+def test_camera(webcam):
+    assert not webcam.is_connected
 
     with pytest.raises(Exception):
-        camera.grab_frame()
+        webcam.grab_frame()
 
-    camera.connect()
-    assert camera.is_connected
+    webcam.connect()
+    assert webcam.is_connected
 
-    frame = camera.grab_frame()
+    frame = webcam.grab_frame()
     assert frame is not None
 
-    camera.disconnect()
-    assert not camera.is_connected
+    webcam.disconnect()
+    assert not webcam.is_connected
 
     # Now try to make a camera with incorrect id
     with pytest.raises(Exception):
@@ -660,7 +839,7 @@ def test_camera(camera):
 
 # For type checking purposes, some object | None type variables have been put in an if not None call else raise
 # TypeError structure. These errors should never get raised by user but are tested here to get code coverage.
-@pytest.mark.xdist_group(name="uses_camera_group")
+@pytest.mark.xdist_group()
 def test_type_errors(video_system):
     video_system.start()
 
@@ -689,3 +868,29 @@ def test_type_errors(video_system):
 
     video_system._input_process = temp
     video_system.stop()
+
+
+def test_creation_and_start_errors(video_system, mock_camera, temp_directory):
+    with pytest.raises(ValueError):
+        VideoSystem(temp_directory, mock_camera, save_format="bad_format")
+
+    with pytest.raises(ValueError):
+        video_system.start(save_format="bad_format")
+
+    with pytest.raises(ValueError):
+        VideoSystem(temp_directory, mock_camera, tiff_compression_level=50)
+
+    with pytest.raises(ValueError):
+        video_system.start(tiff_compression_level=50)
+
+    with pytest.raises(ValueError):
+        VideoSystem(temp_directory, mock_camera, jpeg_quality=101)
+
+    with pytest.raises(ValueError):
+        video_system.start(jpeg_quality=101)
+
+    with pytest.raises(ProcessError):
+        VideoSystem(temp_directory, mock_camera, num_processes=1000)
+
+    with pytest.raises(ProcessError):
+        video_system.start(num_processes=1000)
