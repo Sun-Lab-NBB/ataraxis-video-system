@@ -844,6 +844,16 @@ def test_key_listener(video_system):
     assert not video_system._running
 
 
+def camera_available():
+    cap = cv2.VideoCapture(0)
+
+    if cap.isOpened():
+        cap.release()
+        return True
+    return False
+
+
+@pytest.mark.skipif(not camera_available(), reason="No camera available on this computer")
 @pytest.mark.xdist_group(name="uses_camera_group")
 def test_camera(webcam):
     assert not webcam.is_connected

@@ -1,19 +1,11 @@
-import os
-import glob
-
-import cv2
-import numpy as np
-import ffmpeg  # type: ignore
-from ataraxis_time import PrecisionTimer
-from ataraxis_data_structures import SharedMemoryArray
-
-from ataraxis_video_system.video_system.vsc import MPQueue
+from ataraxis_base_utilities import console
 
 from .vsc import Camera, VideoSystem
 
 
 # Since the video system uses multiprocessing, it should always be called within '__main__' scope
 def interactive_run() -> None:
+    console.enable()
     vs = VideoSystem(
         save_directory="imgs", camera=Camera(), save_format="tiff"
     )  # Create the system using the built-in camera class

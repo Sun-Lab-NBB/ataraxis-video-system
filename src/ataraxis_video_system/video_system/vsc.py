@@ -18,6 +18,7 @@ from pynput import keyboard
 import tifffile as tff
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
+from ataraxis_base_utilities import console
 from ataraxis_data_structures import SharedMemoryArray
 
 # Used in many functions to convert between units
@@ -84,10 +85,6 @@ class Camera:
     def connect(self) -> None:
         """Connects to camera and prepares for image collection."""
         self._vid = cv2.VideoCapture(self.camera_id)
-        # try:
-        #     self.grab_frame()
-        # except Exception:
-        #     raise Exception("could not connect to camera")
 
     def disconnect(self) -> None:
         """Disconnects from camera."""
@@ -110,10 +107,11 @@ class Camera:
         if self._vid:
             ret, frame = self._vid.read()
             if not ret:
-                raise Exception("camera did not yield an image")
+                console.error(message="camera did not yield an image", error=Exception)
             return frame
         else:
-            raise Exception("camera not connected")
+            console.error(message="camera not connected", error=Exception)
+            raise Exception("camera not connected")  # pragma: no cover
 
 
 class VideoSystem:
@@ -186,23 +184,32 @@ class VideoSystem:
             in_unprotected_scope = True
 
         if in_unprotected_scope:
-            raise ProcessError("Instantiation method outside of '__main__' scope")  # pragma: no cover
+            console.error(
+                message="Instantiation method outside of '__main__' scope", error=ProcessError
+            )  # pragma: no cover
 
         if save_format not in get_args(VideoSystem.Save_Format_Type):
-            raise ValueError(f"'{save_format}' is an invalid save format. Expects 'png', 'jpg', or 'tiff'.")
+            console.error(
+                message=f"'{save_format}' is an invalid save format. Expects 'png', 'jpg', or 'tiff'.", error=ValueError
+            )
 
         if not 0 <= tiff_compression_level <= 9:
-            raise ValueError(
-                f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive."
+            console.error(
+                message=f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.",
+                error=ValueError,
             )
 
         if not 0 <= jpeg_quality <= 100:
-            raise ValueError(f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.")
+            console.error(
+                message=f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.",
+                error=ValueError,
+            )
 
         num_cores = multiprocessing.cpu_count()
         if num_processes > num_cores:
-            raise ProcessError(
-                f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores."
+            console.error(
+                message=f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores.",
+                error=ProcessError,
             )
 
         self.save_directory: str = save_directory
@@ -272,36 +279,42 @@ class VideoSystem:
             in_unprotected_scope = True
 
         if in_unprotected_scope:
-            raise ProcessError("Instantiation method outside of '__main__' scope")  # pragma: no cover
+            console.error(
+                message="Instantiation method outside of '__main__' scope", error=ProcessError
+            )  # pragma: no cover
 
         if save_format is not None:
             if save_format in get_args(VideoSystem.Save_Format_Type):
                 self._save_format = save_format
             else:
-                raise ValueError("Invalid save format.")
+                console.error(message="Invalid save format.", error=ValueError)
 
         if tiff_compression_level is not None:
             if 0 <= tiff_compression_level <= 9:
                 self._tiff_compression_level = tiff_compression_level
             else:
-                raise ValueError(
-                    f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive."
+                console.error(
+                    message=f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.",
+                    error=ValueError,
                 )
 
         if jpeg_quality is not None:
             if 0 <= jpeg_quality <= 100:
                 self._jpeg_quality = jpeg_quality
             else:
-                raise ValueError(
-                    f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive."
+                console.error(
+                    message=f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.",
+                    error=ValueError,
                 )
 
         if num_processes is not None:
             num_cores = multiprocessing.cpu_count()
             if num_processes > num_cores:
-                raise ProcessError(
-                    f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores."
+                console.error(
+                    message=f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores.",
+                    error=ProcessError,
                 )
+
             self._num_consumer_processes = num_processes
 
         if num_threads is not None:
@@ -369,10 +382,10 @@ class VideoSystem:
             if self._terminator_array is not None:
                 self._terminator_array.write_data(index=0, data=0)
             else:  # This error should never occur
-                error_message = (
-                    "Failure to start the stop image production process because _terminator_array is not initialized."
+                console.error(
+                    message="Failure to start the stop image production process because _terminator_array is not initialized.",
+                    error=TypeError,
                 )
-                raise TypeError(error_message)
 
     # possibly delete this function
     def _stop_image_saving(self) -> None:
@@ -381,10 +394,10 @@ class VideoSystem:
             if self._terminator_array is not None:
                 self._terminator_array.write_data(index=1, data=0)
             else:  # This error should never occur
-                error_message = (
-                    "Failure to start the stop image saving process because _terminator_array is not initialized."
+                console.error(
+                    message="Failure to start the stop image saving process because _terminator_array is not initialized.",
+                    error=TypeError,
                 )
-                raise TypeError(error_message)
 
     def stop(self) -> None:
         """Stops image collection and saving. Ends all processes."""
@@ -393,14 +406,17 @@ class VideoSystem:
             if self._terminator_array is not None:
                 self._terminator_array.write_data(index=(0, 3), data=[0, 0, 0])
             else:  # This error should never occur
-                error_message = "Failure to start the stop video system  because _terminator_array is not initialized."
-                raise TypeError(error_message)
+                message = "Failure to start the stop video system  because _terminator_array is not initialized."
+                console.error(message, error=TypeError)
+                raise TypeError(message) # pragma:no cover
 
             if self._input_process is not None:
                 self._input_process.join()
             else:  # This error should never occur
-                error_message = "Failure to start the stop video system  because _input_process is not initialized."
-                raise TypeError(error_message)
+                console.error(
+                    message="Failure to start the stop video system  because _input_process is not initialized.",
+                    error=TypeError,
+                )
 
             for process in self._consumer_processes:
                 process.join()
@@ -707,7 +723,7 @@ class VideoSystem:
         sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
 
         if sample_img is None:
-            raise Exception(f"No {img_filetype} images found in {img_directory}.")
+            console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
 
         frame_height, frame_width, _ = sample_img.shape
 
@@ -750,10 +766,10 @@ class VideoSystem:
         if key is not None and hasattr(key, "char"):
             if key.char == "q":
                 self.stop_image_production()
-                print("Stopped taking images")
+                console.echo("Stopped taking images")
             elif key.char == "w":
                 self._stop_image_saving()
-                print("Stopped saving images")
+                console.echo("Stopped saving images")
 
         if self._running:
             if not terminator_array.read_data(index=0, convert_output=True) and not terminator_array.read_data(
