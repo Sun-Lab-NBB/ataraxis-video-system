@@ -60,10 +60,10 @@ class VideoSystem:
         camera: camera for image collection.
         save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
-        tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+        tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
             most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
             relevant when save_format is specified as 'tiff.'
-        jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
+        jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
             the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
             compression value is only relevant when save_format is specified as 'jpg.'
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
@@ -97,6 +97,8 @@ class VideoSystem:
         ValueError: If a specified jpeg_quality is not within [0, 100] inclusive.
         ProcessError: If the computer does not have enough cpu cores.
     """
+    img_name: str
+    vid_name: str
     Save_Format_Type: Incomplete
     save_directory: Incomplete
     camera: Incomplete
@@ -187,10 +189,10 @@ class VideoSystem:
             data: pixel data of image.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+            tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
                 most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
                 relevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
+            jpeg_quality: The amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
                 the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
                 compression value is only relevant when save_format is specified as 'jpg.'
         """
@@ -258,6 +260,28 @@ class VideoSystem:
                 'frame_width' and 'frame_height'.
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
+    def save_imgs_as_vid(self) -> None:
+        """Converts a set of id labeled images into an mp4 video file.
+
+        This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
+        specific object instance.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        """
+    @staticmethod
+    def imgs_to_vid(fps: int, img_directory: str = 'imgs', img_filetype: str = 'png', vid_directory: str | None = None) -> None:
+        '''Converts a set of id labeled images into an mp4 video file.
+
+        Args:
+            fps: The framerate of the video to be created.
+            img_directory: The directory where the images are saved.
+            img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
+            vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        '''
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray) -> bool | None:
         """Changes terminator flags on specific key presses.
 

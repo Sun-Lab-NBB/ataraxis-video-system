@@ -576,6 +576,45 @@ def test_save_video_loop(temp_directory, mock_camera):
     assert "video.mp4" not in os.listdir(test_directory)
 
 
+def test_imgs_to_vid(video_system):
+    test_directory = video_system.save_directory
+
+    with pytest.raises(Exception):
+        VideoSystem.imgs_to_vid(video_system.camera.specs["fps"], img_directory=test_directory)
+
+    video_system.start()
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
+    video_system.stop()
+
+    VideoSystem.imgs_to_vid(video_system.camera.specs["fps"], img_directory=test_directory)
+
+    assert "video.mp4" in os.listdir(test_directory)
+
+    video_system.delete_images()
+
+    assert "video.mp4" not in os.listdir(test_directory)
+
+    test_directory = video_system.save_directory
+
+    video_system.start()
+    timer = PrecisionTimer("s")
+    timer.reset()
+    while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
+        pass
+    video_system.stop()
+
+    video_system.save_imgs_as_vid()
+
+    assert "video.mp4" in os.listdir(test_directory)
+
+    video_system.delete_images()
+
+    assert "video.mp4" not in os.listdir(test_directory)
+
+
 @pytest.mark.xdist_group()
 def test_start(video_system):
     test_directory = video_system.save_directory

@@ -1,4 +1,5 @@
 import os
+import glob
 from queue import Empty, Queue
 from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 from threading import Thread
@@ -123,10 +124,10 @@ class VideoSystem:
         camera: camera for image collection.
         save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
-        tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+        tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
             most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
             relevant when save_format is specified as 'tiff.'
-        jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
+        jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
             the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
             compression value is only relevant when save_format is specified as 'jpg.'
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
@@ -161,6 +162,8 @@ class VideoSystem:
         ProcessError: If the computer does not have enough cpu cores.
     """
 
+    img_name = "img"
+    vid_name = "video"
     Save_Format_Type = Literal["png", "tiff", "tif", "jpg", "jpeg", "mp4"]
 
     def __init__(
@@ -474,6 +477,16 @@ class VideoSystem:
         camera.disconnect()
         terminator_array.disconnect()
 
+    # @staticmethod
+    # def imread(filename: str):
+    #     """Loads an image from a file.
+
+    #     Args:
+    #         filename: path to image file to be loaded.
+    #     """
+    #     save_format = os.path.splitext(filename)[1][1:]
+    #     if save_format in {}
+
     @staticmethod
     def imwrite(filename: str, data: NDArray[Any], tiff_compression_level: int = 6, jpeg_quality: int = 95) -> None:
         """Saves an image to a specified file.
@@ -483,10 +496,10 @@ class VideoSystem:
             data: pixel data of image.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
+            tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
                 most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
                 relevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
+            jpeg_quality: The amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
                 the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
                 compression value is only relevant when save_format is specified as 'jpg.'
         """
@@ -525,7 +538,7 @@ class VideoSystem:
         while not terminated:
             frame, img_id = q.get()
             if img_id != -1:
-                filename = os.path.join(save_directory, "img" + str(img_id) + "." + save_format)
+                filename = os.path.join(save_directory, VideoSystem.img_name + str(img_id) + "." + save_format)
                 VideoSystem.imwrite(
                     filename, frame, tiff_compression_level=tiff_compression_level, jpeg_quality=jpeg_quality
                 )
@@ -627,7 +640,7 @@ class VideoSystem:
                 'frame_width' and 'frame_height'.
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
-        filename = os.path.join(save_directory, "video.mp4")
+        filename = os.path.join(save_directory, f"{VideoSystem.vid_name}.mp4")
 
         ffmpeg_process = (
             ffmpeg.input(
@@ -656,6 +669,71 @@ class VideoSystem:
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
         terminator_array.disconnect()
+
+    def save_imgs_as_vid(self) -> None:
+        """Converts a set of id labeled images into an mp4 video file.
+
+        This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
+        specific object instance.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        """
+        VideoSystem.imgs_to_vid(
+            fps=self.camera.specs["fps"], img_directory=self.save_directory, img_filetype=self._save_format
+        )
+
+    @staticmethod
+    def imgs_to_vid(
+        fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
+    ) -> None:
+        """Converts a set of id labeled images into an mp4 video file.
+
+        Args:
+            fps: The framerate of the video to be created.
+            img_directory: The directory where the images are saved.
+            img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
+            vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        """
+
+        if vid_directory is None:
+            vid_directory = img_directory
+
+        vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
+
+        sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
+
+        if sample_img is None:
+            raise Exception(f"No {img_filetype} images found in {img_directory}.")
+
+        frame_height, frame_width, _ = sample_img.shape
+
+        ffmpeg_process = (
+            ffmpeg.input(
+                "pipe:",
+                framerate="{}".format(fps),
+                format="rawvideo",
+                pix_fmt="bgr24",
+                s="{}x{}".format(int(frame_width), int(frame_height)),
+            )
+            .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+            .overwrite_output()
+            .run_async(pipe_stdin=True)
+        )
+
+        search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
+        files = glob.glob(search_pattern)
+        num_files = len(files)
+        for id in range(num_files):
+            file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
+            dat = cv2.imread(file)
+            ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
+
+        ffmpeg_process.stdin.close()
+        ffmpeg_process.wait()
 
     def _on_press(
         self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray
