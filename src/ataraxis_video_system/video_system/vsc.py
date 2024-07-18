@@ -1,5 +1,6 @@
 import os
 import glob
+import time
 from queue import Empty, Queue
 from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
 from threading import Thread
@@ -120,6 +121,7 @@ class VideoSystem:
     Args:
         save_directory: location where the system saves images.
         camera: camera for image collection.
+        display_video: whether or not to display a video of the current frames being recorded.
         save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
         tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
@@ -134,6 +136,7 @@ class VideoSystem:
     Attributes:
         save_directory: location where the system saves images.
         camera: camera for image collection.
+        _display_video: whether or not to display a video of the current frames being recorded.
         _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
         _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
@@ -143,7 +146,7 @@ class VideoSystem:
             the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
             compression value is only relevant when save_format is specified as 'jpg.'
         _running: whether or not the video system is running.
-        _input_process: multiprocessing process to control the image collection.
+        _producer_process: multiprocessing process to control the image collection.
         _consumer_processes: list multiprocessing processes to control image saving.
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
@@ -168,6 +171,7 @@ class VideoSystem:
         self,
         save_directory: str,
         camera: Camera,
+        display_video: bool = True,
         save_format: Save_Format_Type = "png",
         tiff_compression_level: int = 6,
         jpeg_quality: int = 95,
@@ -214,6 +218,7 @@ class VideoSystem:
 
         self.save_directory: str = save_directory
         self.camera: Camera = camera
+        self._display_video = display_video
         self._save_format = save_format
         self._jpeg_quality = jpeg_quality
         self._tiff_compression_level = tiff_compression_level
@@ -221,7 +226,7 @@ class VideoSystem:
         self._threads_per_process = num_threads
         self._running: bool = False
 
-        self._input_process: Process | None = None
+        self._producer_process: Process | None = None
         self._consumer_processes: list[Process] = []
         self._terminator_array: SharedMemoryArray | None = None
         self._image_queue: MPQueue[Any] | None = None
@@ -237,6 +242,7 @@ class VideoSystem:
         self,
         listen_for_keypress: bool = False,
         terminator_array_name: str = "terminator_array",
+        display_video: bool | None = None,
         save_format: Save_Format_Type | None = None,
         tiff_compression_level: int | None = None,
         jpeg_quality: int | None = None,
@@ -282,6 +288,9 @@ class VideoSystem:
             console.error(
                 message="Instantiation method outside of '__main__' scope", error=ProcessError
             )  # pragma: no cover
+
+        if display_video is not None:
+            self._display_video = display_video
 
         if save_format is not None:
             if save_format in get_args(VideoSystem.Save_Format_Type):
@@ -332,9 +341,9 @@ class VideoSystem:
             prototype=prototype,
         )
 
-        self._input_process = Process(
+        self._producer_process = Process(
             target=VideoSystem._produce_images_loop,
-            args=(self.camera, self._image_queue, self._terminator_array),
+            args=(self.camera, self._image_queue, self._terminator_array, self._display_video),
             daemon=True,
         )
 
@@ -367,7 +376,7 @@ class VideoSystem:
         # Start save processes first to minimize queue buildup
         for process in self._consumer_processes:
             process.start()
-        self._input_process.start()
+        self._producer_process.start()
 
         if listen_for_keypress:
             terminator_array: SharedMemoryArray = self._terminator_array
@@ -408,13 +417,13 @@ class VideoSystem:
             else:  # This error should never occur
                 message = "Failure to start the stop video system  because _terminator_array is not initialized."
                 console.error(message, error=TypeError)
-                raise TypeError(message) # pragma:no cover
+                raise TypeError(message)  # pragma:no cover
 
-            if self._input_process is not None:
-                self._input_process.join()
+            if self._producer_process is not None:
+                self._producer_process.join()
             else:  # This error should never occur
                 console.error(
-                    message="Failure to start the stop video system  because _input_process is not initialized.",
+                    message="Failure to start the stop video system  because _producer_process is not initialized.",
                     error=TypeError,
                 )
 
@@ -462,7 +471,11 @@ class VideoSystem:
 
     @staticmethod
     def _produce_images_loop(
-        camera: Camera, img_queue: MPQueue[Any], terminator_array: SharedMemoryArray, fps: float | None = None
+        camera: Camera,
+        img_queue: MPQueue[Any],
+        terminator_array: SharedMemoryArray,
+        display_video: bool = False,
+        fps: float | None = None,
     ) -> None:
         """Iteratively grabs images from the camera and adds to the img_queue.
 
@@ -486,7 +499,12 @@ class VideoSystem:
         while terminator_array.read_data(index=2, convert_output=True):
             if terminator_array.read_data(index=0, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    img_queue.put((camera.grab_frame(), n_images_produced))
+                    frame = camera.grab_frame()
+                    img_queue.put((frame, n_images_produced))
+                    if display_video:
+                        cv2.imshow("video", frame)
+                        if cv2.waitKey(1) & 0xFF == 27:
+                            pass
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()

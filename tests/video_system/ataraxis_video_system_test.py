@@ -582,7 +582,7 @@ def test_imgs_to_vid(video_system):
     with pytest.raises(Exception):
         VideoSystem.imgs_to_vid(video_system.camera.specs["fps"], img_directory=test_directory)
 
-    video_system.start()
+    video_system.start(display_video=False)
     timer = PrecisionTimer("s")
     timer.reset()
     while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
@@ -599,7 +599,7 @@ def test_imgs_to_vid(video_system):
 
     test_directory = video_system.save_directory
 
-    video_system.start()
+    video_system.start(display_video=False)
     timer = PrecisionTimer("s")
     timer.reset()
     while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
@@ -623,15 +623,17 @@ def test_start(video_system):
 
     assert len(os.listdir(test_directory)) == 0
     assert not video_system._running
-    assert not video_system._input_process
+    assert not video_system._producer_process
     assert not video_system._terminator_array
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
 
-    video_system.start(terminator_array_name="terminator_array", tiff_compression_level=5, jpeg_quality=90)
+    video_system.start(
+        terminator_array_name="terminator_array", tiff_compression_level=5, jpeg_quality=90, display_video=False
+    )
 
     assert video_system._running
-    assert video_system._input_process
+    assert video_system._producer_process
     assert video_system._terminator_array
     assert video_system._image_queue
 
@@ -655,15 +657,15 @@ def test_mp4_save(video_system):
 
     assert len(os.listdir(test_directory)) == 0
     assert not video_system._running
-    assert not video_system._input_process
+    assert not video_system._producer_process
     assert not video_system._terminator_array
     assert not video_system._image_queue
     assert not video_system.camera.is_connected
 
-    video_system.start(terminator_array_name="terminator_array1", save_format="mp4")
+    video_system.start(terminator_array_name="terminator_array1", save_format="mp4", display_video=False)
 
     assert video_system._running
-    assert video_system._input_process
+    assert video_system._producer_process
     assert video_system._terminator_array
     assert video_system._image_queue
 
@@ -684,7 +686,7 @@ def test_mp4_save(video_system):
 def test_stop_image_production(video_system):
     test_directory = video_system.save_directory
 
-    video_system.start(terminator_array_name="terminator_array2")
+    video_system.start(terminator_array_name="terminator_array2", display_video=False)
 
     timer = PrecisionTimer("s")
     timer.reset()
@@ -715,7 +717,7 @@ def test_stop_image_production(video_system):
 def test_stop_image_saving(video_system):
     test_directory = video_system.save_directory
 
-    video_system.start(terminator_array_name="terminator_array3")
+    video_system.start(terminator_array_name="terminator_array3", display_video=False)
 
     timer = PrecisionTimer("s")
     timer.reset()
@@ -747,7 +749,7 @@ def test_stop_image_saving(video_system):
 def test_stop(video_system):
     test_directory = video_system.save_directory
 
-    video_system.start(terminator_array_name="terminator_array4", num_processes=5, num_threads=6)
+    video_system.start(terminator_array_name="terminator_array4", num_processes=5, num_threads=6, display_video=False)
 
     timer = PrecisionTimer("s")
     timer.reset()
@@ -767,7 +769,9 @@ def test_key_listener(video_system):
     test_directory = video_system.save_directory
     controller = keyboard.Controller()
 
-    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array_key_listener")
+    video_system.start(
+        listen_for_keypress=True, terminator_array_name="terminator_array_key_listener", display_video=False
+    )
 
     timer = PrecisionTimer("s")
     timer.reset()
@@ -810,7 +814,7 @@ def test_key_listener(video_system):
     assert len(os.listdir(test_directory)) == 0
 
     # Now check that with manual stopping in interactive mode, the key_listener actually closes
-    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array6")
+    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array6", display_video=False)
     timer.reset()
     while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
         pass
@@ -826,7 +830,7 @@ def test_key_listener(video_system):
 
     # Key listener has a safety mechanism where the listener stops if running gets set to false. This normally doesn't
     # occur, so it has to be tested directly
-    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array7")
+    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array7", display_video=False)
     timer.reset()
     while timer.elapsed <= 5 and len(os.listdir(test_directory)) < 10:
         pass
@@ -890,7 +894,7 @@ def test_camera(webcam):
 # TypeError structure. These errors should never get raised by user but are tested here to get code coverage.
 @pytest.mark.xdist_group()
 def test_type_errors(video_system):
-    video_system.start()
+    video_system.start(display_video=False)
 
     temp = video_system._terminator_array
     video_system._terminator_array = None
@@ -907,15 +911,15 @@ def test_type_errors(video_system):
     video_system._terminator_array = temp
     video_system.stop()
 
-    video_system.start()
+    video_system.start(display_video=False)
 
-    temp = video_system._input_process
-    video_system._input_process = None
+    temp = video_system._producer_process
+    video_system._producer_process = None
 
     with pytest.raises(TypeError):
         video_system.stop()
 
-    video_system._input_process = temp
+    video_system._producer_process = temp
     video_system.stop()
 
 
@@ -924,22 +928,22 @@ def test_creation_and_start_errors(video_system, mock_camera, temp_directory):
         VideoSystem(temp_directory, mock_camera, save_format="bad_format")
 
     with pytest.raises(ValueError):
-        video_system.start(save_format="bad_format")
+        video_system.start(save_format="bad_format", display_video=False)
 
     with pytest.raises(ValueError):
         VideoSystem(temp_directory, mock_camera, tiff_compression_level=50)
 
     with pytest.raises(ValueError):
-        video_system.start(tiff_compression_level=50)
+        video_system.start(tiff_compression_level=50, display_video=False)
 
     with pytest.raises(ValueError):
         VideoSystem(temp_directory, mock_camera, jpeg_quality=101)
 
     with pytest.raises(ValueError):
-        video_system.start(jpeg_quality=101)
+        video_system.start(jpeg_quality=101, display_video=False)
 
     with pytest.raises(ProcessError):
         VideoSystem(temp_directory, mock_camera, num_processes=1000)
 
     with pytest.raises(ProcessError):
-        video_system.start(num_processes=1000)
+        video_system.start(num_processes=1000, display_video=False)

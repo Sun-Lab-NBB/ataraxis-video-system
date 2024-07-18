@@ -7,7 +7,7 @@ from .vsc import Camera, VideoSystem
 def interactive_run() -> None:
     console.enable()
     vs = VideoSystem(
-        save_directory="imgs", camera=Camera(), save_format="tiff"
+        save_directory="imgs", camera=Camera(), save_format="png"
     )  # Create the system using the built-in camera class
     vs.start(
         listen_for_keypress=True, tiff_compression_level=9
