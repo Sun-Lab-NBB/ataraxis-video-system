@@ -513,9 +513,10 @@ def test_save_video_loop(temp_directory, mock_camera):
 
     prototype = np.array([1, 1, 1], dtype=np.int32)
     test_array = SharedMemoryArray.create_array(name="test_save_array6", prototype=prototype)
+    config = {"codec" : "h264", "preset" : "slow", "profile": "main", "cq" : 23, "crf" : 28, "quality": 23, "threads": 0, "gpu": 0}
 
     save_process = Process(
-        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs)
+        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs, config)
     )
     save_process.start()
 
@@ -555,7 +556,7 @@ def test_save_video_loop(temp_directory, mock_camera):
     test_array = SharedMemoryArray.create_array(name="test_save_array7", prototype=prototype)
 
     save_process = Process(
-        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs, 60)
+        target=VideoSystem._save_video_loop, args=(test_queue, test_array, test_directory, mock_camera.specs, config, 60)
     )
     save_process.start()
 

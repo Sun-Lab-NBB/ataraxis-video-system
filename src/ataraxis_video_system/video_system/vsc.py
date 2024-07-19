@@ -123,13 +123,14 @@ class VideoSystem:
         camera: camera for image collection.
         display_video: whether or not to display a video of the current frames being recorded.
         save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
-            a lossy format
+            a lossy format. Set to 'mp4' for video saving.
         tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
             most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
             relevant when save_format is specified as 'tiff.'
-        jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
-            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-            compression value is only relevant when save_format is specified as 'jpg.'
+        jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
+            highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
+            but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
+        mp4_config: 
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -139,6 +140,7 @@ class VideoSystem:
         _display_video: whether or not to display a video of the current frames being recorded.
         _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
+        _mp4_config: 
         _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
             most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
             relevant when save_format is specified as 'tiff.'
@@ -165,6 +167,7 @@ class VideoSystem:
 
     img_name = "img"
     vid_name = "video"
+    Codec_Type = Literal["h264", "h264_mf", "libx264", "hevc", "hevc_mf", "libx265"]
     Save_Format_Type = Literal["png", "tiff", "tif", "jpg", "jpeg", "mp4"]
 
     def __init__(
@@ -175,6 +178,7 @@ class VideoSystem:
         save_format: Save_Format_Type = "png",
         tiff_compression_level: int = 6,
         jpeg_quality: int = 95,
+        mp4_config : dict = {},
         num_processes: int = 3,
         num_threads: int = 4,
     ):
@@ -194,7 +198,8 @@ class VideoSystem:
 
         if save_format not in get_args(VideoSystem.Save_Format_Type):
             console.error(
-                message=f"'{save_format}' is an invalid save format. Expects 'png', 'jpg', or 'tiff'.", error=ValueError
+                message=f"'{save_format}' is an invalid save format. Expects one of {get_args(VideoSystem.Save_Format_Type)}.",
+                error=ValueError,
             )
 
         if not 0 <= tiff_compression_level <= 9:
@@ -222,6 +227,11 @@ class VideoSystem:
         self._save_format = save_format
         self._jpeg_quality = jpeg_quality
         self._tiff_compression_level = tiff_compression_level
+
+        self._mp4_config = {"codec" : "h264", "preset" : "slow", "profile": "main", "cq" : 23, "crf" : 28, "quality": 23, "threads": 0, "gpu": 0}
+        for key in mp4_config.keys():
+            self._mp4_config[key] = mp4_config[key]
+
         self._num_consumer_processes = num_processes
         self._threads_per_process = num_threads
         self._running: bool = False
@@ -246,6 +256,7 @@ class VideoSystem:
         save_format: Save_Format_Type | None = None,
         tiff_compression_level: int | None = None,
         jpeg_quality: int | None = None,
+        mp4_config: dict = {},
         num_processes: int | None = None,
         num_threads: int | None = None,
     ) -> None:
@@ -258,12 +269,13 @@ class VideoSystem:
                 video_systems concurrently, each terminator_array should have a unique name.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-                relevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-                compression value is only relevant when save_format is specified as 'jpg.'
+            tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive.
+                0 gives fastest saving but most memory used. 9 gives slowest saving but least amount of memory used. This
+                compression value is onlyrelevant when save_format is specified as 'tiff.'
+            jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
+                highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
+                but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
+            mp4_config: 
             num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
             num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -296,7 +308,10 @@ class VideoSystem:
             if save_format in get_args(VideoSystem.Save_Format_Type):
                 self._save_format = save_format
             else:
-                console.error(message="Invalid save format.", error=ValueError)
+                console.error(
+                    message=f"'{save_format}' is an invalid save format. Expects one of {get_args(VideoSystem.Save_Format_Type)}.",
+                    error=ValueError,
+                )
 
         if tiff_compression_level is not None:
             if 0 <= tiff_compression_level <= 9:
@@ -315,6 +330,9 @@ class VideoSystem:
                     message=f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.",
                     error=ValueError,
                 )
+
+        for key in mp4_config.keys():
+            self._mp4_config[key] = mp4_config[key]
 
         if num_processes is not None:
             num_cores = multiprocessing.cpu_count()
@@ -368,7 +386,13 @@ class VideoSystem:
             self._consumer_processes.append(
                 Process(
                     target=VideoSystem._save_video_loop,
-                    args=(self._image_queue, self._terminator_array, self.save_directory, self.camera.specs),
+                    args=(
+                        self._image_queue,
+                        self._terminator_array,
+                        self.save_directory,
+                        self.camera.specs,
+                        self._mp4_config,
+                    ),
                     daemon=True,
                 )
             )
@@ -652,6 +676,7 @@ class VideoSystem:
         terminator_array: SharedMemoryArray,
         save_directory: str,
         camera_specs: Dict[str, Any],
+        config: dict,
         fps: float | None = None,
     ) -> None:
         """Iteratively grabs images from the img_queue and adds them to an mp4 file.
@@ -661,7 +686,7 @@ class VideoSystem:
 
         This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
         the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a process and will create an infinite loop if run on its
+        fast as possible. This function is meant to be run as a process 264rgbnd will create an infinite loop if run on its
         own.
 
         Args:
@@ -672,9 +697,18 @@ class VideoSystem:
             camera_specs: a dictionary containing specifications of the camera. Specifically, the dictionary must
                 contain the camera's frames per second, denoted 'fps', and the camera frame size denoted by
                 'frame_width' and 'frame_height'.
+            config: 
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
         filename = os.path.join(save_directory, f"{VideoSystem.vid_name}.mp4")
+
+        codec = "libx264"
+
+        default_keys = ['codec', 'preset', 'profile', 'cq', 'crf', 'quality', 'threads', 'gpu']
+        additional_config = {}
+        for key in config.keys():
+            if key not in default_keys:
+                additional_config[key] = config[key]
 
         ffmpeg_process = (
             ffmpeg.input(
@@ -684,7 +718,19 @@ class VideoSystem:
                 pix_fmt="bgr24",
                 s="{}x{}".format(int(camera_specs["frame_width"]), int(camera_specs["frame_height"])),
             )
-            .output(filename, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+            .output(
+                filename,
+                vcodec=config['codec'],
+                pix_fmt="nv21",
+                preset=config['preset'],
+                profile=config['profile'],
+                cq=config['cq'],
+                crf=config['crf'],
+                quality=config['quality'],
+                threads=config['threads'],
+                gpu=config['gpu'],
+                **additional_config,
+            )
             .overwrite_output()
             .run_async(pipe_stdin=True)
         )
