@@ -1,3 +1,5 @@
+"""This module contains the interactive_run script that allows..."""
+
 from ataraxis_base_utilities import console
 
 from .vsc import Camera, VideoSystem

@@ -1,12 +1,15 @@
+"""This module contains the VideoSystem class and the helper Camera class...
+
+Brief description the module's purpose and the main VideoSystem class.
+"""
+
 import os
 import glob
-import time
 from queue import Empty, Queue
-from typing import Any, Dict, Generic, Literal, TypeVar, cast, get_args
+from typing import Any, Generic, Literal, TypeVar, cast, get_args
 from threading import Thread
 import multiprocessing
 from multiprocessing import (
-    Pool,
     Queue as UntypedMPQueue,
     Process,
     ProcessError,
@@ -24,7 +27,7 @@ from ataraxis_data_structures import SharedMemoryArray
 
 # Used in many functions to convert between units
 Precision_Type = Literal["ns", "us", "ms", "s"]
-unit_conversion: Dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
+unit_conversion: dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
 precision: Precision_Type = "ms"
 
 T = TypeVar("T")
@@ -68,7 +71,7 @@ class Camera:
     """
 
     def __init__(self, camera_id: int = 0) -> None:
-        self.specs: Dict[str, Any] = {}
+        self.specs: dict[str, Any] = {}
         self.camera_id = camera_id
         self._vid: cv2.VideoCapture | None = None
         self.connect()
@@ -130,7 +133,7 @@ class VideoSystem:
         jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
             highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
             but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-        mp4_config: 
+        mp4_config:
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -140,7 +143,7 @@ class VideoSystem:
         _display_video: whether or not to display a video of the current frames being recorded.
         _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
             a lossy format
-        _mp4_config: 
+        _mp4_config:
         _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
             most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
             relevant when save_format is specified as 'tiff.'
@@ -178,7 +181,7 @@ class VideoSystem:
         save_format: Save_Format_Type = "png",
         tiff_compression_level: int = 6,
         jpeg_quality: int = 95,
-        mp4_config : dict = {},
+        mp4_config: dict[str, str | int] = {},
         num_processes: int = 3,
         num_threads: int = 4,
     ):
@@ -228,7 +231,16 @@ class VideoSystem:
         self._jpeg_quality = jpeg_quality
         self._tiff_compression_level = tiff_compression_level
 
-        self._mp4_config = {"codec" : "h264", "preset" : "slow", "profile": "main", "cq" : 23, "crf" : 28, "quality": 23, "threads": 0, "gpu": 0}
+        self._mp4_config = {
+            "codec": "h264",
+            "preset": "slow",
+            "profile": "main",
+            "cq": 23,
+            "crf": 28,
+            "quality": 23,
+            "threads": 0,
+            "gpu": 0,
+        }
         for key in mp4_config.keys():
             self._mp4_config[key] = mp4_config[key]
 
@@ -256,7 +268,7 @@ class VideoSystem:
         save_format: Save_Format_Type | None = None,
         tiff_compression_level: int | None = None,
         jpeg_quality: int | None = None,
-        mp4_config: dict = {},
+        mp4_config: dict[str, str | int] = {},
         num_processes: int | None = None,
         num_threads: int | None = None,
     ) -> None:
@@ -275,7 +287,7 @@ class VideoSystem:
             jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
                 highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
                 but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-            mp4_config: 
+            mp4_config:
             num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
             num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -675,8 +687,8 @@ class VideoSystem:
         img_queue: MPQueue[Any],
         terminator_array: SharedMemoryArray,
         save_directory: str,
-        camera_specs: Dict[str, Any],
-        config: dict,
+        camera_specs: dict[str, Any],
+        config: dict[str, str | int],
         fps: float | None = None,
     ) -> None:
         """Iteratively grabs images from the img_queue and adds them to an mp4 file.
@@ -697,14 +709,14 @@ class VideoSystem:
             camera_specs: a dictionary containing specifications of the camera. Specifically, the dictionary must
                 contain the camera's frames per second, denoted 'fps', and the camera frame size denoted by
                 'frame_width' and 'frame_height'.
-            config: 
+            config:
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
         filename = os.path.join(save_directory, f"{VideoSystem.vid_name}.mp4")
 
         codec = "libx264"
 
-        default_keys = ['codec', 'preset', 'profile', 'cq', 'crf', 'quality', 'threads', 'gpu']
+        default_keys = ["codec", "preset", "profile", "cq", "crf", "quality", "threads", "gpu"]
         additional_config = {}
         for key in config.keys():
             if key not in default_keys:
@@ -720,15 +732,15 @@ class VideoSystem:
             )
             .output(
                 filename,
-                vcodec=config['codec'],
+                vcodec=config["codec"],
                 pix_fmt="nv21",
-                preset=config['preset'],
-                profile=config['profile'],
-                cq=config['cq'],
-                crf=config['crf'],
-                quality=config['quality'],
-                threads=config['threads'],
-                gpu=config['gpu'],
+                preset=config["preset"],
+                profile=config["profile"],
+                cq=config["cq"],
+                crf=config["crf"],
+                quality=config["quality"],
+                threads=config["threads"],
+                gpu=config["gpu"],
                 **additional_config,
             )
             .overwrite_output()

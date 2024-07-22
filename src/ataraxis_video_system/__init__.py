@@ -1,1 +1,3 @@
-from .video_system.vsc import Camera, VideoSystem
+from .video_system import Camera, VideoSystem
+
+__all__ = ["VideoSystem", "Camera"]

@@ -1,8 +1,8 @@
 # Defines the build system used for the project. For pure-python projects, uses the hatchling build system, which is
 # used internally by scikit-build for our C-extension projects. Therefore, there is clear continuity between our
-# c-extension and pure-python projcts.
+# c-extension and pure-python projects.
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1,<2"]
 build-backend = "hatchling.build"
 
 # Project metdata section. Provides the genral ID information about the project.
@@ -21,7 +21,7 @@ maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
 ]
 
-keywords = ["OpenCV", "GenTL", "Harvesters", "FFMPEG", "video recording", "camera interface", "ataraxis"]
+keywords = ["OpenCV", "FFMPEG", "video recording", "camera interface", "video transcoding", "ataraxis"]
 
 classifiers = [
     # Development status
@@ -41,17 +41,17 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X"
 ]
 
-# Project-wide dependencies
+# Runtime project dependencies. This overlaps with 'condarun' optional list.
 dependencies = [
-    "numpy>=2",
-    "pynput>=1",
-    "opencv-python>=4",
-    "ffmpeg-python>=0",
-    "ataraxis-time==1.1.0",
-    "ataraxis-base-utilities>=1, <2",
-    "ataraxis-data-structures>=0",
-    "tifffile >=2024",
-    "imagecodecs >= 2024, < 2025",
+    "numpy>=2,<3",
+    "pynput>=1,<2",
+    "opencv-python>=4,<5",
+    "ffmpeg-python>=0,<1",
+    "ataraxis-time>=2,<3",
+    "ataraxis-base-utilities>=2,<3",
+    "ataraxis-data-structures>=0.3,<2",
+    "tifffile>=2024,<2025",
+    "imagecodecs >= 2024,< 2025",
 ]
 
 [project.urls]
@@ -65,80 +65,81 @@ Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/ov
 # Runtime dependencies known to be installable with conda for all development platforms
 # (OSX ARM64, WIN AMD64, LIN AMD64). This specification is used by ataraxis-automation to resolve as many
 # project dependencies with conda over pip as possible.
-conda_run = [
-    "numpy>=2",
-    "pynput>=1",
-    "ffmpeg-python>=0",
-    "tifffile >=2024",
-    "imagecodecs >= 2024, < 2025",
+condarun = [
+    "numpy>=2,<3",
+    "pynput>=1,<2",
+    "ffmpeg-python>=0,<1",
+    "tifffile>=2024,<2025",
+    "imagecodecs>=2024,<2025",
 ]
 
-# Depepndencies known to be installable with conda for all development platforms (OSX ARM64, WIN AMD64, LIN AMD64).
+# Dependencies known to be installable with conda for all development platforms (OSX ARM64, WIN AMD64, LIN AMD64).
 conda = [
     # Tox
-    "tox>=4",
+    "tox>=4,<5",
 
     # Testing
-    "pytest>=8",
-    "pytest-cov>=5",
-    "pytest-xdist>=3",
-    "pillow>=10",
+    "pytest>=8,<9",
+    "pytest-cov>=5,<6",
+    "pytest-xdist>=3,<4",
+    "pillow>=10,<11",
 
     # Coverage Reports
-    "coverage[toml]>=7",
-    "junitparser>=3",
+    "coverage[toml]>=7,<8",
+    "junitparser>=3,<4",
 
     # Documentation
-    "sphinx>=7",
-    "importlib_metadata>=8",
-    "sphinx-rtd-theme>=2",
-    "sphinx-click>=6",
-    "sphinx-autodoc-typehints>=2",
+    "sphinx>=7,<8",
+    "importlib_metadata>=8,<9",
+    "sphinx-rtd-theme>=2,<3",
+    "sphinx-click>=6,<7",
+    "sphinx-autodoc-typehints>=2,<3",
 
     # Linting and Stub-generation
-    "mypy>=1",
-    "ruff>=0",
+    "mypy>=1,<2",
+    "ruff>=0,<1",
 
     # Types:
-    "types-pillow>=10",
+    "types-pillow>=10,<11",
 
     # Building
-    "hatchling>=1",
+    "hatchling>=1,<2",
 
     # Distribution
-    "twine>=5",
-    "grayskull>=2",
+    "twine>=5,<6",
+    "grayskull>=2,<3",
 
     # Miscellaneous helpers
-    "black>=24",
-    "uv>=0"
+    "black>=24,<25",
+    "uv>=0,<1"
 ]
 
 # Dependencies known to not be installable with conda for at least one supported development platform
 # (OSX ARM64, WIN AMD64, LIN AMD64).
 noconda =[
     # Tox
-    "tox-uv>=1",
+    "tox-uv>=1,<2",
 
     # Building
-    "build>=1",
+    "build>=1,<2",
 
     # Types
-    "types-pynput>=1",
+    "types-pynput>=1,<2",
 
     # Automation
-    "ataraxis-automation>=2",
+    "ataraxis-automation>=3,<4",
 ]
 
-# A shorhand specification that installs tox and all packages required for development tasks. This specification can
-# be used by developers to quickly install all necessary compontents for working on this project. Has to be installed
+# A shorthand specification that installs tox and all packages required for development tasks. This specification can
+# be used by developers to quickly install all necessary components for working on this project. Has to be installed
 # from pip.
 dev = [
-    "ataraxis-base-utilities[conda]",
-    "ataraxis-base-utilities[noconda]"
+    "ataraxis-video-system[conda]",
+    "ataraxis-video-system[noconda]"
 ]
 
-# Lists cli interfaces exposed by the installation of this project.
+# Exposes a cli interface that can directly run the video system in an interactive mode. Primarily, this is used to
+# manually test the system.
 [project.scripts]
 interactive-run = "ataraxis_video_system.video_system.interactive_run:interactive_run"
 
@@ -148,7 +149,7 @@ exclude = [".github", "recipe"]
 
 # Specifies the library structure.
 [tool.hatch.build.targets.wheel]
-sources = ["src"]
+packages = ["src/ataraxis_video_system"]
 
 # Ruff Configuration.
 [tool.ruff]
@@ -182,7 +183,7 @@ lint.ignore = [
 quote-style = "double"             # Uses double quotes for strings
 indent-style = "space"             # Uses space for indents
 skip-magic-trailing-comma = false  # Like black, ignores trailing commas
-line-ending = "auto"               # Automatically detects and standardizes line ending chracter
+line-ending = "auto"               # Automatically detects and standardizes line ending character
 
 # Docstrings and comments' line length
 [tool.ruff.lint.pycodestyle]
@@ -201,15 +202,15 @@ convention = "google"
 
 [tool.ruff.lint.isort]
 case-sensitive = true              # Takes case into account when sorting imports
-combine-as-imports = true          # Combines multiple 'as' imports for the same package
-force-wrap-aliases = true          # Wraps 'as' imports so that each uses a separate line (after combining for package)
-force-sort-within-sections = true  # Forces 'as' and 'from' imports for the same package to be close
+combine-as-imports = true          # Combines multiple "as" imports for the same package
+force-wrap-aliases = true          # Wraps "as" imports so that each uses a separate line (after combining for package)
+force-sort-within-sections = true  # Forces "as" and "from" imports for the same package to be close
 length-sort = true                 # Places shorter imports first
 
 # MyPy configuration section.
 [tool.mypy]
-disallow_untyped_defs = true  # Enforces function annotation
-warn_unused_ignores = true    # Warns against using 'type: ignore' for packages that have type stubs available.
+disallow_untyped_defs = true # Enforces function annotation
+warn_unused_ignores = true   # Warns against using 'type: ignore' for packages that have type stubs available.
 exclude = [
     "ataraxis-video-system-\\d+",   # Ignores temporary folder created by setuptools when building the sdist
     "venv.*/",                      # Ignores virtual environments
@@ -221,9 +222,11 @@ exclude = [
     "tests/",                       # Ignores the test directory.
 ]
 
-# This is used by the 'test' tox tasks to aggreagte coverage data produced during pytest runtimes.
+# This is used by the 'test' tox tasks to aggregate coverage data produced during pytest runtimes.
 [tool.coverage.paths]
-source = ["src/", ".tox/*/lib/python*/site-packages/"]  # Maps coverage measured in site-packages to source files in src
+
+# Maps coverage measured in site-packages to source files in src
+source = ["src/", ".tox/*/lib/python*/site-packages/"]
 
 # Same as above, specifies the output directory for the coverage .html report
 [tool.coverage.html]
