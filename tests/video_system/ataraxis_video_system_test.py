@@ -4,6 +4,7 @@ import random
 import tempfile
 from threading import Thread
 import subprocess
+import multiprocessing
 from multiprocessing import Process, ProcessError
 
 from PIL import Image, ImageDraw, ImageChops
@@ -15,7 +16,6 @@ from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import SharedMemoryArray
 
 from ataraxis_video_system import Camera, VideoSystem
-from ataraxis_video_system.video_system.vsc import MPQueue
 
 
 class MockCamera:
@@ -180,7 +180,8 @@ def test_delete_images(video_system):
 
 
 def test_produce_images_loop(mock_camera):
-    test_queue = MPQueue()
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
 
     # Bad prototypes 1 and 2: when the third element is 0, the loop terminates immediately
 
@@ -243,15 +244,18 @@ def test_produce_images_loop(mock_camera):
     timer.reset()
     while timer.elapsed <= wait_time and test_queue.qsize() < 10:
         pass
+    
+    assert test_queue.qsize() >= 10
 
     test_array.write_data(index=2, data=0)
+    test_manager.shutdown()
     input_stream_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
-    assert test_queue.qsize() >= 10
-    test_queue = MPQueue()
-    assert test_queue.qsize() == 0
+
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
 
     # Run input_stream at 60 fps until is saves 10 images
     prototype = np.array([1, 1, 1], dtype=np.int32)
@@ -265,14 +269,12 @@ def test_produce_images_loop(mock_camera):
     timer.reset()
     while timer.elapsed <= wait_time and test_queue.qsize() < 10:
         pass
+    assert test_queue.qsize() >= 10
     test_array.write_data(index=2, data=0)
+    test_manager.shutdown()
     input_stream_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
-
-    assert test_queue.qsize() >= 10
-    test_queue = MPQueue()
-    assert test_queue.qsize() == 0
 
 
 def test_imwrite(temp_directory):
@@ -393,7 +395,8 @@ def test_save_images_loop(temp_directory):
     test_directory = temp_directory
 
     num_images = 25
-    test_queue = MPQueue()
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
 
     for i in range(num_images):
         img = create_image(i * 10)
@@ -458,6 +461,7 @@ def test_save_images_loop(temp_directory):
         pass
 
     test_array.write_data(index=2, data=0)
+    test_manager.shutdown()
     save_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
@@ -465,8 +469,11 @@ def test_save_images_loop(temp_directory):
     assert len(os.listdir(test_directory)) == num_images
 
     # clear directory and reload images into queue
+
     VideoSystem._delete_files_in_directory(test_directory)
     num_images = 25
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
     for i in range(num_images):
         img = create_image(i * 10)
         PIL_path = os.path.join(test_directory, "PIL_img" + str(i) + ".png")
@@ -491,6 +498,7 @@ def test_save_images_loop(temp_directory):
     while timer.elapsed <= wait_time and len(os.listdir(test_directory)) < num_images:
         pass
     test_array.write_data(index=2, data=0)
+    test_manager.shutdown()
     save_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
@@ -500,7 +508,8 @@ def test_save_images_loop(temp_directory):
 
 def test_save_video_loop(temp_directory, mock_camera):
     test_directory = temp_directory
-    test_queue = MPQueue()
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
     num_images = 25
     timer = PrecisionTimer("s")
     config = {
@@ -514,7 +523,7 @@ def test_save_video_loop(temp_directory, mock_camera):
         "gpu": 0,
     }
 
-    # Reload images to the queue
+    # Load images to the queue
     num_images = 25
     for i in range(num_images):
         img = create_image(i * 10)
@@ -540,20 +549,23 @@ def test_save_video_loop(temp_directory, mock_camera):
     timer.reset()
     while timer.elapsed <= wait_time and test_queue.qsize() > 0:
         pass
+    assert test_queue.qsize() == 0
 
     test_array.write_data(index=2, data=0)
+    test_manager.shutdown()
     save_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
 
     assert "video.mp4" in os.listdir(test_directory)
-    assert test_queue.qsize() == 0
 
     VideoSystem._delete_files_in_directory(test_directory)
 
     assert "video.mp4" not in os.listdir(test_directory)
 
     def save_video_test_by_codec(codec, i):
+        test_manager = multiprocessing.Manager()
+        test_queue = test_manager.Queue()
         config["codec"] = codec
 
         # Add images to the queue
@@ -579,15 +591,16 @@ def test_save_video_loop(temp_directory, mock_camera):
         timer.reset()
         while timer.elapsed <= wait_time and test_queue.qsize() > 0:
             pass
+        assert test_queue.qsize() == 0
 
         test_array.write_data(index=2, data=0)
+        test_manager.shutdown()
         save_process.join()
         test_array.disconnect()
         test_array._buffer.unlink()
 
         assert "video.mp4" in os.listdir(test_directory)
 
-        assert test_queue.qsize() == 0
 
         VideoSystem._delete_files_in_directory(test_directory)
 
@@ -616,7 +629,8 @@ def gpu_available():
 @pytest.mark.skipif(not gpu_available(), reason="No gpu available on this computer")
 def test_save_video_loop_gpu(temp_directory, mock_camera):
     test_directory = temp_directory
-    test_queue = MPQueue()
+    test_manager = multiprocessing.Manager()
+    test_queue = test_manager.Queue()
     num_images = 25
     timer = PrecisionTimer("s")
     config = {
@@ -656,15 +670,16 @@ def test_save_video_loop_gpu(temp_directory, mock_camera):
         timer.reset()
         while timer.elapsed <= wait_time and test_queue.qsize() > 0:
             pass
+        assert test_queue.qsize() == 0
 
         test_array.write_data(index=2, data=0)
+        test_manager.shutdown()
         save_process.join()
         test_array.disconnect()
         test_array._buffer.unlink()
 
         assert "video.mp4" in os.listdir(test_directory)
 
-        assert test_queue.qsize() == 0
 
         VideoSystem._delete_files_in_directory(test_directory)
 

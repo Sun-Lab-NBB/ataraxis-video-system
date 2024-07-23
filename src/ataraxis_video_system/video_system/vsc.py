@@ -10,6 +10,7 @@ from typing import Any, Generic, Literal, TypeVar, cast, get_args
 from threading import Thread
 import multiprocessing
 from multiprocessing import (
+    Queue as UntypedMPQueue,
     Process,
     ProcessError,
 )
@@ -31,27 +32,6 @@ precision: Precision_Type = "ms"
 
 T = TypeVar("T")
 
-class SharedCounter(object):
-    """ A synchronized shared counter.
-    The locking done by multiprocessing.Value ensures that only a single
-    process or thread may read or write the in-memory ctypes object. However,
-    in order to do n += 1, Python performs a read followed by a write, so a
-    second process may read the old value before the new one is written by the
-    first process. The solution is to use a multiprocessing.Lock to guarantee
-    the atomicity of the modifications to Value.
-    This class comes almost entirely from Eli Bendersky's blog:
-    http://eli.thegreenplace.net/2012/01/04/shared-counter-with-pythons-multiprocessing/
-    """
-    def __init__(self, n = 0):
-        self.count = multiprocessing.Value('i', n)
-    def increment(self, n = 1):
-        """ Increment the counter by n (default = 1) """
-        with self.count.get_lock():
-            self.count.value += n
-    @property
-    def value(self):
-        """ Return the value of the counter """
-        return self.count.value
 
 class MPQueue(Generic[T]):
     """A wrapper for a multiprocessing queue object that makes Queue typed. This is used to appease mypy type checker"""
@@ -76,39 +56,6 @@ class MPQueue(Generic[T]):
 
     def cancel_join_thread(self) -> None:
         return self._queue.cancel_join_thread()
-    
-class UntypedMPQueue(multiprocessing.queues.Queue):
-    """ A portable implementation of multiprocessing.Queue.
-    Because of multithreading / multiprocessing semantics, Queue.qsize() may
-    raise the NotImplementedError exception on Unix platforms like Mac OS X
-    where sem_getvalue() is not implemented. This subclass addresses this
-    problem by using a synchronized shared counter (initialized to zero) and
-    increasing / decreasing its value every time the put() and get() methods
-    are called, respectively. This not only prevents NotImplementedError from
-    being raised, but also allows us to implement a reliable version of both
-    qsize() and empty().
-    https://github.com/vterron/lemon/tree/d60576bec2ad5d1d5043bcb3111dff1fcb58a8d6
-    """
-    def __init__(self, *args, **kwargs):
-        super(Queue, self).__init__(*args, **kwargs)
-        self.size = SharedCounter(0)
-    def put(self, *args, **kwargs):
-        self.size.increment(1)
-        super(Queue, self).put(*args, **kwargs)
-    def get(self, *args, **kwargs):
-        self.size.increment(-1)
-        return super(Queue, self).get(*args, **kwargs)
-    def qsize(self):
-        """ Reliable implementation of multiprocessing.Queue.qsize() """
-        return self.size.value
-    def empty(self):
-        """ Reliable implementation of multiprocessing.Queue.empty() """
-        return not self.qsize()
-    def clear(self):
-        """ Remove all elements from the Queue. """
-        while not self.empty():
-            self.get()
-
 
 class Camera:
     """A wrapper class for an opencv VideoCapture object.
@@ -303,7 +250,8 @@ class VideoSystem:
         self._producer_process: Process | None = None
         self._consumer_processes: list[Process] = []
         self._terminator_array: SharedMemoryArray | None = None
-        self._image_queue: MPQueue[Any] | None = None
+        self._mpManager = None
+        self._image_queue = None
 
         self._listener: keyboard.Listener | None = None
 
@@ -413,7 +361,8 @@ class VideoSystem:
 
         self.delete_images()
 
-        self._image_queue = MPQueue()
+        self._mpManager = multiprocessing.Manager()
+        self._image_queue = self._mpManager.Queue()
 
         # First entry represents whether input stream is active, second entry represents whether output stream is active
         prototype = np.array([1, 1, 1], dtype=np.int32)
@@ -507,6 +456,8 @@ class VideoSystem:
                 console.error(message, error=TypeError)
                 raise TypeError(message)  # pragma:no cover
 
+            self._mpManager.shutdown()
+
             if self._producer_process is not None:
                 self._producer_process.join()
             else:  # This error should never occur
@@ -579,7 +530,7 @@ class VideoSystem:
                 and completes when index 2 is zero.
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
-        img_queue.cancel_join_thread()
+        # img_queue.cancel_join_thread()
         camera.connect()
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
@@ -595,6 +546,7 @@ class VideoSystem:
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()
+        
         camera.disconnect()
         terminator_array.disconnect()
 
@@ -715,7 +667,7 @@ class VideoSystem:
 
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
-        img_queue.cancel_join_thread()
+        # img_queue.cancel_join_thread()
         while terminator_array.read_data(index=2, convert_output=True):
             if terminator_array.read_data(index=1, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
@@ -729,7 +681,6 @@ class VideoSystem:
         terminator_array.disconnect()
         for _ in range(num_threads):
             q.put((None, -1))
-
         for worker in workers:
             worker.join()
 
@@ -800,7 +751,7 @@ class VideoSystem:
 
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
-        img_queue.cancel_join_thread()
+        # img_queue.cancel_join_thread()
         while terminator_array.read_data(index=2, convert_output=True):
             if terminator_array.read_data(index=1, convert_output=True):
                 if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
