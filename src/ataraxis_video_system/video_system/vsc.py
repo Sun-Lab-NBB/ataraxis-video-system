@@ -539,8 +539,7 @@ class VideoSystem:
                     img_queue.put((frame, n_images_produced))
                     if display_video:
                         cv2.imshow("video", frame)
-                        if cv2.waitKey(1) & 0xFF == 27:
-                            pass
+                        cv2.waitKey(1)
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()
