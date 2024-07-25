@@ -1,7 +1,6 @@
 from queue import Queue
 from typing import Any, Generic, TypeVar
 
-from pynput import keyboard
 from _typeshed import Incomplete
 from numpy.typing import NDArray
 from ataraxis_data_structures import SharedMemoryArray
@@ -92,7 +91,6 @@ class VideoSystem:
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
         _image_queue: multiprocessing queue to hold images before saving.
-        _listener: thread to detect key_presses for key-based control of threads.
         _num_consumer_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         _threads_per_process: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -121,8 +119,9 @@ class VideoSystem:
     _producer_process: Incomplete
     _consumer_processes: Incomplete
     _terminator_array: Incomplete
+    _mpManager: Incomplete
     _image_queue: Incomplete
-    _listener: Incomplete
+    _interactive_mode: Incomplete
     def __init__(
         self,
         save_directory: str,
@@ -342,13 +341,12 @@ class VideoSystem:
         Raises:
             Exception: If there are no images of the specified type in the specified directory.
         """
-    def _on_press(
-        self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray
-    ) -> bool | None:
-        """Changes terminator flags on specific key presses.
+    def _on_press_q(self) -> None: ...
+    def _on_press_w(self) -> None: ...
+    def _on_press(self, key: str) -> None:
+        """Stops certain aspects of the system (production, saving) based on specific key_presses ("q", "w")
 
-        Stops listener if both terminator flags have been set to 0. Stops the listener if video_system has stopped
-        running. This method should only be used as a target to a key listener.
+        Stops video system if both terminator flags have been set to 0.
 
         Args:
             key: the key that was pressed.

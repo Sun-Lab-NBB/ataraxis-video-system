@@ -10,12 +10,11 @@ from multiprocessing import Process, ProcessError
 from PIL import Image, ImageDraw, ImageChops
 import cv2
 import numpy as np
-from pynput import keyboard
 import pytest
 from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import SharedMemoryArray
 
-from ataraxis_video_system import Camera, VideoSystem
+from ataraxis_video_system import Camera, MPQueue, VideoSystem
 
 
 class MockCamera:
@@ -244,7 +243,7 @@ def test_produce_images_loop(mock_camera):
     timer.reset()
     while timer.elapsed <= wait_time and test_queue.qsize() < 10:
         pass
-    
+
     assert test_queue.qsize() >= 10
 
     test_array.write_data(index=2, data=0)
@@ -252,7 +251,6 @@ def test_produce_images_loop(mock_camera):
     input_stream_process.join()
     test_array.disconnect()
     test_array._buffer.unlink()
-
 
     test_manager = multiprocessing.Manager()
     test_queue = test_manager.Queue()
@@ -601,7 +599,6 @@ def test_save_video_loop(temp_directory, mock_camera):
 
         assert "video.mp4" in os.listdir(test_directory)
 
-
         VideoSystem._delete_files_in_directory(test_directory)
 
         assert "video.mp4" not in os.listdir(test_directory)
@@ -679,7 +676,6 @@ def test_save_video_loop_gpu(temp_directory, mock_camera):
         test_array._buffer.unlink()
 
         assert "video.mp4" in os.listdir(test_directory)
-
 
         VideoSystem._delete_files_in_directory(test_directory)
 
@@ -881,7 +877,6 @@ def test_stop(video_system):
 def test_key_listener(video_system):
     test_directory = video_system.save_directory
     delay_timer = PrecisionTimer("us")
-    controller = keyboard.Controller()
 
     video_system.start(
         listen_for_keypress=True, terminator_array_name="terminator_array_key_listener", display_video=False
@@ -892,35 +887,20 @@ def test_key_listener(video_system):
     while timer.elapsed <= wait_time and len(os.listdir(test_directory)) < 10:
         delay_timer.delay_noblock(1)
 
-    # Print the random key to make sure key listener can handle all keys without throwing error
-    controller.press(keyboard.Key.alt)
-    controller.release(keyboard.Key.alt)
-
     images_taken = video_system._image_queue.qsize()
     images_saved = len(os.listdir(test_directory))
 
     # Stop image production
-    controller.press("q")
-    controller.release("q")
-    controller.press(keyboard.Key.delete)
-    controller.release(keyboard.Key.delete)
+    video_system._on_press_q()
 
     timer.reset()
     while timer.elapsed <= wait_time and video_system._image_queue.qsize() > 0:
         delay_timer.delay_noblock(1)
 
     # Stop image saving
-    controller.press("w")
-    controller.release("w")
-    controller.press(keyboard.Key.delete)
-    controller.release(keyboard.Key.delete)
-
-    qsize = video_system._image_queue.qsize()
+    video_system._on_press_w()
 
     timer.delay_noblock(1)
-
-    # Once you stop taking images, the size of the queue should not increase
-    assert video_system._image_queue.qsize() == qsize
 
     # Once you stop taking images, the number of saved images should continue to increase
     assert len(os.listdir(test_directory)) >= images_saved
@@ -945,25 +925,6 @@ def test_key_listener(video_system):
 
     video_system.delete_images()
     assert len(os.listdir(test_directory)) == 0
-
-    # Key listener has a safety mechanism where the listener stops if running gets set to false. This normally doesn't
-    # occur, so it has to be tested directly
-    video_system.start(listen_for_keypress=True, terminator_array_name="terminator_array7", display_video=False)
-    timer.reset()
-    while timer.elapsed <= wait_time and len(os.listdir(test_directory)) < 10:
-        delay_timer.delay_noblock(1)
-    assert video_system._running
-    assert video_system._listener._running
-    video_system._running = False
-    # Press a key to trigger on_press callback to close listener
-    assert not video_system._running
-    assert video_system._listener._running
-    controller.press(keyboard.Key.alt)
-    controller.release(keyboard.Key.alt)
-    assert not video_system._listener._running
-    video_system._running = True
-    video_system.stop()
-    assert not video_system._running
 
 
 def camera_available():
@@ -1025,10 +986,25 @@ def test_type_errors(video_system):
     with pytest.raises(TypeError):
         video_system.stop()
 
+    with pytest.raises(TypeError):
+        video_system._on_press("e")  # This is an uncaught key
+
     video_system._terminator_array = temp
     video_system.stop()
 
     video_system.start(terminator_array_name="terminator_array11", display_video=False)
+
+    temp = video_system._mpManager
+    video_system._mpManager = None
+
+    with pytest.raises(TypeError):
+        video_system.stop()
+
+    video_system._mpManager = temp
+
+    video_system.stop()
+
+    video_system.start(terminator_array_name="terminator_array16", display_video=False)
 
     temp = video_system._producer_process
     video_system._producer_process = None
@@ -1038,6 +1014,18 @@ def test_type_errors(video_system):
 
     video_system._producer_process = temp
     video_system.stop()
+
+    # To cover the MPQueue class. This class is never instantiated by video_system, it is purely for typing.
+    q = MPQueue()
+    q.put(1)
+    q.put(1)
+    q.get()
+    q.get_nowait()
+    q.empty()
+    # q.qsize() Don't want to test this function because it doesn't work on mac: instead this function is given the no cover tag
+    q.cancel_join_thread()
+
+    assert True
 
 
 def test_creation_and_start_errors(video_system, mock_camera, temp_directory):

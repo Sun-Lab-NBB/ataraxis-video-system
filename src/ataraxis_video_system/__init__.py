@@ -1,3 +1,3 @@
-from .video_system import Camera, VideoSystem
+from .video_system import Camera, MPQueue, VideoSystem
 
-__all__ = ["VideoSystem", "Camera"]
+__all__ = ["VideoSystem", "Camera", "MPQueue"]

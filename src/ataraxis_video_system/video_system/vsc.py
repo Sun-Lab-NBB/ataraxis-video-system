@@ -14,11 +14,12 @@ from multiprocessing import (
     Process,
     ProcessError,
 )
+from multiprocessing.managers import SyncManager
 
 import cv2
 import numpy as np
 import ffmpeg  # type: ignore
-from pynput import keyboard
+import keyboard
 import tifffile as tff
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
@@ -52,10 +53,11 @@ class MPQueue(Generic[T]):
         return self._queue.empty()
 
     def qsize(self) -> int:
-        return self._queue.qsize()
+        return self._queue.qsize()  # pragma: no cover
 
     def cancel_join_thread(self) -> None:
         return self._queue.cancel_join_thread()
+
 
 class Camera:
     """A wrapper class for an opencv VideoCapture object.
@@ -155,7 +157,6 @@ class VideoSystem:
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
         _image_queue: multiprocessing queue to hold images before saving.
-        _listener: thread to detect key_presses for key-based control of threads.
         _num_consumer_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         _threads_per_process: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -250,10 +251,9 @@ class VideoSystem:
         self._producer_process: Process | None = None
         self._consumer_processes: list[Process] = []
         self._terminator_array: SharedMemoryArray | None = None
-        self._mpManager = None
-        self._image_queue = None
-
-        self._listener: keyboard.Listener | None = None
+        self._mpManager: SyncManager | None = None
+        self._image_queue: multiprocessing.Queue[Any] | None = None
+        self._interactive_mode: bool | None = None
 
     @staticmethod
     def _empty_function() -> None:
@@ -359,10 +359,12 @@ class VideoSystem:
         if num_threads is not None:
             self._threads_per_process = num_threads
 
+        self._interactive_mode = listen_for_keypress
+
         self.delete_images()
 
         self._mpManager = multiprocessing.Manager()
-        self._image_queue = self._mpManager.Queue()
+        self._image_queue = self._mpManager.Queue()  # type: ignore
 
         # First entry represents whether input stream is active, second entry represents whether output stream is active
         prototype = np.array([1, 1, 1], dtype=np.int32)
@@ -415,10 +417,9 @@ class VideoSystem:
             process.start()
         self._producer_process.start()
 
-        if listen_for_keypress:
-            terminator_array: SharedMemoryArray = self._terminator_array
-            self._listener = keyboard.Listener(on_press=lambda x: self._on_press(x, terminator_array))  # type: ignore
-            self._listener.start()  # start to listen on a separate thread
+        if self._interactive_mode:
+            keyboard.add_hotkey("q", self._on_press_q)
+            keyboard.add_hotkey("w", self._on_press_w)
 
         self._running = True
 
@@ -448,7 +449,6 @@ class VideoSystem:
     def stop(self) -> None:
         """Stops image collection and saving. Ends all processes."""
         if self._running:
-            self._image_queue = MPQueue()  # A weak way to empty queue
             if self._terminator_array is not None:
                 self._terminator_array.write_data(index=(0, 3), data=[0, 0, 0])
             else:  # This error should never occur
@@ -456,7 +456,13 @@ class VideoSystem:
                 console.error(message, error=TypeError)
                 raise TypeError(message)  # pragma:no cover
 
-            self._mpManager.shutdown()
+            if self._mpManager is not None:
+                self._mpManager.shutdown()
+            else:  # This error should never occur
+                console.error(
+                    message="Failure to start the stop image production process because _mpManager is not initialized.",
+                    error=TypeError,
+                )
 
             if self._producer_process is not None:
                 self._producer_process.join()
@@ -472,12 +478,14 @@ class VideoSystem:
             # Empty joined processes from list to prepare for the system being started again
             self._consumer_processes = []
 
-            if self._listener is not None:
-                self._listener.stop()
-                self._listener = None
+            # Ends listening for keypresses, does nothing if no keypresses were enabled.
+            if self._interactive_mode:
+                keyboard.unhook_all_hotkeys()
+            self._interactive_mode = None
 
             self._terminator_array.disconnect()
             if self._terminator_array._buffer is not None:
+                # This line needs to be changed to destroy TODO
                 self._terminator_array._buffer.unlink()  # kill terminator array
 
             self._running = False
@@ -531,6 +539,9 @@ class VideoSystem:
             fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
         """
         # img_queue.cancel_join_thread()
+        if display_video:
+            window_name = "Camera Feed"
+            cv2.namedWindow("Camera Feed", cv2.WINDOW_AUTOSIZE)
         camera.connect()
         terminator_array.connect()
         run_timer: PrecisionTimer = PrecisionTimer(precision)
@@ -541,24 +552,15 @@ class VideoSystem:
                     frame = camera.grab_frame()
                     img_queue.put((frame, n_images_produced))
                     if display_video:
-                        cv2.imshow("video", frame)
+                        cv2.imshow(window_name, frame)
                         cv2.waitKey(1)
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()
-        
         camera.disconnect()
+        if display_video:
+            cv2.destroyWindow(window_name)
         terminator_array.disconnect()
-
-    # @staticmethod
-    # def imread(filename: str):
-    #     """Loads an image from a file.
-
-    #     Args:
-    #         filename: path to image file to be loaded.
-    #     """
-    #     save_format = os.path.splitext(filename)[1][1:]
-    #     if save_format in {}
 
     @staticmethod
     def imwrite(filename: str, data: NDArray[Any], tiff_compression_level: int = 6, jpeg_quality: int = 95) -> None:
@@ -829,32 +831,37 @@ class VideoSystem:
         ffmpeg_process.stdin.close()
         ffmpeg_process.wait()
 
-    def _on_press(
-        self, key: keyboard.Key | keyboard.KeyCode | None, terminator_array: SharedMemoryArray
-    ) -> bool | None:
-        """Changes terminator flags on specific key presses.
+    def _on_press_q(self) -> None:
+        self._on_press("q")
 
-        Stops listener if both terminator flags have been set to 0. Stops the listener if video_system has stopped
-        running. This method should only be used as a target to a key listener.
+    def _on_press_w(self) -> None:
+        self._on_press("w")
+
+    def _on_press(self, key: str) -> None:
+        """Stops certain aspects of the system (production, saving) based on specific key_presses ("q", "w")
+
+        Stops video system if both terminator flags have been set to 0.
 
         Args:
             key: the key that was pressed.
             terminator_array: A multiprocessing array to hold terminate flags.
         """
-        if key is not None and hasattr(key, "char"):
-            if key.char == "q":
-                self.stop_image_production()
-                console.echo("Stopped taking images")
-            elif key.char == "w":
-                self._stop_image_saving()
-                console.echo("Stopped saving images")
+        if key == "q":
+            self.stop_image_production()
+            console.echo("Stopped taking images")
+        elif key == "w":
+            self._stop_image_saving()
+            console.echo("Stopped saving images")
 
         if self._running:
-            if not terminator_array.read_data(index=0, convert_output=True) and not terminator_array.read_data(
-                index=1, convert_output=True
-            ):
-                self.stop()
-                return False  # stop listener
-        else:
-            return False
-        return None
+            if self._terminator_array is not None:
+                if not self._terminator_array.read_data(
+                    index=0, convert_output=True
+                ) and not self._terminator_array.read_data(index=1, convert_output=True):
+                    self.stop()
+
+            else:  # This error should never occur
+                console.error(
+                    message="Failure to start the stop image production process because _terminator_array is not initialized.",
+                    error=TypeError,
+                )
