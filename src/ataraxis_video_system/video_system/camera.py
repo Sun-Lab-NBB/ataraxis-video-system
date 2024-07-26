@@ -347,9 +347,6 @@ class MockCamera:
         """Whether the camera is connected."""
         return self._vid is not None
 
-    @property
-    def is_acquiring(self) -> bool:
-
     def grab_frame(self):
         """Grabs an image from the camera.
 
