@@ -119,6 +119,22 @@ if __name__ == "__main__":
 ```
 In this example, we run the system for 5 seconds before stopping image production; however, we keep the system alive for 2 more seconds before calling stop. This makes sure that all images from the five second session are properly saved before the system is shut down. Note that when running this system with data-intensive cameras for long durations, it may take a long time for the system to save all the images.
 
+### Leveraging Multiprocessing
+
+The VideoSystem uses multiprocessing to speed up image saving and multithreading to maximize process efficiency. You can specify the number of threads and processes used by the video system via the num_processes and num_threads parameters.
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("img_directory", Camera())
+    vs.start(num_processes=5, num_threads=4)
+    time.sleep(5)
+    vs.stop()
+```
+This parameter setting creates 5 image saving processes which each have 4 image saving threads. The optimal number of processes and threads per process depend on the computer that the system is running on.
+
 ### Different Image Filetypes
 
 Here is an example of saving images in different formats, the defualt is png:
