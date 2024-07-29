@@ -67,22 +67,145 @@ ___
 
 ## Usage
 
+### Quickstart
 This is a minimal example of how to use this library:
 
 ```
-# First, import the Videosystem and Camera classes
-from ataraxis_video_system.ataraxis_video_system import Videosystem, Camera
+from ataraxis_video_system import VideoSystem, Camera
 import time
 
-# Since the video system uses multiprocessing, it should always be called within '__main__' scope
 if __name__ == "__main__":
-    vs = Videosystem("imgs", Camera()) # Create the system using the built in camera class
-    vs.start() # Start the system, activates camera and begins taking and saving images
+    vs = VideoSystem("img_directory", Camera())
+    vs.start()
     time.sleep(5)
-    vs.stop_image_collection() # Stop the camera from taking any more pictures but continue image saving
-    time.sleep(5)
-    vs.stop() # End the system, discarding any unsaved images
+    vs.stop()
 ```
+
+In this example, we create a video system object, specifying the location to save images and passing a default Camera 
+object. We run the system for 5 seconds before stopping. The video system should always be run within the "\_\_main__" 
+scope to ensure it is only run when the file is executed as a script.
+
+### Interactive Mode
+
+Here is an example of how to run the system in interactive mode:
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+from ataraxis_base_utilities import console
+
+if __name__ == "__main__":
+    console.enable()
+    vs = VideoSystem("img_directory", Camera())
+    vs.start(listen_for_keypress=True)
+    input()
+```
+In this example, we enable the console to allow the system to display messages. We then create the VideoSystem object with the listen_for_keypress flag set to True. When started in this way, pressing the "q" key will end image taking and pressing the "w" will end image saving, even if all the images taken have not yet been saved. We use the input() command to prevent the program from terminating and garbage_collecting the video system, which would immediately stop image production and saving.
+
+### Preventing Image Loss
+
+In many use cases, it may be beneficial to stop taking images but keep the video system alive to make sure all images are saved before termination. To do this, you can use the stop_image_production function.
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("img_directory", Camera())
+    vs.start()
+    time.sleep(5)
+    vs.stop_image_production()
+    time.sleep(2)
+    vs.stop()
+```
+In this example, we run the system for 5 seconds before stopping image production; however, we keep the system alive for 2 more seconds before calling stop. This makes sure that all images from the five second session are properly saved before the system is shut down. Note that when running this system with data-intensive cameras for long durations, it may take a long time for the system to save all the images.
+
+### Different Image Filetypes
+
+Here is an example of saving images in different formats, the defualt is png:
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("img_directory", Camera(), save_format="png")
+    vs.start(save_format="png")
+    time.sleep(5)
+    vs.stop()
+```
+The save_format argument of the VideoSystem class can be specified in the creation or starting of the VideoSystem. It only needs to be specified in one of these places. Once specified, all future calls to the start method will also use the specified format.
+
+When the save_format is set to "tiff" for image saving as .tiff files, the compression level can be specified using the tiff_compression_level argument:
+
+```
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("img_directory", Camera())
+    vs.start(save_format="tiff", tiff_compression_level=5)
+    time.sleep(5)
+    vs.stop()
+```
+
+The tiff_compression_level can be set from 0 to 9. The lower the compression level, the faster images will be saved (at the cost of more memory being used per image). Note that tiff saving is lossless at any compression level.
+
+When the save_format is set to "jpg" for image saving as .jpg files, the image quality can be specified using the jpeg_quality argument:
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("img_directory", Camera())
+    vs.start(save_format="jpg", jpeg_quality=80)
+    time.sleep(5)
+    vs.stop()
+
+```
+The quality can be set from 0 to 100. The lower the quality, the less memory will be used to save each image.
+
+### Video Saving
+
+If save_format is set to "mp4", the system will save the images to a single mp4 video file.
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("save_directory", Camera())
+    config = {"codec": "hevc", "preset": "slow"}
+    vs.start(save_format="mp4", mp4_config=config)
+    time.sleep(5)
+    vs.stop()
+```
+
+Video saving is accomplished using an ffmpeg backend. To use this backend, an ffmpeg encodecer must be used. The VideoSystem defaults to an h264 encoder but a different codec can be specified by passing a disctionary of arguments into the mp4_config parameter. Here, codec is set to hevc, an h265 cpu encoder. Any other ffmpeg parameters can also be passed into the video saving by putting them into the config dictionary. The dictionary key should be a string with the parameter name and the dictionary value should be a valid value for that parameter. A full list of ffmpeg codecs and their parameters can be found here: https://ffmpeg.org/ffmpeg-codecs.html#libx264_002c-libx264rgb
+
+### Image Video Conversion
+
+Alternatively to directly saving images as an mp4 video file, the data can first be saved as images and then converted to video offline via the save_images_as_vid method.
+
+```
+from ataraxis_video_system import VideoSystem, Camera
+import time
+
+if __name__ == "__main__":
+    vs = VideoSystem("save_directory", Camera())
+    vs.start()
+    time.sleep(5)
+    vs.stop()
+    vs.save_imgs_as_vid()
+```
+If you want to convert a segment of images to video and no longer have access to the original video system object, you can use the static version of the method, called imgs_to_vid, but you need to specify the fps, image filetype, and directories.
+
+```
+from ataraxis_video_system import VideoSystem
+
+if __name__ == "__main__":
+    VideoSystem.imgs_to_vid(fps=30, img_directory = "img_directory", img_filetype = "png", vid_directory = None)
+```
+When vid_directory is set to None, the video will be saved in the same folder as the images.
 
 ___
 

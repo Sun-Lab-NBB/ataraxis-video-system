@@ -514,11 +514,9 @@ def test_save_video_loop(temp_directory, mock_camera):
         "codec": "h264",
         "preset": "slow",
         "profile": "main",
-        "cq": 23,
         "crf": 28,
         "quality": 23,
         "threads": 0,
-        "gpu": 0,
     }
 
     # Load images to the queue
@@ -634,11 +632,9 @@ def test_save_video_loop_gpu(temp_directory, mock_camera):
         "codec": "h264",
         "preset": "slow",
         "profile": "main",
-        "cq": 23,
         "crf": 28,
         "quality": 23,
         "threads": 0,
-        "gpu": 0,
     }
 
     def save_video_test_by_codec_gpu(codec, i):

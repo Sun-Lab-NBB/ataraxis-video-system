@@ -134,7 +134,7 @@ class VideoSystem:
         jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
             highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
             but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-        mp4_config:
+        mp4_config: A dictionary of ffmpeg parameters in the form {parameter_name: parameter_value, ...}
         num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
         num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -235,11 +235,9 @@ class VideoSystem:
             "codec": "h264",
             "preset": "slow",
             "profile": "main",
-            "cq": 23,
             "crf": 28,
             "quality": 23,
             "threads": 0,
-            "gpu": 0,
         }
         for key in mp4_config.keys():
             self._mp4_config[key] = mp4_config[key]
@@ -287,7 +285,7 @@ class VideoSystem:
             jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
                 highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
                 but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-            mp4_config:
+            mp4_config: A dictionary of ffmpeg parameters in the form {parameter_name: parameter_value, ...}
             num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
             num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
@@ -720,7 +718,7 @@ class VideoSystem:
 
         codec = "libx264"
 
-        default_keys = ["codec", "preset", "profile", "cq", "crf", "quality", "threads", "gpu"]
+        default_keys = ["codec", "preset", "profile", "crf", "quality", "threads"]
         additional_config = {}
         for key in config.keys():
             if key not in default_keys:
@@ -740,11 +738,9 @@ class VideoSystem:
                 pix_fmt="nv21",
                 preset=config["preset"],
                 profile=config["profile"],
-                cq=config["cq"],
                 crf=config["crf"],
                 quality=config["quality"],
                 threads=config["threads"],
-                gpu=config["gpu"],
                 **additional_config,
             )
             .overwrite_output()
