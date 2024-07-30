@@ -557,7 +557,7 @@ class VideoSystem:
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()
-        
+
         camera.disconnect()
         if display_video:
             cv2.destroyWindow(window_name)
