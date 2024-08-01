@@ -16,7 +16,8 @@ import numpy as np
 import subprocess
 from queue import Queue
 from ataraxis_data_structures import SharedMemoryArray
-
+from numpy.typing import NDArray
+from typing import Any
 
 class SaverBackends(Enum):
     """Maps valid literal values used to specify Saver class backend when requesting it from create_saver() VideoSystem
@@ -67,7 +68,7 @@ class ImageSaver:
         """Saves an image to a specified file.
 
         Args:
-            filename: path to image file to be created.
+            output_path: path to image file to be created.
             data: pixel data of image.
             save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
                 is a lossy format
