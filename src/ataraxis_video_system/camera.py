@@ -1,3 +1,13 @@
+"""This module contains classes for interfacing with various supported Camera backends and an enumeration that stores
+supported camera backends.
+
+The classes from this module function as a unified API that allows any other module to work with any supported
+camera.
+
+The classes from this module are not meant to be instantiated or used directly. Instead, they should be created using
+the 'create_camera()' method from the VideoSystem class.
+"""
+
 from typing import Any, Optional
 
 import cv2
@@ -11,9 +21,9 @@ from pathlib import Path
 from ataraxis_time import PrecisionTimer
 
 
-class Backends(Enum):
-    """Maps valid literal values used to specify Camera class backend when requesting it from get_camera() function to
-    programmatically callable variables.
+class CameraBackends(Enum):
+    """Maps valid literal values used to specify Camera class backend when requesting it from create_camera() method of
+    the VideoSystem class to programmatically callable variables.
 
     Use this enumeration instead of 'hardcoding' Camera backends where possible to automatically adjust to future API
     changes to this library.
@@ -54,8 +64,8 @@ class OpenCVCamera:
     passes it to the camera binding during connection.
 
     Notes:
-        This class should not be initialized manually! Use the create_camera() standalone function to create all camera
-        instances.
+        This class should not be initialized manually! Use the create_camera() method from VideoSystem class to create
+        all camera instances.
 
         After frame-acquisition starts, some parameters, such as the fps or image dimensions, can no longer be altered.
         Commonly altered parameters have been made into initialization arguments to incentivize setting them to the
@@ -342,8 +352,8 @@ class HarvestersCamera:
     passes it to the camera binding during connection.
 
     Notes:
-        This class should not be initialized manually! Use the create_camera() standalone function to create all camera
-        instances.
+        This class should not be initialized manually! Use the create_camera() method from VideoSystem class to create
+        all camera instances.
 
         After frame-acquisition starts, some parameters, such as the fps or image dimensions, can no longer be altered.
         Commonly altered parameters have been made into initialization arguments to incentivize setting them to the
@@ -590,7 +600,7 @@ class HarvestersCamera:
                         or data_format in bgra_formats
                     ):
                         # Reshapes the data into RGB + A format as the first processing step.
-                        frame = content.data.reshape(
+                        content.data.reshape(
                             height,
                             width,
                             int(content.num_components_per_pixel),  # Sets of R, G, B, and Alpha
@@ -631,8 +641,8 @@ class MockCamera:
     mimic the 'real' API.
 
     Notes:
-        This class should not be initialized manually! Use the create_camera() standalone function to create all camera
-        instances.
+        This class should not be initialized manually! Use the create_camera() method from VideoSystem class to create
+        all camera instances.
 
         The class uses NumPy to simulate image acquisition where possible, generating 'white noise' images initialized
         with random-generator-derived pixel values. Depending on the 'color' argument, the generated images can be
@@ -791,107 +801,3 @@ class MockCamera:
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
             raise RuntimeError(message)  # pragma: no cover
-
-
-def get_opencv_ids() -> tuple[str, ...]:
-    """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
-
-    This function can be used to discover camera IDs accessible through our OpenCVCamera class. Subsequently,
-    each of the IDs can be passed to the create_camera() function to create an OpenCVCamera class instance to
-    interface with the camera. For each working camera, the function produces a string that includes camera ID, image
-    width, height, and the fps value to help identifying the cameras.
-
-    Notes:
-        Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this function
-        tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
-        advised to use the interactive imaging mode with each of the IDs to manually map IDs to cameras based on the
-        produced visual stream.
-
-        This function works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The function
-        connects to each camera and takes a test image to ensure the camera is accessible, and it should ONLY be called
-        when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will stop
-        early if it encounters more than 5 non-functional IDs in a row.
-
-        This function will yield errors from OpenCV which are unfortunately not circumventable at this time. That said,
-        since the function is not designed to be used in well-configured production runtimes, this should not be a major
-        concern.
-
-    Returns:
-         A tuple of strings. Each string contains camera ID, frame width, frame height, and camera fps value.
-    """
-    non_working_count = 0
-    working_ids = []
-
-    # This loop will keep iterating over IDs until it discovers 5 non-working IDs. The loop is designed to evaluate 100
-    # IDs at maximum to prevent infinite execution.
-    for evaluated_id in range(100):
-        # Evaluates each ID by instantiating a video-capture object and reading one image and dimension data from
-        # the connected camera (if any was connected).
-        camera = cv2.VideoCapture(evaluated_id)
-
-        # If the evaluated camera can be connected and returns images, it's ID is appended to the ID list
-        if camera.isOpened() and camera.read()[0]:
-            width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = camera.get(cv2.CAP_PROP_FPS)
-            descriptive_string = f"OpenCV Camera ID: {evaluated_id}, Width: {width}, Height: {height}, FPS: {fps}."
-            working_ids.append(descriptive_string)
-            non_working_count = 0  # Resets non-working count whenever a working camera is found.
-        else:
-            non_working_count += 1
-
-        # Breaks the loop early if more than 5 non-working IDs are found consecutively
-        if non_working_count >= 5:
-            break
-
-        camera.release()  # Releases the camera object to recreate it above for the next cycle
-
-    return tuple(working_ids)  # Converts to tuple before returning to caller.
-
-
-def get_harvesters_ids(cti_path: Path) -> tuple[str, ...]:
-    """Discovers and reports IDs and descriptive information about cameras accessible through the Harvesters library.
-
-    Since Harvesters already supports listing valid IDs available through a given .cti interface, this function wraps
-    instantiating and using built-in Harvesters functionality to discover and return ID and descriptive information
-    about cameras available to the local system. The discovered IDs can later be used with the create_camera()
-    function to create HarvestersCamera class for each camera ID that needs to be interfaced with during runtime.
-
-    Notes:
-        This function bundles discovered ID (list index) information with the serial number and the camera model to aid
-        identifying physical cameras for each ID.
-
-    Args:
-        cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use the
-            file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire, would
-            work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
-
-    Returns:
-        A tuple of strings. Each string contains camera ID, serial number, and model name.
-    """
-
-    # Instantiates the class and adds the input .cti file.
-    harvester = Harvester()
-    harvester.add_cti_file(file_path=str(cti_path))
-
-    # Gets the list of accessible cameras
-    harvester.update_device_info_list()
-
-    # Loops over all discovered cameras and parses basic ID information from each camera to generate a descriptive
-    # string.
-    working_ids = []
-    for num, camera_info in enumerate(harvester.device_info_list):
-        descriptive_string = (
-            f"Harvesters Camera ID: {num}, Serial Number: {camera_info.serial_number}, Model Name: {camera_info.model}."
-        )
-        working_ids.append(descriptive_string)
-
-    return tuple(working_ids)  # Converts to tuple before returning to caller.
-
-
-def get_camera(
-    camera_id: int = 0, backend: Backends = Backends.OPENCV, cti_path: Optional[Path] = None
-) -> OpenCVCamera | HarvestersCamera | MockCamera:
-    pass
-    # if backend == Backends.OPENCV:
-    #     return OpenCVCamera(camera_id=camera_id)

@@ -89,23 +89,18 @@
 #         cam_interface.cleanup()
 #     else:
 #         print("Failed to initialize camera.")
-import cv2
 
-from src.ataraxis_video_system.video_system.camera import (
-    HarvestersCamera,
-    get_opencv_ids,
-    get_harvesters_ids,
-    MockCamera,
-)
+from src.ataraxis_video_system.camera import MockCamera, HarvestersCamera, OpenCVCamera
 from pathlib import Path
-import time as tm
 import sys
+import time as tm
+from src.ataraxis_video_system.saver import VideoSaver
+
+print(VideoSaver.supported_video_formats)
+
+sys.exit()
 
 cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
-
-print(get_harvesters_ids(cti_path))
-print(get_opencv_ids())
-sys.exit()
 
 # camera = HarvestersCamera(name='harvey', cti_path=cti_path, fps=30, height=1024, width=1280)
 camera = MockCamera(name="mock", fps=100, height=1024, width=1200)
@@ -124,5 +119,3 @@ while tm.time() - start < 20:
 
 camera.disconnect()
 print(frames)
-
-cv2.waitKeyEx()

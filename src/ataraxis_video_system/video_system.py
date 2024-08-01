@@ -6,7 +6,8 @@ Brief description the module's purpose and the main VideoSystem class.
 import os
 import glob
 from queue import Empty, Queue
-from typing import Any, Generic, Literal, TypeVar, cast, get_args
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, Optional
+from types import NoneType
 from threading import Thread
 import multiprocessing
 from multiprocessing import (
@@ -25,6 +26,10 @@ from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
 from ataraxis_base_utilities import console
 from ataraxis_data_structures import SharedMemoryArray
+
+from .camera import HarvestersCamera, OpenCVCamera, MockCamera, CameraBackends
+from pathlib import Path
+from harvesters.core import Harvester
 
 # Used in many functions to convert between units
 Precision_Type = Literal["ns", "us", "ms", "s"]
@@ -57,66 +62,6 @@ class MPQueue(Generic[T]):
 
     def cancel_join_thread(self) -> None:
         return self._queue.cancel_join_thread()
-
-
-class Camera:
-    """A wrapper class for an opencv VideoCapture object.
-
-    Args:
-        camera_id: camera id
-
-    Attributes:
-        camera_id: camera id
-        specs: dictionary holding the specifications of the camera. This includes fps, frame_width, frame_height
-        _vid: opencv video capture object.
-    """
-
-    def __init__(self, camera_id: int = 0) -> None:
-        self.specs: dict[str, Any] = {}
-        self.camera_id = camera_id
-        self._vid: cv2.VideoCapture | None = None
-        self.connect()
-        if self._vid is not None:
-            self.specs["fps"] = self._vid.get(cv2.CAP_PROP_FPS)
-            self.specs["frame_width"] = self._vid.get(cv2.CAP_PROP_FRAME_WIDTH)
-            self.specs["frame_height"] = self._vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
-
-        self.disconnect()
-
-    # def __del__(self) -> None:
-    #     """Ensures that camera is disconnected upon garbage collection."""
-    #     self.disconnect()
-
-    def connect(self) -> None:
-        """Connects to camera and prepares for image collection."""
-        self._vid = cv2.VideoCapture(self.camera_id)
-
-    def disconnect(self) -> None:
-        """Disconnects from camera."""
-        if self._vid:
-            self._vid.release()
-            self._vid = None
-
-    @property
-    def is_connected(self) -> bool:
-        """Whether the camera is connected."""
-        return self._vid is not None
-
-    def grab_frame(self) -> NDArray[Any]:
-        """Grabs an image from the camera.
-
-        Raises:
-            Exception if camera isn't connected or did not yield an image.
-
-        """
-        if self._vid:
-            ret, frame = self._vid.read()
-            if not ret:
-                console.error(message="camera did not yield an image", error=Exception)
-            return frame
-        else:
-            console.error(message="camera not connected", error=Exception)
-            raise Exception("camera not connected")  # pragma: no cover
 
 
 class VideoSystem:
@@ -176,7 +121,7 @@ class VideoSystem:
     def __init__(
         self,
         save_directory: str,
-        camera: Camera,
+        camera: HarvestersCamera | OpenCVCamera | MockCamera,
         display_video: bool = True,
         save_format: Save_Format_Type = "png",
         tiff_compression_level: int = 6,
@@ -225,7 +170,7 @@ class VideoSystem:
             )
 
         self.save_directory: str = save_directory
-        self.camera: Camera = camera
+        self.camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
         self._display_video = display_video
         self._save_format = save_format
         self._jpeg_quality = jpeg_quality
@@ -254,8 +199,275 @@ class VideoSystem:
         self._interactive_mode: bool | None = None
 
     @staticmethod
+    def get_opencv_ids() -> tuple[str, ...]:
+        """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
+
+        This method can be used to discover camera IDs accessible through the OpenCV Backend. Subsequently,
+        each of the IDs can be passed to the create_camera() method to create an OpenCVCamera class instance to
+        interface with the camera. For each working camera, the method produces a string that includes camera ID, image
+        width, height, and the fps value to help identifying the cameras.
+
+        Notes:
+            Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this method
+            tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
+            advised to use the interactive imaging mode with each of the IDs to manually map IDs to cameras based on the
+            produced visual stream.
+
+            This method works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The method
+            connects to each camera and takes a test image to ensure the camera is accessible, and it should ONLY be
+            called when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will
+            stop early if it encounters more than 5 non-functional IDs in a row.
+
+            This method will yield errors from OpenCV, which are not circumventable at this time. That said,
+            since the method is not designed to be used in well-configured production runtimes, this is not
+            a major concern.
+
+        Returns:
+             A tuple of strings. Each string contains camera ID, frame width, frame height, and camera fps value.
+        """
+        non_working_count = 0
+        working_ids = []
+
+        # This loop will keep iterating over IDs until it discovers 5 non-working IDs. The loop is designed to
+        # evaluate 100 IDs at maximum to prevent infinite execution.
+        for evaluated_id in range(100):
+            # Evaluates each ID by instantiating a video-capture object and reading one image and dimension data from
+            # the connected camera (if any was connected).
+            camera = cv2.VideoCapture(evaluated_id)
+
+            # If the evaluated camera can be connected and returns images, it's ID is appended to the ID list
+            if camera.isOpened() and camera.read()[0]:
+                width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = camera.get(cv2.CAP_PROP_FPS)
+                descriptive_string = f"OpenCV Camera ID: {evaluated_id}, Width: {width}, Height: {height}, FPS: {fps}."
+                working_ids.append(descriptive_string)
+                non_working_count = 0  # Resets non-working count whenever a working camera is found.
+            else:
+                non_working_count += 1
+
+            # Breaks the loop early if more than 5 non-working IDs are found consecutively
+            if non_working_count >= 5:
+                break
+
+            camera.release()  # Releases the camera object to recreate it above for the next cycle
+
+        return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+    @staticmethod
+    def get_harvesters_ids(cti_path: Path) -> tuple[str, ...]:
+        """Discovers and reports IDs and descriptive information about cameras accessible through the Harvesters
+        library.
+
+        Since Harvesters already supports listing valid IDs available through a given .cti interface, this method
+        uses built-in Harvesters functionality to discover and return camera ID and descriptive information.
+        The discovered IDs can later be used with the create_camera() method to create HarvestersCamera class to
+        interface with the desired cameras.
+
+        Notes:
+            This method bundles discovered ID (list index) information with the serial number and the camera model to
+            aid identifying physical cameras for each ID.
+
+        Args:
+            cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use
+                the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
+                would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
+                details.
+
+        Returns:
+            A tuple of strings. Each string contains camera ID, serial number, and model name.
+        """
+
+        # Instantiates the class and adds the input .cti file.
+        harvester = Harvester()
+        harvester.add_cti_file(file_path=str(cti_path))
+
+        # Gets the list of accessible cameras
+        harvester.update_device_info_list()
+
+        # Loops over all discovered cameras and parses basic ID information from each camera to generate a descriptive
+        # string.
+        working_ids = []
+        for num, camera_info in enumerate(harvester.device_info_list):
+            descriptive_string = (
+                f"Harvesters Camera ID: {num}, Serial Number: {camera_info.serial_number}, "
+                f"Model Name: {camera_info.model}."
+            )
+            working_ids.append(descriptive_string)
+
+        return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+    @staticmethod
+    def create_camera(
+        camera_name: str,
+        camera_backend: CameraBackends = CameraBackends.OPENCV,
+        camera_id: int = 0,
+        frame_width: Optional[int] = None,
+        frame_height: Optional[int] = None,
+        frames_per_second: Optional[int | float] = None,
+        opencv_backend: Optional[int] = None,
+        cti_path: Optional[Path] = None,
+        mock_color: Optional[bool] = None,
+    ) -> OpenCVCamera | HarvestersCamera | MockCamera:
+        """Creates and returns a Camera class instance that uses the specified camera backend.
+
+        This method centralizes Camera class instantiation. It contains methods for verifying the input information
+        and instantiating the specialized Camera class based on the requested camera backend. All Camera classes from
+        this library have to be initialized using this method.
+
+        Note:
+            While the method contains many arguments that allow to flexibly configure the instantiated camera, the only
+            crucial ones are camera name, backend, and the numeric ID of the camera. Everything else is automatically
+            queried from the camera, unless provided.
+
+        Args:
+            camera_name: The string-name of the camera. This is used to help identify the camera and to mark all
+                frames acquired from this camera.
+            camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
+                available camera, 1 for the second, etc. Generally, the cameras are ordered based on the order they
+                were connected to the host system.
+            camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
+                the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
+                non-GenTL-compatible cameras.
+            frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
+                camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
+                If not provided (set to None), this parameter will be obtained from the connected camera.
+            frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
+                If not provided (set to None), this parameter will be obtained from the connected camera.
+            frames_per_second: The desired Frames Per Second to capture the frames at. Note, this depends on the
+                hardware capabilities OF the camera and is affected by multiple related parameters, such as image
+                dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
+                parameter will be obtained from the connected camera.
+            opencv_backend: Optional. The integer-code for the specific acquisition backend (library) OpenCV should
+                use to interface with the camera. Generally, it is advised not to change the default value of this
+                argument unless you know what you are doing.
+            cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use
+                the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
+                would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
+                details. Note, cti_path is only necessary for Harvesters backend, but it is REQUIRED for that backend.
+            mock_color: Optional. A boolean indicating whether to simulate color in the mock camera. This is only used
+                by the Mock backend and generally should not be used by anyone other than library developers.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+            ValueError: If the requested camera_backend is not one of the supported backends. If the input cti_path does
+                not point to a '.cti' file.
+        """
+
+        # Verifies that the input arguments are of the correct type. Note, checks backend-specific arguments in
+        # backend-specific clause.
+        if not isinstance(camera_name, str):
+            message = (
+                f"Unable to instantiate a Camera class object. Expected a string for camera_name argument, but "
+                f"got {camera_name} of type {type(camera_name).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(camera_id, int):
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object. Expected an integer for camera_id "
+                f"argument, but got {camera_id} of type {type(camera_id).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(frames_per_second, (int, float, NoneType)):
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object. Expected an integer, float or None for "
+                f"frames_per_second argument, but got {frames_per_second} of type {type(frames_per_second).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(frame_width, (int, NoneType)):
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object. Expected an integer or None for "
+                f"frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(frame_height, (int, float, NoneType)):
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object. Expected an integer or None for "
+                f"frame_height argument, but got {frame_height} of type {type(frame_height).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Casts frame arguments to floats, as this is what camera classes expect
+        frames_per_second = float(frames_per_second)
+        frame_width = float(frame_width)
+        frame_height = float(frame_height)
+
+        # OpenCVCamera
+        if camera_backend == CameraBackends.OPENCV:
+            # If backend preference is None, uses generic preference
+            if opencv_backend is None:
+                opencv_backend = cv2.CAP_ANY
+
+            # Otherwise, if the backend is not an integer, raises an error
+            elif not isinstance(opencv_backend, int):
+                message = (
+                    f"Unable to instantiate a {camera_name} OpenCVCamera class object. Expected an integer or None "
+                    f"for opencv_backend argument, but got {opencv_backend} of type {type(opencv_backend).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+
+            # Instantiates and returns the OpenCVCamera class object
+            return OpenCVCamera(
+                name=camera_name,
+                backend=opencv_backend,
+                camera_id=camera_id,
+                height=frame_height,
+                width=frame_width,
+                fps=frames_per_second,
+            )
+
+        # HarvestersCamera
+        elif camera_backend == CameraBackends.HARVESTERS:
+            # Ensures that the cti_path is a valid Path object and that it points to a '.cti' file.
+            if not isinstance(cti_path, Path) or cti_path.suffix is not ".cti":
+                message = (
+                    f"Unable to instantiate a {camera_name} HarvestersCamera class object. Expected a Path object "
+                    f"pointing to the '.cti' file for cti_path argument, but got {cti_path} of "
+                    f"type {type(cti_path).__name__}."
+                )
+                raise console.error(error=ValueError, message=message)
+
+            # Instantiates and returns the HarvestersCamera class object
+            return HarvestersCamera(
+                name=camera_name,
+                cti_path=cti_path,
+                camera_id=camera_id,
+                height=frame_height,
+                width=frame_width,
+                fps=frames_per_second,
+            )
+
+        # MockCamera
+        elif camera_backend == CameraBackends.MOCK:
+            # Ensures that mock_color is either True or False.
+            mock_color = True if mock_color is not None else False
+
+            # Instantiates and returns the MockCamera class object
+            return MockCamera(
+                name=camera_name,
+                camera_id=camera_id,
+                height=frame_height,
+                width=frame_width,
+                fps=frames_per_second,
+                color=mock_color,
+            )
+
+        # If the input backend does not match any of the supported backends, raises an error
+        else:
+            if not isinstance(camera_backend, int):
+                message = (
+                    f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                    f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
+                    f"camera_backend has to be one of the options available from the CameraBackends enumeration."
+                )
+                raise console.error(error=ValueError, message=message)
+
+    @staticmethod
     def _empty_function() -> None:
-        """A function that passes to be used as target to a process"""
+        """A placeholder function used to verify the class is only instantiated inside the main scope of each runtime.
+
+        The function itself does nothing.
+        """
         pass
 
     def start(
@@ -516,7 +728,7 @@ class VideoSystem:
 
     @staticmethod
     def _produce_images_loop(
-        camera: Camera,
+        camera: OpenCVCamera | HarvestersCamera | MockCamera,
         img_queue: MPQueue[Any],
         terminator_array: SharedMemoryArray,
         display_video: bool = False,
@@ -763,70 +975,70 @@ class VideoSystem:
         ffmpeg_process.wait()
         terminator_array.disconnect()
 
-    def save_imgs_as_vid(self) -> None:
-        """Converts a set of id labeled images into an mp4 video file.
-
-        This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
-        specific object instance.
-
-        Raises:
-            Exception: If there are no images of the specified type in the specified directory.
-        """
-        VideoSystem.imgs_to_vid(
-            fps=self.camera._specs["fps"], img_directory=self.save_directory, img_filetype=self._save_format
-        )
-
-    @staticmethod
-    def imgs_to_vid(
-        fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
-    ) -> None:
-        """Converts a set of id labeled images into an mp4 video file.
-
-        Args:
-            fps: The framerate of the video to be created.
-            img_directory: The directory where the images are saved.
-            img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
-            vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
-
-        Raises:
-            Exception: If there are no images of the specified type in the specified directory.
-        """
-
-        if vid_directory is None:
-            vid_directory = img_directory
-
-        vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
-
-        sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
-
-        if sample_img is None:
-            console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
-
-        frame_height, frame_width, _ = sample_img.shape
-
-        ffmpeg_process = (
-            ffmpeg.input(
-                "pipe:",
-                framerate="{}".format(fps),
-                format="rawvideo",
-                pix_fmt="bgr24",
-                s="{}x{}".format(int(frame_width), int(frame_height)),
-            )
-            .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
-
-        search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
-        files = glob.glob(search_pattern)
-        num_files = len(files)
-        for id in range(num_files):
-            file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
-            dat = cv2.imread(file)
-            ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
-
-        ffmpeg_process.stdin.close()
-        ffmpeg_process.wait()
+    # def save_imgs_as_vid(self) -> None:
+    #     """Converts a set of id labeled images into an mp4 video file.
+    #
+    #     This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
+    #     specific object instance.
+    #
+    #     Raises:
+    #         Exception: If there are no images of the specified type in the specified directory.
+    #     """
+    #     VideoSystem.imgs_to_vid(
+    #         fps=int(self.camera.fps), img_directory=self.save_directory, img_filetype=self._save_format
+    #     )
+    #
+    # @staticmethod
+    # def imgs_to_vid(
+    #     fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
+    # ) -> None:
+    #     """Converts a set of id labeled images into an mp4 video file.
+    #
+    #     Args:
+    #         fps: The framerate of the video to be created.
+    #         img_directory: The directory where the images are saved.
+    #         img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
+    #         vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
+    #
+    #     Raises:
+    #         Exception: If there are no images of the specified type in the specified directory.
+    #     """
+    #
+    #     if vid_directory is None:
+    #         vid_directory = img_directory
+    #
+    #     vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
+    #
+    #     sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
+    #
+    #     if sample_img is None:
+    #         console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
+    #
+    #     frame_height, frame_width, _ = sample_img.shape
+    #
+    #     ffmpeg_process = (
+    #         ffmpeg.input(
+    #             "pipe:",
+    #             framerate="{}".format(fps),
+    #             format="rawvideo",
+    #             pix_fmt="bgr24",
+    #             s="{}x{}".format(int(frame_width), int(frame_height)),
+    #         )
+    #         .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+    #         .overwrite_output()
+    #         .run_async(pipe_stdin=True)
+    #     )
+    #
+    #     search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
+    #     files = glob.glob(search_pattern)
+    #     num_files = len(files)
+    #     for id in range(num_files):
+    #         file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
+    #         dat = cv2.imread(file)
+    #         ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
+    #
+    #     ffmpeg_process.stdin.close()
+    #     ffmpeg_process.wait()
 
     def _on_press_q(self) -> None:
         self._on_press("q")
