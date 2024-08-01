@@ -91,7 +91,12 @@
 #         print("Failed to initialize camera.")
 import cv2
 
-from src.ataraxis_video_system.video_system.camera import HarvestersCamera, get_opencv_ids, get_harvesters_ids, MockCamera
+from src.ataraxis_video_system.video_system.camera import (
+    HarvestersCamera,
+    get_opencv_ids,
+    get_harvesters_ids,
+    MockCamera,
+)
 from pathlib import Path
 import time as tm
 import sys
@@ -103,7 +108,7 @@ print(get_opencv_ids())
 sys.exit()
 
 # camera = HarvestersCamera(name='harvey', cti_path=cti_path, fps=30, height=1024, width=1280)
-camera = MockCamera(name='mock', fps=100, height=1024, width=1200)
+camera = MockCamera(name="mock", fps=100, height=1024, width=1200)
 camera.connect()
 
 start = tm.time()

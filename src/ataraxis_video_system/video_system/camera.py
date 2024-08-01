@@ -266,7 +266,7 @@ class OpenCVCamera:
 
         message = (
             f"Unknown backend code {backend_code} encountered when retrieving the backend name used by the "
-            f"OpenCV-managed camera with id {self._camera_id}. Recognized backend codes are: "
+            f"OpenCV-managed {self._name} camera with id {self._camera_id}. Recognized backend codes are: "
             f"{(self._backends.values())}"
         )
         console.error(message=message, error=ValueError)
@@ -275,7 +275,7 @@ class OpenCVCamera:
 
     @property
     def name(self) -> str:
-        """ Returns the name of the camera. """
+        """Returns the name of the camera."""
         return self._name
 
     def grab_frame(self) -> NDArray[Any]:
@@ -520,7 +520,7 @@ class HarvestersCamera:
 
     @property
     def name(self) -> str:
-        """ Returns the name of the camera. """
+        """Returns the name of the camera."""
         return self._name
 
     def grab_frame(self) -> NDArray[Any]:
@@ -663,7 +663,7 @@ class MockCamera:
 
     def __init__(
         self,
-        name: str = 'MockCamera',
+        name: str = "MockCamera",
         camera_id: int = 0,
         fps: Optional[float] = None,
         width: Optional[float] = None,
@@ -671,7 +671,6 @@ class MockCamera:
         *,
         color: bool = True,
     ) -> None:
-
         # Saves class parameters to class attributes
         self._color: bool = color
         self._name: str = name
@@ -697,7 +696,7 @@ class MockCamera:
         self._current_frame_index: int = 0
 
         # Uses millisecond precision, which supports simulating up to 1000 fps.
-        self._timer: PrecisionTimer = PrecisionTimer('ms')
+        self._timer: PrecisionTimer = PrecisionTimer("ms")
 
         # Uses the fps to derive the number of microseconds that has to pass between each frame acquisition. This is
         # used to simulate real camera fps during grab_frame() runtime.
@@ -734,13 +733,12 @@ class MockCamera:
 
     @property
     def height(self) -> float:
-        """Returns the frame height setting of the camera (in pixels).
-        """
+        """Returns the frame height setting of the camera (in pixels)."""
         return self._height
 
     @property
     def name(self) -> str:
-        """ Returns the name of the camera. """
+        """Returns the name of the camera."""
         return self._name
 
     @property
@@ -763,7 +761,6 @@ class MockCamera:
             RuntimeError: If the method is called for a class not currently 'connected' to a camera.
         """
         if self._camera:
-
             if not self._acquiring:
                 self._acquiring = True
 
@@ -788,7 +785,7 @@ class MockCamera:
 
         else:
             message = (
-                f"The Mock camera {self._name} with id {self._camera_id} is not 'connected' and cannot yield images."
+                f"The Mocked camera {self._name} with id {self._camera_id} is not 'connected' and cannot yield images."
                 f"Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
