@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from ataraxis_base_utilities import console
 from enum import Enum
 from pathlib import Path
+from ataraxis_time import PrecisionTimer
 
 
 class Backends(Enum):
@@ -61,6 +62,8 @@ class OpenCVCamera:
         desired values before starting frame-acquisition.
 
     Args:
+        name: The string-name of the camera. This is used to help identify the camera and to mark all frames acquired
+            from this camera.
         backend: The integer-code for the backend to use for the connected VideoCapture object. Generally, it
             is advised not to change the default value of this argument unless you know what you are doing.
         camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
@@ -76,6 +79,7 @@ class OpenCVCamera:
             provided (set to None), this parameter will be obtained from the connected camera.
 
     Attributes:
+        _name: Stores the string-name of the camera.
         _backend: Stores the code for the backend to be used by the connected VideoCapture object.
         _camera_id: Stores the numeric camera ID, which is used during connect() method runtime.
         _camera: Stores the OpenCV VideoCapture object that interfaces with the camera.
@@ -120,6 +124,7 @@ class OpenCVCamera:
 
     def __init__(
         self,
+        name: str,
         backend: int = cv2.CAP_ANY,
         camera_id: int = 0,
         fps: Optional[float] = None,
@@ -130,6 +135,7 @@ class OpenCVCamera:
         # the necessary input filtering.
 
         # Saves class parameters to class attributes
+        self._name = name
         self._backend: int = backend
         self._camera_id: int = camera_id
         self._camera: Optional[cv2.VideoCapture] = None
@@ -145,7 +151,7 @@ class OpenCVCamera:
     def __repr__(self) -> str:
         """Returns a string representation of the OpenCVCamera object."""
         representation_string = (
-            f"OpenCVCamera(camera_id={self._camera_id}, fps={self.fps}, width={self.width}, "
+            f"OpenCVCamera(name={self._name}, camera_id={self._camera_id}, fps={self.fps}, width={self.width}, "
             f"height={self.height}, connected={self._camera is not None}, acquiring={self._acquiring}, "
             f"backend = {self.backend})"
         )
@@ -267,6 +273,11 @@ class OpenCVCamera:
         # Fallback to appease mypy, should not be reachable
         raise ValueError("Unknown backend code")  # pragma: no cover
 
+    @property
+    def name(self) -> str:
+        """ Returns the name of the camera. """
+        return self._name
+
     def grab_frame(self) -> NDArray[Any]:
         """Grabs the first available frame from the camera buffer and returns it to caller as a NumPy array object.
 
@@ -306,15 +317,16 @@ class OpenCVCamera:
             ret, frame = self._camera.read()
             if not ret:
                 message = (
-                    f"The OpenCV-managed camera with id {self._camera_id} did not yield an image, "
+                    f"The OpenCV-managed camera {self._name} with id {self._camera_id} did not yield an image, "
                     f"which is not expected. This may indicate initialization or connectivity issues."
                 )
                 console.error(message=message, error=RuntimeError)
+
             return frame
         else:
             message = (
-                f"The OpenCV-managed camera with id {self._camera_id} is not connected and cannot yield images."
-                f"Call the connect() method of the class prior to calling the grab_frame() method."
+                f"The OpenCV-managed {self._name} camera with id {self._camera_id} is not connected and cannot yield "
+                f"images. Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
@@ -338,6 +350,8 @@ class HarvestersCamera:
         desired values before starting frame-acquisition.
 
     Args:
+        name: The string-name of the camera. This is used to help identify the camera and to mark all frames acquired
+            from this camera.
         cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use the
             file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire, would
             work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
@@ -354,6 +368,7 @@ class HarvestersCamera:
             provided (set to None), this parameter will be obtained from the connected camera.
 
     Attributes:
+        _name: Stores the string-name of the camera.
         _camera_id: Stores the numeric camera ID, which is used during connect() method runtime.
         _camera: Stores the Harvesters ImageAcquirer object that interfaces with the camera.
         _harvester: Stores the Harvester interface object that discovers and manages the list of accessible cameras.
@@ -364,6 +379,7 @@ class HarvestersCamera:
 
     def __init__(
         self,
+        name: str,
         cti_path: Path,
         camera_id: int = 0,
         fps: Optional[float] = None,
@@ -374,6 +390,7 @@ class HarvestersCamera:
         # the necessary input filtering.
 
         # Saves class parameters to class attributes
+        self._name = name
         self._camera_id: int = camera_id
         self._camera: Optional[ImageAcquirer] = None
         self._fps: Optional[float] = fps
@@ -393,7 +410,7 @@ class HarvestersCamera:
     def __repr__(self) -> str:
         """Returns a string representation of the HarvestersCamera object."""
         representation_string = (
-            f"HarvestersCamera(camera_id={self._camera_id}, fps={self.fps}, width={self.width}, "
+            f"HarvestersCamera(name={self._name}, camera_id={self._camera_id}, fps={self.fps}, width={self.width}, "
             f"height={self.height}, connected={self._camera is not None}, acquiring={self.is_acquiring})"
         )
         return representation_string
@@ -501,6 +518,11 @@ class HarvestersCamera:
         """
         return self._height
 
+    @property
+    def name(self) -> str:
+        """ Returns the name of the camera. """
+        return self._name
+
     def grab_frame(self) -> NDArray[Any]:
         """Grabs the first available frame from the camera buffer and returns it to caller as a NumPy array object.
 
@@ -524,9 +546,9 @@ class HarvestersCamera:
 
         Returns:
             A NumPy array with the outer dimensions matching the preset camera frame dimensions. The returned frames
-            will use one of the default GenTL output formats: Monochrome, RGB, RGBA, or BGR. This means that the
-            returned array will use between 1 and 4 pixel-color channels for each 2-dimensional pixel position. The
-            specific format depends on the format used by the camera.
+            will use either Monochrome, BGRA, or BGR color space. This means that the returned array will use between
+            1 and 4 pixel-color channels for each 2-dimensional pixel position. The specific format depends on the
+            format used by the camera. All images are converted to BGR to be consistent with OpenCVCamera behavior.
 
         Raises:
             RuntimeError: If the camera does not yield an image, or if the method is called for a class not currently
@@ -542,7 +564,7 @@ class HarvestersCamera:
             with self._camera.fetch_buffer() as buffer:
                 if buffer is None:
                     message = (
-                        f"The Harvesters-managed camera with id {self._camera_id} did not yield an image, "
+                        f"The Harvesters-managed camera {self._name} with id {self._camera_id} did not yield an image, "
                         f"which is not expected. This may indicate initialization or connectivity issues."
                     )
                     console.error(message=message, error=RuntimeError)
@@ -574,9 +596,9 @@ class HarvestersCamera:
                             int(content.num_components_per_pixel),  # Sets of R, G, B, and Alpha
                         )
 
-                        # For BGR formats, swaps every R and B value (RGB -> BGR):
-                        if data_format in bgr_formats:
-                            frame = content[:, :, ::-1]
+                        # Swaps every R and B value (RGB -> BGR) ot produce BGR / BGRA images. This ensures consistency
+                        # with our OpenCVCamera API.
+                        frame = content[:, :, ::-1]
 
                         # Returns the reshaped frame array to caller
                         return frame
@@ -584,16 +606,16 @@ class HarvestersCamera:
                     # If the image ahs an unsupported data format, raises an error
                     else:
                         message = (
-                            f"The Harvesters-managed camera with id {self._camera_id} yielded an image with an "
-                            f"unsupported data (color) format {data_format}. If possible, re-configure the camera to "
-                            f"use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. Otherwise, you may "
-                            f"need to implement a custom data reshaper algorithm."
+                            f"The Harvesters-managed camera {self._name} with id {self._camera_id} yielded an image "
+                            f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
+                            f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
+                            f"Otherwise, you may need to implement a custom data reshaper algorithm."
                         )
                         console.error(message=message, error=RuntimeError)
         else:
             message = (
-                f"The Harvesters-managed camera with id {self._camera_id} is not connected and cannot yield images."
-                f"Call the connect() method of the class prior to calling the grab_frame() method."
+                f"The Harvesters-managed camera {self._name} with id {self._camera_id} is not connected and cannot "
+                f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
@@ -613,18 +635,35 @@ class MockCamera:
         instances.
 
         The class uses NumPy to simulate image acquisition where possible, generating 'white noise' images initialized
-        with random-generator-derived pixel values.
+        with random-generator-derived pixel values. Depending on the 'color' argument, the generated images can be
+        monochrome or RGB color images.
 
     Args:
-        camera_id: camera id
+        name: The string-name of the camera.
+        camera_id: The simulated numeric ID of the camera.
+        fps: The simulated Frames Per Second of the camera.
+        width: The simulated camera frame width.
+        height: The simulated camera frame height.
 
     Attributes:
-        camera_id: camera id
-        _vid: opencv video capture object.
+        _color: Determine whether the camera should produce monochrome or RGB images.
+        _name: Stores the string-name of the camera.
+        _camera_id: Stores the numeric camera ID.
+        _camera: A boolean variable used to track whether the camera is 'connected'.
+        _fps: Stores the simulated Frames Per Second.
+        _width: Stores the simulated camera frame width.
+        _height: Stores the simulated camera frame height.
+        _acquiring: Stores whether the camera is currently acquiring video frames.
+        _frames: Stores the pool of pre-generated frame images used to simulate frame grabbing.
+        _current_frame_index: The index of the currently evaluated frame in the pre-generated frame pool. This is used
+            to simulate the cyclic buffer used by 'real' camera classes.
+        _time_between_frames: Stores the number of milliseconds that has to pass between acquiring new frames. This is
+            used to simulate real camera fps rate.
     """
 
     def __init__(
         self,
+        name: str = 'MockCamera',
         camera_id: int = 0,
         fps: Optional[float] = None,
         width: Optional[float] = None,
@@ -634,13 +673,35 @@ class MockCamera:
     ) -> None:
 
         # Saves class parameters to class attributes
-        self._color = color
+        self._color: bool = color
+        self._name: str = name
         self._camera_id: int = camera_id
-        self._camera: Optional[cv2.VideoCapture] = None
+        self._camera: bool = False
         self._fps: Optional[float] = fps
         self._width: Optional[float] = width
         self._height: Optional[float] = height
         self._acquiring: bool = False
+
+        # To allow reproducible testing, the class statically generates a pool of 10 images that is drawn from during
+        # grab_frame() runtime. This allows simulating different fps values and verifying processed images against the
+        # original image pull.
+        self._frames: list[NDArray[np.uint8]] | tuple[NDArray[np.uint8], ...] = []
+        for _ in range(10):
+            if self._color:
+                self._frames.append(np.random.randint(0, 256, size=(self._height, self._width, 3), dtype=np.uint8))
+            else:
+                self._frames.append(np.random.randint(0, 256, size=(self._height, self._width, 1), dtype=np.uint8))
+
+        # Casts to a tuple for efficiency reasons
+        self._frames = tuple(self._frames)
+        self._current_frame_index: int = 0
+
+        # Uses millisecond precision, which supports simulating up to 1000 fps.
+        self._timer: PrecisionTimer = PrecisionTimer('ms')
+
+        # Uses the fps to derive the number of microseconds that has to pass between each frame acquisition. This is
+        # used to simulate real camera fps during grab_frame() runtime.
+        self._time_between_frames: float = 1000 / self._fps
 
     def connect(self) -> None:
         """Simulates connecting to the camera, which is a necessary prerequisite to grab frames from the camera."""
@@ -677,21 +738,57 @@ class MockCamera:
         """
         return self._height
 
-    def grab_frame(self):
-        """Grabs an image from the camera.
+    @property
+    def name(self) -> str:
+        """ Returns the name of the camera. """
+        return self._name
+
+    @property
+    def frame_pool(self) -> tuple[NDArray[np.uint8], ...]:
+        """Returns the tuple that stores the frames that are pooled to produce images during grab_frame() runtime."""
+        return self._frames
+
+    def grab_frame(self) -> NDArray[np.uint8]:
+        """Grabs the first 'available' frame from the camera buffer and returns it to caller as a NumPy array object.
+
+        This method has to be called repeatedly to acquire new frames from the camera. The method is written to largely
+        simulate the behavior of the 'real' camera classes.
+
+        Returns:
+            A NumPy array with the outer dimensions matching the preset camera frame dimensions. Depending on whether
+            the camera is simulating 'color' or 'monochrome' mode, the returned frames will either have 1 or 3 color
+            channels.
 
         Raises:
-            Exception if camera isn't connected or did not yield an image.
-
+            RuntimeError: If the method is called for a class not currently 'connected' to a camera.
         """
         if self._camera:
-            if self._color:
-                return np.random.randint(0, 256, size=(self._height, self._width, 3), dtype=np.uint8)
+
+            if not self._acquiring:
+                self._acquiring = True
+
+            # All our 'real' classes are designed to block in-place if the frame is not available. Here, this behavior
+            # is simulated by using the timer class to 'force' the method to work at a certain FPS rate.
+            while self._timer.elapsed < self._time_between_frames:
+                pass
+
+            # Acquires the next frame from the frame pool
+            frame = self._frames[self._current_frame_index]
+            self._timer.reset()  # Resets the timer to measure the time elapsed since the last frame acquisition.
+
+            # Increments the flame pool index. Since the frame pool size is statically set to 10, the maximum retrieval
+            # index is 9. Whenever the index reaches 9, it is reset back to 0 (to simulate circular buffer behavior).
+            if self._current_frame_index == 9:
+                self._current_frame_index = 0
             else:
-                return np.random.randint(0, 256, size=(self._height, self._width, 3), dtype=np.uint8)
+                self._current_frame_index += 1
+
+            # Returns the acquired frame to caller
+            return frame
+
         else:
             message = (
-                f"The Mocked camera with id {self._camera_id} is not 'connected' and cannot yield images."
+                f"The Mock camera {self._name} with id {self._camera_id} is not 'connected' and cannot yield images."
                 f"Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
@@ -798,5 +895,6 @@ def get_harvesters_ids(cti_path: Path) -> tuple[str, ...]:
 def get_camera(
     camera_id: int = 0, backend: Backends = Backends.OPENCV, cti_path: Optional[Path] = None
 ) -> OpenCVCamera | HarvestersCamera | MockCamera:
-    if backend == Backends.OPENCV:
-        return OpenCVCamera(camera_id=camera_id)
+    pass
+    # if backend == Backends.OPENCV:
+    #     return OpenCVCamera(camera_id=camera_id)
