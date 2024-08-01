@@ -403,7 +403,7 @@ class VideoSystem:
                         self._image_queue,
                         self._terminator_array,
                         self.save_directory,
-                        self.camera.specs,
+                        self.camera._specs,
                         self._mp4_config,
                     ),
                     daemon=True,
@@ -555,6 +555,7 @@ class VideoSystem:
                     n_images_produced += 1
                     if fps:
                         run_timer.reset()
+
         camera.disconnect()
         if display_video:
             cv2.destroyWindow(window_name)
@@ -772,7 +773,7 @@ class VideoSystem:
             Exception: If there are no images of the specified type in the specified directory.
         """
         VideoSystem.imgs_to_vid(
-            fps=self.camera.specs["fps"], img_directory=self.save_directory, img_filetype=self._save_format
+            fps=self.camera._specs["fps"], img_directory=self.save_directory, img_filetype=self._save_format
         )
 
     @staticmethod

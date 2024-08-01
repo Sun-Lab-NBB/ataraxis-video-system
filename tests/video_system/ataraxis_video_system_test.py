@@ -687,7 +687,7 @@ def test_imgs_to_vid(video_system):
     test_directory = video_system.save_directory
 
     with pytest.raises(Exception):
-        VideoSystem.imgs_to_vid(video_system.camera.specs["fps"], img_directory=test_directory)
+        VideoSystem.imgs_to_vid(video_system.camera._specs["fps"], img_directory=test_directory)
 
     video_system.start(terminator_array_name="terminator_array8", display_video=False)
     timer = PrecisionTimer("s")
@@ -696,7 +696,7 @@ def test_imgs_to_vid(video_system):
         pass
     video_system.stop()
 
-    VideoSystem.imgs_to_vid(video_system.camera.specs["fps"], img_directory=test_directory)
+    VideoSystem.imgs_to_vid(video_system.camera._specs["fps"], img_directory=test_directory)
 
     assert "video.mp4" in os.listdir(test_directory)
 
