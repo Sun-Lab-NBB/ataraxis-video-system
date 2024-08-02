@@ -4,7 +4,6 @@ Brief description the module's purpose and the main VideoSystem class.
 """
 
 import os
-import glob
 from queue import Empty, Queue
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, Optional
 from types import NoneType

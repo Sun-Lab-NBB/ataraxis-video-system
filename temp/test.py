@@ -90,32 +90,19 @@
 #     else:
 #         print("Failed to initialize camera.")
 
-from src.ataraxis_video_system.camera import MockCamera, HarvestersCamera, OpenCVCamera
+from src.ataraxis_video_system.saver import ImageSaver, is_monochrome
 from pathlib import Path
-import sys
-import time as tm
-from src.ataraxis_video_system.saver import VideoSaver
+import numpy as np
+from time import perf_counter_ns
+from shutil import rmtree
 
-print(VideoSaver.supported_video_formats)
+# save_dir = Path('imgs')
+# output_format = 'png'
+# threads = 5
+# # noinspection PyTypeChecker
+# saver = ImageSaver(output_directory=save_dir, image_format=output_format, thread_count=threads)
 
-sys.exit()
-
-cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
-
-# camera = HarvestersCamera(name='harvey', cti_path=cti_path, fps=30, height=1024, width=1280)
-camera = MockCamera(name="mock", fps=100, height=1024, width=1200)
-camera.connect()
-
-start = tm.time()
-
-print(camera.fps)
-print(camera.width)
-print(camera.height)
-
-frames = 0
-while tm.time() - start < 20:
-    frame = camera.grab_frame()
-    frames += 1
-
-camera.disconnect()
-print(frames)
+for image_id in range(5):
+    data = np.zeros(shape=(400, 600, 3), dtype=np.uint8)
+    # data = np.random.randint(0, 256, size=(400, 600, 4), dtype=np.uint8)
+    print(is_monochrome(data))

@@ -1,8 +1,9 @@
-"""This module contains classes for interfacing with various supported Camera backends and an enumeration that stores
-supported camera backends.
+"""This module contains classes that allow interfacing with supported Camera backends and an enumeration that contains
+supported backend codes.
 
 The classes from this module function as a unified API that allows any other module to work with any supported
-camera.
+camera. They abstract away the necessary procedures to connect to the camera and continuously grab acquired frames.
+All 'real' camera backends are written in C and are designed to efficiently integrate into the VideoSystem class.
 
 The classes from this module are not meant to be instantiated or used directly. Instead, they should be created using
 the 'create_camera()' method from the VideoSystem class.
