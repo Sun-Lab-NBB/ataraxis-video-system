@@ -75,6 +75,11 @@ class OpenCVCamera:
     Args:
         name: The string-name of the camera. This is used to help identify the camera and to mark all frames acquired
             from this camera.
+        color: Specifies if the camera acquires colored or monochrome images. There is no way to get this
+            information via OpenCV, and all images read from VideoCapture use BGR colorspace even for the monochrome
+            source. This setting does not control whether the camera acquires colored images. It only controls how
+            the class handles the images. Colored images will be saved using the 'BGR' channel order, monochrome
+            images will be reduced to using only one channel.
         backend: The integer-code for the backend to use for the connected VideoCapture object. Generally, it
             is advised not to change the default value of this argument unless you know what you are doing.
         camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
@@ -91,15 +96,16 @@ class OpenCVCamera:
 
     Attributes:
         _name: Stores the string-name of the camera.
+        _color: Determines whether the camera acquires colored or monochrome images.
         _backend: Stores the code for the backend to be used by the connected VideoCapture object.
         _camera_id: Stores the numeric camera ID, which is used during connect() method runtime.
         _camera: Stores the OpenCV VideoCapture object that interfaces with the camera.
         _fps: Stores the desired Frames Per Second to capture the frames at.
         _width: Stores the desired width of the camera frames to acquire.
         _height: Stores the desired height of the camera frames to acquire.
-        _acquiring: Stores whether the camera is currently acquiring video frames. This is statically set to 'true'
+        _acquiring: Stores whether the camera is currently acquiring video frames. This is statically set to 'True'
             the first time grab_frames() is called, as it initializes the camera acquisition thread of the binding
-            object. If this attribute is true, some parameters, such as the fps, can no longer be altered.
+            object. If this attribute is True, some parameters, such as the fps, can no longer be altered.
         _backends: A dictionary that maps the meaningful backend names to the codes returned by VideoCapture
             get() method. This is used to convert integer values to meaningful names before returning them to the user.
     """
@@ -136,6 +142,7 @@ class OpenCVCamera:
     def __init__(
         self,
         name: str,
+        color: bool = True,
         backend: int = cv2.CAP_ANY,
         camera_id: int = 0,
         fps: Optional[float] = None,
@@ -147,6 +154,7 @@ class OpenCVCamera:
 
         # Saves class parameters to class attributes
         self._name = name
+        self._color: bool = color
         self._backend: int = backend
         self._camera_id: int = camera_id
         self._camera: Optional[cv2.VideoCapture] = None
@@ -332,6 +340,9 @@ class OpenCVCamera:
                     f"which is not expected. This may indicate initialization or connectivity issues."
                 )
                 console.error(message=message, error=RuntimeError)
+
+            if not self._color:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert BGR to Monochrome if needed
 
             return frame
         else:
@@ -591,7 +602,9 @@ class HarvestersCamera:
 
                 # For monochrome formats, reshapes the 1D array into a 2D array and returns it to caller.
                 if data_format in mono_location_formats:
-                    return content.data.reshape(height, width)
+                    # Uses copy, which is VERY important. Once the buffer is released, the original 'content' is lost,
+                    # so we need to force numpy to copy the data instead of using the default referencing behavior.
+                    return content.data.reshape(height, width).copy()
                 else:
                     # For color data, evaluates the input format and reshapes the data as necessary
                     if (
@@ -608,8 +621,10 @@ class HarvestersCamera:
                         )
 
                         # Swaps every R and B value (RGB -> BGR) ot produce BGR / BGRA images. This ensures consistency
-                        # with our OpenCVCamera API.
-                        frame = content[:, :, ::-1]
+                        # with our OpenCVCamera API. Uses copy, which is VERY important. Once the buffer is released,
+                        # the original 'content' is lost, so we need to force numpy to copy the data instead of using
+                        # the default referencing behavior.
+                        frame = content[:, :, ::-1].copy()
 
                         # Returns the reshaped frame array to caller
                         return frame
@@ -655,6 +670,8 @@ class MockCamera:
         fps: The simulated Frames Per Second of the camera.
         width: The simulated camera frame width.
         height: The simulated camera frame height.
+        color: Determines if the camera acquires colored or monochrome images. Colored images will be saved using the
+            'BGR' channel order, monochrome images will be reduced to using only one channel.
 
     Attributes:
         _color: Determine whether the camera should produce monochrome or RGB images.
@@ -698,8 +715,11 @@ class MockCamera:
         self._frames: list[NDArray[np.uint8]] | tuple[NDArray[np.uint8], ...] = []
         for _ in range(10):
             if self._color:
-                self._frames.append(np.random.randint(0, 256, size=(self._height, self._width, 3), dtype=np.uint8))
+                frame = np.random.randint(0, 256, size=(self._height, self._width, 3), dtype=np.uint8)
+                bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # Ensures the order of the colors is BGR
+                self._frames.append(bgr_frame)
             else:
+                # grayscale frames have only one channel, so order does not matter
                 self._frames.append(np.random.randint(0, 256, size=(self._height, self._width, 1), dtype=np.uint8))
 
         # Casts to a tuple for efficiency reasons

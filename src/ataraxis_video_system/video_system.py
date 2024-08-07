@@ -306,7 +306,7 @@ class VideoSystem:
         frames_per_second: Optional[int | float] = None,
         opencv_backend: Optional[int] = None,
         cti_path: Optional[Path] = None,
-        mock_color: Optional[bool] = None,
+        color: Optional[bool] = None,
     ) -> OpenCVCamera | HarvestersCamera | MockCamera:
         """Creates and returns a Camera class instance that uses the specified camera backend.
 
@@ -344,8 +344,9 @@ class VideoSystem:
                 the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
                 would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
                 details. Note, cti_path is only necessary for Harvesters backend, but it is REQUIRED for that backend.
-            mock_color: Optional. A boolean indicating whether to simulate color in the mock camera. This is only used
-                by the Mock backend and generally should not be used by anyone other than library developers.
+            color: Optional. A boolean indicating whether the camera acquires colored or monochrome images. This is
+                used by OpenCVCamera to optimize acquired images depending on the source (camera) color space. It is
+                also used by the MockCamera to enable simulating monochrome and colored images.
 
         Raises:
             TypeError: If the input arguments are not of the correct type.
@@ -405,9 +406,13 @@ class VideoSystem:
                 )
                 raise console.error(error=TypeError, message=message)
 
+            # Ensures that color is either True or False.
+            image_color = True if color is not None else False
+
             # Instantiates and returns the OpenCVCamera class object
             return OpenCVCamera(
                 name=camera_name,
+                color=image_color,
                 backend=opencv_backend,
                 camera_id=camera_id,
                 height=frame_height,
@@ -439,7 +444,7 @@ class VideoSystem:
         # MockCamera
         elif camera_backend == CameraBackends.MOCK:
             # Ensures that mock_color is either True or False.
-            mock_color = True if mock_color is not None else False
+            mock_color = True if color is not None else False
 
             # Instantiates and returns the MockCamera class object
             return MockCamera(

@@ -1,3 +1,4 @@
+# import sys
 # import cv2
 # from harvesters.core import Harvester
 # from pathlib import Path
@@ -62,7 +63,7 @@
 #             while tm.time() - start < duration:
 #                 buffer = self.camera.fetch_buffer()
 #                 component = buffer.payload.components[0]
-#                 cam_frame = copy.copy(component.data.reshape(2840, 2840))
+#                 cam_frame = copy.copy(component.data.reshape(1000, 1000))
 #                 num += 1
 #                 self.display_queue.put((num, cam_frame))
 #                 buffer.queue()
@@ -89,20 +90,43 @@
 #         cam_interface.cleanup()
 #     else:
 #         print("Failed to initialize camera.")
+#
+# sys.exit(0)
 
-from src.ataraxis_video_system.saver import ImageSaver, is_monochrome
-from pathlib import Path
 import numpy as np
-from time import perf_counter_ns
-from shutil import rmtree
+from src.ataraxis_video_system.saver import GPUVideoSaver, ImageSaver, ImageFormats
+from src.ataraxis_video_system.camera import HarvestersCamera
+from pathlib import Path
+from ataraxis_time import PrecisionTimer
+import shutil as sh
 
-# save_dir = Path('imgs')
-# output_format = 'png'
-# threads = 5
-# # noinspection PyTypeChecker
-# saver = ImageSaver(output_directory=save_dir, image_format=output_format, thread_count=threads)
+save_dir = Path('imgs')
+out_dir = Path('out')
+timer = PrecisionTimer('s')
+cti_path = Path('/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti')
 
-for image_id in range(5):
-    data = np.zeros(shape=(400, 600, 3), dtype=np.uint8)
-    # data = np.random.randint(0, 256, size=(400, 600, 4), dtype=np.uint8)
-    print(is_monochrome(data))
+if save_dir.exists():
+    sh.rmtree(save_dir)
+
+camera = HarvestersCamera(name='GudCam', cti_path=cti_path, fps=30)
+image_saver = ImageSaver(output_directory=save_dir, image_format=ImageFormats.PNG, thread_count=10)
+video_saver = GPUVideoSaver(output_directory=out_dir)
+
+camera.connect()
+
+timer.reset()
+image_id = 0
+once = True
+while timer.elapsed < 60:
+    image_id += 1
+    frame = camera.grab_frame()
+
+    # Mitigates the openCV ramp time
+    if once:
+        once = False
+        timer.reset()
+
+    image_saver.save_image(image_id=f"{image_id:08d}", data=frame)
+
+camera.disconnect()
+video_saver.create_video_from_images(video_frames_per_second=30, image_directory=save_dir, video_id='test_video')

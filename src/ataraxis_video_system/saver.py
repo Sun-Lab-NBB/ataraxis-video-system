@@ -484,6 +484,11 @@ class GPUVideoSaver:
         little effect on CPU performance. This makes it optimal for the context of scientific experiments, where CPU and
         GPU may be involved in running the experiment, in addition to data saving.
 
+        The class is statically configured to operate in the constant_quantization mode. That is, every frame will be
+        encoded using the same quantization, discarding the same amount of information for each frame. The lower the
+        quantization parameter, the less information is discarded and the larger the file size. It is very likely that
+        the default parameters of this class will need to be adjusted for your specific use-case.
+
     Args:
         output_directory: The path to the output directory where the video will be stored. To optimize data flow during
             runtime, the class pre-creates the saving directory ahead of time and only expects integer IDs to be passed
@@ -502,30 +507,41 @@ class GPUVideoSaver:
             class that was used for frame acquisition.
         output_pixel_format: The pixel format to be used by the output video. Use OutputPixelFormats enumeration to
             specify the desired pixel format. Currently, only 'YUV420' and 'YUV444' options are supported.
-        constant_quality: The integer value to use for the 'constant quality' parameter of the encoder. Constant
-            quality dynamically adjusts the bitrate of the video to achieve a near-constant quality across all frames
-            of the video (based on their complexity). This is somewhat similar (although not identical) to the
-            `constant rate factor` parameter of CPU Saver class. Note, the default assumes H265 encoder and is too
-            high for H264 encoder. H264 encoder should default to ~23.
-            50.
-        gpu: The index of the GPU to use for encoding. Valid GPU indices can be obtained from running 'nvidia-smi'
-            command.
-   Attributes:
+        quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder.
+            The encoder uses 'constant quantization' to discard the same amount of information from each macro-block of
+            the frame, instead of varying the discarded information amount with the complexity of macro-blocks. This
+            allows precisely controlling output video size and distortions introduced by the encoding process, as the
+            changes are uniform across the whole video. Lower values mean better quality (0 is best, 51 is worst).
+            Note, the default assumes H265 encoder and is likely too low for H264 encoder. H264 encoder should default
+            to ~25.
+        gpu: The index of the GPU to use for encoding. Valid GPU indices can be obtained from 'nvidia-smi' command.
+
+    Attributes:
+        _output_directory: Stores the output directory.
+        _video_format: Stores the desired video container format.
+        _video_encoder: Stores the video codec specification.
+        _encoding_preset: Stores the encoding preset of the codec.
+        _output_pixel_format: Stores the pixel-format to be used by the generated video file.
+        _input_pixel_format: Stores the pixel-format used by input frames / images.
+        _quantization_parameter: Stores the quantization value used to control how much information is discarded from
+            each macro-block of each frame.
+        _gpu: Stores the index of the GPU to use for encoding.
+        _encoder_profile: Stores the codec-specific profile, which is also dependent on the output pixel format.
    """
 
     # Lists supported image input extensions. This is used for transcoding folders of images as videos, to filter out
     # possible inputs.
-    _supported_image_formats: set[str] = {"png", "tiff", "tif", "jpg", "jpeg"}
+    _supported_image_formats: set[str] = {".png", ".tiff", ".tif", ".jpg", ".jpeg"}
 
     def __init__(
         self,
         output_directory: Path,
         video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
-        preset: GPUEncoderPresets = GPUEncoderPresets.SLOW,
-        input_pixel_format: InputPixelFormats = InputPixelFormats.MONOCHROME,
-        output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV420,
-        constant_quality: int = 35,
+        preset: GPUEncoderPresets = GPUEncoderPresets.SLOWEST,
+        input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
+        output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
+        quantization_parameter: int = 15,
         gpu: int = 0,
     ):
         # Ensures that the output directory exists and saves it to class attributes
@@ -555,13 +571,14 @@ class GPUVideoSaver:
         self._input_pixel_format: str = input_pixel_format.value
 
         # Constant quality setting. Statically, the codec is instructed to use VBR mode to support CQ setting.
-        self._constant_quality: int = constant_quality
+        self._quantization_parameter: int = quantization_parameter
 
         # The index of the GPU to use for encoding.
         self._gpu: int = gpu
 
         # Depending on the desired output pixel format and the selected video codec, resolves the appropriate profile
         # to support chromatic coding.
+        self._encoder_profile: str
         if video_codec == "h264_nvenc" and self._output_pixel_format == "yuv444p":
             self._encoder_profile = "high444p"  # The only profile capable of 444p encoding.
         elif video_codec == "hevc_nvenc" and self._output_pixel_format == "yuv444p":
@@ -572,7 +589,19 @@ class GPUVideoSaver:
     def create_video_from_images(
         self, video_frames_per_second: int | float, image_directory: Path, video_id: str,
     ) -> None:
-        """Converts a set of id labeled images into an mp4 video file.
+        """Converts a set of id-labeled images into a video file.
+
+        This method can be used to convert individual images stored inside the input directory into a video file. It
+        uses encoding parameters specified during class initialization and supports all image formats supported by the
+        ImageSaver class.
+
+        Notes:
+            The class assumes that all images use the pixel format specified during class initialization. If this
+            assumption is not met, chromatic aberrations may occur in the encoded video.
+
+            The video is written to the output directory of the class and uses the provided video_id as name.
+
+            The dimensions of the video are determined from the first image passed to the encoder.
 
         Args:
             video_frames_per_second: The framerate of the video to be created.
@@ -580,11 +609,12 @@ class GPUVideoSaver:
             video_id: The location to save the video. Defaults to the directory that the images are saved in.
 
         Raises:
-            Exception: If there are no images of the specified type in the specified directory.
+            Exception: If there are no images with supported file-types in the specified directory.
         """
 
         # First, crawls the image directory and extracts all image files (based on the file extension). Also, only keeps
-        # images whose names are convertible to integers (the format used by VideoSystem).
+        # images whose names are convertible to integers (the format used by VideoSystem). This process also sorts the
+        # images based on their integer IDs.
         images = sorted(
             [
                 img
@@ -599,117 +629,110 @@ class GPUVideoSaver:
             message = (
                 f"Unable to crate video from images. No valid image candidates discovered when crawling the image "
                 f"directory ({image_directory}). Valid candidates should be images using one of the supported formats "
-                f"({self.supported_image_formats}) with digit-convertible names, e.g: 0001.jpg)"
+                f"({sorted(self._supported_image_formats)}) with digit-convertible names, e.g: 0001.jpg)"
             )
             console.error(error=RuntimeError, message=message)
-
-        # Sorts selected image files based on their names, n ignoring suffixes. This expects that all images are named
-        # using leading-zero numbers e.g.: '001', '002', etc.
-        images.sort(key=lambda x: int(x.stem))
 
         # Reads the first image using OpenCV to get image dimensions. Assumes image dimensions are consistent across
         # all images.
         frame_height, frame_width, _ = cv2.imread(filename=str(images[0])).shape
 
         # Generates a temporary file to serve as the image roster fed into ffmpeg
-        file_list_path = f"{image_directory}/file_list.txt"  # The file is saved locally, to the folder being encoded
-        with open(file_list_path, "w") as fl:
+        file_list_path = f"{image_directory}/file_list.txt"  # The file is saved to the image source folder
+        with open(file_list_path, "w") as file_list:
             for input_frame in images:
                 # NOTE!!! It is MANDATORY to include 'file:' when the file_list.txt itself is located inside root
                 # source folder and each image path is given as an absolute path. Otherwise, ffmpeg appends the root
                 # path to the text file in addition to each image path, resulting in an incompatible path.
                 # Also, quotation (single) marks are necessary to ensure ffmpeg correctly processes special
                 # characters and spaces.
-                fl.write(f"file 'file:{input_frame}'\n")
+                file_list.write(f"file 'file:{input_frame}'\n")
 
-        output_path = Path(self._output_directory, f"{video_id}.{self._video_format.value}")
+        # Uses class attributes and input video ID to construct the output video path
+        output_path = Path(self._output_directory, f"{video_id}.{self._video_format}")
 
         # Constructs the ffmpeg command
         ffmpeg_command = (
-            f"ffmpeg -y -f concat -safe 0 -i {file_list_path} -pixel_format {self._output_pixel_format} "
-            f"-framerate {video_frames_per_second} -vcodec {self._video_encoder} -preset {self._encoding_preset} "
-            f"-cq {self._constant_quality} -profile {self._encoder_profile} -pix_fmt {self._output_pixel_format} "
-            f"-gpu {self._gpu} -rc vbr_hq -tune hq {output_path}"
+            f"ffmpeg -y -f concat -safe 0 -r {video_frames_per_second} -i {file_list_path} "
+            f"-vcodec {self._video_encoder} -qp {self._quantization_parameter} -preset {self._encoding_preset} "
+            f"-profile {self._encoder_profile} -pixel_format {self._output_pixel_format} "
+            f"-gpu {self._gpu} -rc constqp {output_path}"
         )
 
-        # Starts the ffmpeg process
+        # Executes the ffmpeg command
         ffmpeg_process = subprocess.Popen(
-            ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            ffmpeg_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
-        try:
-            for image in images:
-                image_data = cv2.imread(str(image))
-                ffmpeg_process.stdin.write(image_data.astype(np.uint8).tobytes())
-        finally:
-            # Ensure we always close the stdin and wait for the process to finish
-            ffmpeg_process.stdin.close()
-            ffmpeg_process.wait()
+        # Waits for the process to complete
+        stdout, stderr = ffmpeg_process.communicate()
 
         # Checks for any errors
         if ffmpeg_process.returncode != 0:
-            error_output = ffmpeg_process.stderr.read().decode("utf-8")
+            error_output = stderr.decode("utf-8")
             raise RuntimeError(f"FFmpeg process failed with error: {error_output}")
+        else:
+            print("Video creation completed successfully.")
 
-    def create_video_from_queue(
-        self,
-        image_queue: Queue,
-        terminator_array: SharedMemoryArray,
-        video_frames_per_second: int | float,
-        frame_height: int,
-        frame_width: int,
-        video_path: Path,
-    ) -> None:
-        # Constructs the ffmpeg command
-        ffmpeg_command = [
-            "ffmpeg",
-            "-f",
-            "rawvideo",  # Format: video without an audio
-            "-pixel_format",
-            "bgr24",  # Input data pixel format, bgr24 due to how OpenCV reads images
-            "-video_size",
-            f"{int(frame_width)}x{int(frame_height)}",  # Video frame size
-            "-framerate",
-            str(video_frames_per_second),  # Video fps
-            "-i",
-            "pipe:",  # Input mode: Pipe
-            "-c:v",
-            f"{self._encoder}",  # Specifies the used encoder
-            "-preset",
-            f"{self._preset}",  # Preset balances encoding speed and resultant video quality
-            "-cq",
-            f"{self._cq}",  # Constant quality factor, determines the overall output quality
-            "-profile:v",
-            f"{self._profile}",  # For h264_nvenc; use "main" for hevc_nvenc
-            "-pixel_format",
-            f"{self._pixel_format}",  # Make sure this is compatible with your chosen codec
-            "-rc",
-            "vbr_hq",  # Variable bitrate, high-quality preset
-            "-y",  # Overwrites the output file without asking
-            video_path,
-        ]
-
-        # Starts the ffmpeg process
-        ffmpeg_process = subprocess.Popen(
-            ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-
-        try:
-            terminator_array.connect()
-            while terminator_array.read_data(index=2, convert_output=True):
-                if terminator_array.read_data(index=1, convert_output=True) and not image_queue.empty():
-                    image, _ = image_queue.get()
-                    ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
-        finally:
-            # Ensure we always close the stdin and wait for the process to finish
-            ffmpeg_process.stdin.close()
-            ffmpeg_process.wait()
-            terminator_array.disconnect()
-
-        # Checks for any errors
-        if ffmpeg_process.returncode != 0:
-            error_output = ffmpeg_process.stderr.read().decode("utf-8")
-            raise RuntimeError(f"FFmpeg process failed with error: {error_output}")
+    # def create_video_from_queue(
+    #     self,
+    #     image_queue: Queue,
+    #     terminator_array: SharedMemoryArray,
+    #     video_frames_per_second: int | float,
+    #     frame_height: int,
+    #     frame_width: int,
+    #     video_path: Path,
+    # ) -> None:
+    #     # Constructs the ffmpeg command
+    #     ffmpeg_command = [
+    #         "ffmpeg",
+    #         "-f",
+    #         "rawvideo",  # Format: video without an audio
+    #         "-pixel_format",
+    #         "bgr24",  # Input data pixel format, bgr24 due to how OpenCV reads images
+    #         "-video_size",
+    #         f"{int(frame_width)}x{int(frame_height)}",  # Video frame size
+    #         "-framerate",
+    #         str(video_frames_per_second),  # Video fps
+    #         "-i",
+    #         "pipe:",  # Input mode: Pipe
+    #         "-c:v",
+    #         f"{self._encoder}",  # Specifies the used encoder
+    #         "-preset",
+    #         f"{self._preset}",  # Preset balances encoding speed and resultant video quality
+    #         "-cq",
+    #         f"{self._cq}",  # Constant quality factor, determines the overall output quality
+    #         "-profile:v",
+    #         f"{self._profile}",  # For h264_nvenc; use "main" for hevc_nvenc
+    #         "-pixel_format",
+    #         f"{self._pixel_format}",  # Make sure this is compatible with your chosen codec
+    #         "-rc",
+    #         "vbr_hq",  # Variable bitrate, high-quality preset
+    #         "-y",  # Overwrites the output file without asking
+    #         video_path,
+    #     ]
+    #
+    #     # Starts the ffmpeg process
+    #     ffmpeg_process = subprocess.Popen(
+    #         ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    #     )
+    #
+    #     try:
+    #         terminator_array.connect()
+    #         while terminator_array.read_data(index=2, convert_output=True):
+    #             if terminator_array.read_data(index=1, convert_output=True) and not image_queue.empty():
+    #                 image, _ = image_queue.get()
+    #                 ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
+    #     finally:
+    #         # Ensure we always close the stdin and wait for the process to finish
+    #         ffmpeg_process.stdin.close()
+    #         ffmpeg_process.wait()
+    #         terminator_array.disconnect()
+    #
+    #     # Checks for any errors
+    #     if ffmpeg_process.returncode != 0:
+    #         error_output = ffmpeg_process.stderr.read().decode("utf-8")
+    #         raise RuntimeError(f"FFmpeg process failed with error: {error_output}")
 
 
 class CPUVideoSaver:
