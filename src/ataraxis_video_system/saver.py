@@ -15,12 +15,10 @@ from enum import Enum
 from ataraxis_base_utilities import console
 from ataraxis_base_utilities.console.console_class import Console
 from typing import Any
-import numpy as np
 import subprocess
 from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
-from ataraxis_data_structures import SharedMemoryArray
 from numpy.typing import NDArray
 
 
@@ -264,13 +262,13 @@ class OutputPixelFormats(Enum):
     video. This can be a good way of increasing encoding speed and decreasing video file size at the cost of reducing
     the chromatic range of the video.
     """
-    YUV420: str = "yuv420"
+    YUV420: str = "yuv420p"
     """
     The 'standard' video color space format that uses half-bandwidth chrominance (U/V) and full width luminance (Y).
     Generally, the resultant reduction in chromatic precision is not apparent to the viewer. However, this may be 
     undesirable for some applications and, in this case, the full-width 'yuv444' format should be used.
     """
-    YUV444: str = "yuv444"
+    YUV444: str = "yuv444p"
     """
     While still doing some chroma value reduction, this profile uses most of the chrominance channel-width. This relies 
     in very little chromatic data loss and may be necessary for some scientific applications. This format is more 
@@ -470,11 +468,11 @@ class ImageSaver:
         self._executor.shutdown(wait=True)
 
 
-class GPUVideoSaver:
+class VideoSaver:
     """Saves input video frames as a video file.
 
     This Saver class is designed to use a memory-efficient approach of saving video frames acquired with the camera as
-    a video file. To do so, it uses FFMPEG library and, in the case of this specific class, Nvidia GPU hardware codec.
+    a video file. To do so, it uses FFMPEG library and either Nvidia hardware encoding or CPU software encoding.
     Generally, this is the most storage-space and encoding-time efficient approach available through this library. The
     only downside of this approach is that if the process is interrupted unexpectedly, all acquired data may be lost.
 
@@ -519,14 +517,6 @@ class GPUVideoSaver:
     Attributes:
         _output_directory: Stores the output directory.
         _video_format: Stores the desired video container format.
-        _video_encoder: Stores the video codec specification.
-        _encoding_preset: Stores the encoding preset of the codec.
-        _output_pixel_format: Stores the pixel-format to be used by the generated video file.
-        _input_pixel_format: Stores the pixel-format used by input frames / images.
-        _quantization_parameter: Stores the quantization value used to control how much information is discarded from
-            each macro-block of each frame.
-        _gpu: Stores the index of the GPU to use for encoding.
-        _encoder_profile: Stores the codec-specific profile, which is also dependent on the output pixel format.
    """
 
     # Lists supported image input extensions. This is used for transcoding folders of images as videos, to filter out
@@ -536,6 +526,7 @@ class GPUVideoSaver:
     def __init__(
         self,
         output_directory: Path,
+        hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
         preset: GPUEncoderPresets = GPUEncoderPresets.SLOWEST,
@@ -544,47 +535,72 @@ class GPUVideoSaver:
         quantization_parameter: int = 15,
         gpu: int = 0,
     ):
-        # Ensures that the output directory exists and saves it to class attributes
+        # Ensures that the output directory exists
         # noinspection PyProtectedMember
         Console._ensure_directory_exists(output_directory)
+
         self._output_directory: Path = output_directory
-
-        # Video container format
         self._video_format: str = video_format.value
-
-        # Depending on the codec name, resolves the specific hardware codec.
-        if video_codec == VideoCodecs.H264:
-            self._video_encoder: str = "h264_nvenc"
-        elif video_codec == VideoCodecs.H265:
-            self._video_encoder: str = "hevc_nvenc"
-
-        # Codec presets are identical NVENC codecs.
-        self._encoding_preset: str = preset.value
-
-        # Depending on the generic output pixel format, resolves the specific format name supported by NVENC.
-        if output_pixel_format == OutputPixelFormats.YUV420:
-            self._output_pixel_format: str = "yuv420p"
-        else:
-            self._output_pixel_format: str = "yuv444p"
-
-        # Input pixel format
         self._input_pixel_format: str = input_pixel_format.value
 
-        # Constant quality setting. Statically, the codec is instructed to use VBR mode to support CQ setting.
-        self._quantization_parameter: int = quantization_parameter
-
-        # The index of the GPU to use for encoding.
-        self._gpu: int = gpu
+        # Depending on the requested codec type and hardware_acceleration preference, selects the specific codec to
+        # use for video encoding.
+        video_encoder: str
+        if video_codec == VideoCodecs.H264 and hardware_encoding:
+            video_encoder = "h264_nvenc"
+        elif video_codec == VideoCodecs.H265 and hardware_encoding:
+            video_encoder = "hevc_nvenc"
+        elif video_codec == VideoCodecs.H264 and not hardware_encoding:
+            video_encoder = "libx264"
+        else:
+            video_encoder = "libx265"
 
         # Depending on the desired output pixel format and the selected video codec, resolves the appropriate profile
         # to support chromatic coding.
-        self._encoder_profile: str
-        if video_codec == "h264_nvenc" and self._output_pixel_format == "yuv444p":
-            self._encoder_profile = "high444p"  # The only profile capable of 444p encoding.
-        elif video_codec == "hevc_nvenc" and self._output_pixel_format == "yuv444p":
-            self._encoder_profile = "rext"  # The only profile capable of 444p encoding.
+        encoder_profile: str
+        if video_encoder == "h264_nvenc":
+            if output_pixel_format.value == "yuv444p":
+                encoder_profile = "high444p"  # The only profile capable of 444p encoding.
+            else:
+                encoder_profile = "main"  # 420p falls here
+        elif video_encoder == "hevc_nvenc":
+            if output_pixel_format.value == "yuv444p":
+                encoder_profile = "rext"  # The only profile capable of 444p encoding.
+            else:
+                encoder_profile = "main"  # Same as above, 420p works with the main profile
+        elif video_encoder == "libx265":
+            if output_pixel_format.value == "yuv444p":
+                encoder_profile = "main444-8"  # 444p requires this profile
+            else:
+                encoder_profile = "main"  # 420p requires at least this profile
         else:
-            self._encoder_profile = "main"  # Since 420p is the 'default', the main profile works good here.
+            if output_pixel_format.value == "yuv444p":
+                encoder_profile = "high444"  # 444p requires this profile
+            else:
+                encoder_profile = "high420"  # 420p requires at least this profile
+
+        # This is unique to CPU codecs. Resolves the 'parameter' specifier based on the codec name. This is used to
+        # force CPU encoders to use the QP control mode.
+        parameter_specifier: str
+        if video_encoder == "libx264":
+            parameter_specifier = "-x264-params"
+        else:
+            parameter_specifier = "-x265-params"
+
+        # Constructs the main body of the ffmpeg command that will be used to generate video file(s). This block
+        # lacks the input header and the output file path, which is added by other methods of this class when they
+        # are called.
+        if hardware_encoding:
+            self._ffmpeg_command: str = (
+                f"-vcodec {video_encoder} -qp {quantization_parameter} -preset {preset.value} "
+                f"-profile:v {encoder_profile} -pixel_format {output_pixel_format.value} -gpu {gpu} -rc constqp"
+            )
+        else:
+            # Note, the qp has to be encased in double quotes and be preceded by the parameter_specifier
+            self._ffmpeg_command: str = (
+                f'-vcodec {video_encoder} {parameter_specifier} qp={quantization_parameter} -preset {preset.value} '
+                f'-profile {encoder_profile} -pixel_format {output_pixel_format.value} -threads {gpu}'
+            )
 
     def create_video_from_images(
         self, video_frames_per_second: int | float, image_directory: Path, video_id: str,
@@ -627,8 +643,8 @@ class GPUVideoSaver:
         # If the process above did not discover any images, raises an error:
         if len(images) == 0:
             message = (
-                f"Unable to crate video from images. No valid image candidates discovered when crawling the image "
-                f"directory ({image_directory}). Valid candidates should be images using one of the supported formats "
+                f"Unable to create video from images. No valid image candidates discovered when crawling the image "
+                f"directory ({image_directory}). Valid candidates are be images using one of the supported formats "
                 f"({sorted(self._supported_image_formats)}) with digit-convertible names, e.g: 0001.jpg)"
             )
             console.error(error=RuntimeError, message=message)
@@ -653,10 +669,8 @@ class GPUVideoSaver:
 
         # Constructs the ffmpeg command
         ffmpeg_command = (
-            f"ffmpeg -y -f concat -safe 0 -r {video_frames_per_second} -i {file_list_path} "
-            f"-vcodec {self._video_encoder} -qp {self._quantization_parameter} -preset {self._encoding_preset} "
-            f"-profile {self._encoder_profile} -pixel_format {self._output_pixel_format} "
-            f"-gpu {self._gpu} -rc constqp {output_path}"
+            f"ffmpeg -y -f concat -safe 0 -r {video_frames_per_second} -i {file_list_path} {self._ffmpeg_command} "
+            f"{output_path}"
         )
 
         # Executes the ffmpeg command
@@ -733,68 +747,3 @@ class GPUVideoSaver:
     #     if ffmpeg_process.returncode != 0:
     #         error_output = ffmpeg_process.stderr.read().decode("utf-8")
     #         raise RuntimeError(f"FFmpeg process failed with error: {error_output}")
-
-
-class CPUVideoSaver:
-    # Lists supported codecs, and input, and output formats. Uses set for efficiency at the expense of fixed order.
-    _supported_image_formats: set[str] = {"png", "tiff", "tif", "jpg", "jpeg"}
-    _supported_video_formats: set[str] = {"mp4"}
-    _supported_video_codecs: set[str] = {"h264_nvenc", "libx264", "hevc_nvenc", "libx265"}
-    _supported_pixel_formats: set[str] = {"yuv444", "gray"}
-
-    """Saves input video frames as a video file."""
-
-    def __init__(self, video_codec="h264", pixel_format: str = "yuv444", crf: int = 13, cq: int = 23):
-        self._codec = video_codec
-
-    @property
-    def supported_video_codecs(self) -> tuple[str, ...]:
-        """Returns a tuple that stores supported video codec options."""
-
-        # Sorts to address the issue of 'set' not having a reproducible order.
-        return tuple(sorted(self._supported_video_codecs))
-
-    @property
-    def supported_video_formats(self) -> tuple[str, ...]:
-        """Returns a tuple that stores supported video format options."""
-
-        # Sorts to address the issue of 'set' not having a reproducible order.
-        return tuple(sorted(self._supported_video_formats))
-
-    @property
-    def supported_image_formats(self) -> tuple[str, ...]:
-        """Returns a tuple that stores supported image format options."""
-
-        # Sorts to address the issue of 'set' not having a reproducible order.
-        return tuple(sorted(self._supported_image_formats))
-
-
-def is_monochrome(image: NDArray[Any]) -> bool:
-    """Verifies whether the input image is grayscale (monochrome) using HSV conversion.
-
-    Specifically, converts input images to HSV colorspace and ensures that Saturation is zero across the entire image.
-    This method is used across encoders to properly determine input image colorspace.
-
-    Args:
-        image: Image to verify in the form of a NumPy array. Note, expects the input images to use the BGR or BGRA
-            color format.
-
-    Returns:
-        True if the image is grayscale, False otherwise.
-    """
-
-    if len(image.shape) < 3 or image.shape[2] == 1:
-        return True
-    elif 2 < image.ndim < 5:
-        if image.shape[2] == 3:  # BGR image
-            hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        elif image.shape[2] == 4:  # BGRA image
-            bgr_image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-            hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
-        else:
-            raise ValueError("Unsupported number of channels")
-    else:
-        raise ValueError("Unsupported number of dimensions")
-
-    # Checks if all pixels have 0 saturation value
-    return np.all(hsv_image[:, :, 1] == 0)

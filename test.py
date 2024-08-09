@@ -93,8 +93,8 @@
 #
 # sys.exit(0)
 
-import numpy as np
-from src.ataraxis_video_system.saver import GPUVideoSaver, ImageSaver, ImageFormats
+
+from src.ataraxis_video_system.saver import VideoSaver, ImageSaver, ImageFormats, CPUEncoderPresets
 from src.ataraxis_video_system.camera import HarvestersCamera
 from pathlib import Path
 from ataraxis_time import PrecisionTimer
@@ -110,14 +110,14 @@ if save_dir.exists():
 
 camera = HarvestersCamera(name='GudCam', cti_path=cti_path, fps=30)
 image_saver = ImageSaver(output_directory=save_dir, image_format=ImageFormats.PNG, thread_count=10)
-video_saver = GPUVideoSaver(output_directory=out_dir)
+video_saver = VideoSaver(output_directory=out_dir, hardware_encoding=False, preset=CPUEncoderPresets.SLOWER)
 
 camera.connect()
 
 timer.reset()
 image_id = 0
 once = True
-while timer.elapsed < 60:
+while timer.elapsed < 20:
     image_id += 1
     frame = camera.grab_frame()
 
