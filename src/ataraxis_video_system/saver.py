@@ -857,7 +857,7 @@ class VideoSaver:
             )
             console.error(message=message, error=RuntimeError)
 
-    def save_frame(self, frame: np.ndarray) -> None:
+    def save_frame(self, _frame_id: int, frame: np.ndarray) -> None:
         """Sends the input frame to be encoded by the 'live' FFMPEG encoder process.
 
         This method is used to submit frames to be saved to a precreated FFMPEG process. It expects that the
@@ -870,6 +870,8 @@ class VideoSaver:
             method.
 
         Args:
+            _frame_id: This is a placeholder argument that is not used by the method. Having this placeholder is
+                necessary to standardize the frame saving API for Video and Image saver classes.
             frame: The frame to be encoded stored in a numpy array.
 
         Raises:
