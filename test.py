@@ -94,39 +94,86 @@
 # sys.exit(0)
 
 
-from src.ataraxis_video_system.saver import VideoSaver, ImageSaver, ImageFormats, CPUEncoderPresets
+from src.ataraxis_video_system.saver import (
+    VideoSaver,
+    ImageSaver,
+    ImageFormats,
+    CPUEncoderPresets,
+    GPUEncoderPresets,
+    InputPixelFormats,
+)
 from src.ataraxis_video_system.camera import HarvestersCamera
 from pathlib import Path
 from ataraxis_time import PrecisionTimer
 import shutil as sh
+from ataraxis_base_utilities import console
 
-save_dir = Path('imgs')
-out_dir = Path('out')
-timer = PrecisionTimer('s')
-cti_path = Path('/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti')
+test_type = 2
+
+save_dir = Path("imgs")
+out_dir = Path("out")
+timer = PrecisionTimer("s")
+cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
+console.enable()  # Activates console output
 
 if save_dir.exists():
     sh.rmtree(save_dir)
 
-camera = HarvestersCamera(name='GudCam', cti_path=cti_path, fps=30)
+camera = HarvestersCamera(name="GudCam", cti_path=cti_path, fps=200, width=1000, height=1000)
 image_saver = ImageSaver(output_directory=save_dir, image_format=ImageFormats.PNG, thread_count=10)
-video_saver = VideoSaver(output_directory=out_dir, hardware_encoding=False, preset=CPUEncoderPresets.SLOWER)
+video_saver = VideoSaver(
+    output_directory=out_dir,
+    hardware_encoding=False,
+    preset=CPUEncoderPresets.SLOWER,
+    input_pixel_format=InputPixelFormats.MONOCHROME,
+    quantization_parameter=50,
+)
 
-camera.connect()
+print(camera)
 
-timer.reset()
-image_id = 0
-once = True
-while timer.elapsed < 20:
-    image_id += 1
-    frame = camera.grab_frame()
+print(image_saver)
 
-    # Mitigates the openCV ramp time
-    if once:
-        once = False
-        timer.reset()
+print(video_saver)
 
-    image_saver.save_image(image_id=f"{image_id:08d}", data=frame)
+if test_type == 1:
+    camera.connect()
 
-camera.disconnect()
-video_saver.create_video_from_images(video_frames_per_second=30, image_directory=save_dir, video_id='test_video')
+    timer.reset()
+    image_id = 0
+    once = True
+    while timer.elapsed < 5:
+        image_id += 1
+        frame = camera.grab_frame()
+
+        # Mitigates the openCV ramp time
+        if once:
+            once = False
+            timer.reset()
+
+        image_saver.save_image(image_id=f"{image_id:08d}", data=frame)
+
+    camera.disconnect()
+    video_saver.create_video_from_image_folder(
+        video_frames_per_second=30, image_directory=save_dir, video_id="test_video", cleanup=True
+    )
+
+if test_type == 2:
+    camera.connect()
+
+    video_saver.create_live_video_encoder(
+        frame_width=1000, frame_height=1000, video_frames_per_second=200, video_id="test_video"
+    )
+
+    timer.reset()
+    once = True
+    while timer.elapsed < 10:
+        frame = camera.grab_frame()
+        video_saver.encode_live_frame(frame=frame)
+
+        # Mitigates the openCV ramp time
+        if once:
+            once = False
+            timer.reset()
+
+    camera.disconnect()
+    video_saver.terminate_live_encoder()

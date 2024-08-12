@@ -344,7 +344,7 @@ class VideoSystem:
                 the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
                 would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
                 details. Note, cti_path is only necessary for Harvesters backend, but it is REQUIRED for that backend.
-            color: Optional. A boolean indicating whether the camera acquires colored or monochrome images. This is
+            color: A boolean indicating whether the camera acquires colored or monochrome images. This is
                 used by OpenCVCamera to optimize acquired images depending on the source (camera) color space. It is
                 also used by the MockCamera to enable simulating monochrome and colored images.
 
