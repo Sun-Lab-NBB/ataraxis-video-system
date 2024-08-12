@@ -5,7 +5,7 @@ Brief description the module's purpose and the main VideoSystem class.
 
 import os
 from queue import Empty, Queue
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, Optional
+from typing import Any, Generic, Literal, TypeVar, cast, Optional
 from types import NoneType
 from threading import Thread
 import multiprocessing
@@ -27,6 +27,18 @@ from ataraxis_base_utilities import console
 from ataraxis_data_structures import SharedMemoryArray
 
 from .camera import HarvestersCamera, OpenCVCamera, MockCamera, CameraBackends
+from .saver import (
+    SaverBackends,
+    ImageFormats,
+    VideoFormats,
+    VideoCodecs,
+    InputPixelFormats,
+    OutputPixelFormats,
+    CPUEncoderPresets,
+    GPUEncoderPresets,
+    VideoSaver,
+    ImageSaver,
+)
 from pathlib import Path
 from harvesters.core import Harvester
 
@@ -67,34 +79,11 @@ class VideoSystem:
     """Provides a system for efficiently taking, processing, and saving images in real time.
 
     Args:
-        save_directory: location where the system saves images.
-        camera: camera for image collection.
-        display_video: whether or not to display a video of the current frames being recorded.
-        save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
-            a lossy format. Set to 'mp4' for video saving.
-        tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
-            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-            relevant when save_format is specified as 'tiff.'
-        jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
-            highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
-            but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-        mp4_config: A dictionary of ffmpeg parameters in the form {parameter_name: parameter_value, ...}
-        num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
-        num_threads: The number of image-saving threads to run per process. Applies only to image saving.
+        display_frames: whether or not to display a video of the current frames being recorded.
 
     Attributes:
-        save_directory: location where the system saves images.
-        camera: camera for image collection.
+        _camera: camera for image collection.
         _display_video: whether or not to display a video of the current frames being recorded.
-        _save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg' is
-            a lossy format
-        _mp4_config:
-        _tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
-            most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-            relevant when save_format is specified as 'tiff.'
-        _jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-            the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-            compression value is only relevant when save_format is specified as 'jpg.'
         _running: whether or not the video system is running.
         _producer_process: multiprocessing process to control the image collection.
         _consumer_processes: list multiprocessing processes to control image saving.
@@ -102,7 +91,6 @@ class VideoSystem:
             termination.
         _image_queue: multiprocessing queue to hold images before saving.
         _num_consumer_processes: number of processes to run the image consumer loop on. Applies only to image saving.
-        _threads_per_process: The number of image-saving threads to run per process. Applies only to image saving.
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
@@ -114,86 +102,26 @@ class VideoSystem:
 
     img_name = "img"
     vid_name = "video"
-    Codec_Type = Literal["h264", "h264_mf", "libx264", "hevc", "hevc_mf", "libx265"]
-    Save_Format_Type = Literal["png", "tiff", "tif", "jpg", "jpeg", "mp4"]
 
     def __init__(
         self,
-        save_directory: str,
         camera: HarvestersCamera | OpenCVCamera | MockCamera,
-        display_video: bool = True,
-        save_format: Save_Format_Type = "png",
-        tiff_compression_level: int = 6,
-        jpeg_quality: int = 95,
-        mp4_config: dict[str, str | int] = {},
-        num_processes: int = 3,
-        num_threads: int = 4,
+        saver: VideoSaver | ImageSaver,
+        saver_process_count: int,
+        *,
+        display_frames: bool = True,
     ):
-        # Check to see if class was run from within __name__ = "__main__" or equivalent scope
-        in_unprotected_scope: bool = False
-        try:
-            p = Process(target=VideoSystem._empty_function)
-            p.start()
-            p.join()
-        except RuntimeError:  # pragma: no cover
-            in_unprotected_scope = True
+        self._camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
+        self._saver: VideoSaver | ImageSaver = saver
+        self._display_video = display_frames
 
-        if in_unprotected_scope:
-            console.error(
-                message="Instantiation method outside of '__main__' scope", error=ProcessError
-            )  # pragma: no cover
-
-        if save_format not in get_args(VideoSystem.Save_Format_Type):
-            console.error(
-                message=f"'{save_format}' is an invalid save format. Expects one of {get_args(VideoSystem.Save_Format_Type)}.",
-                error=ValueError,
-            )
-
-        if not 0 <= tiff_compression_level <= 9:
-            console.error(
-                message=f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.",
-                error=ValueError,
-            )
-
-        if not 0 <= jpeg_quality <= 100:
-            console.error(
-                message=f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.",
-                error=ValueError,
-            )
-
-        num_cores = multiprocessing.cpu_count()
-        if num_processes > num_cores:
-            console.error(
-                message=f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores.",
-                error=ProcessError,
-            )
-
-        self.save_directory: str = save_directory
-        self.camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
-        self._display_video = display_video
-        self._save_format = save_format
-        self._jpeg_quality = jpeg_quality
-        self._tiff_compression_level = tiff_compression_level
-
-        self._mp4_config = {
-            "codec": "h264",
-            "preset": "slow",
-            "profile": "main",
-            "crf": 28,
-            "quality": 23,
-            "threads": 0,
-        }
-        for key in mp4_config.keys():
-            self._mp4_config[key] = mp4_config[key]
-
-        self._num_consumer_processes = num_processes
-        self._threads_per_process = num_threads
+        self._num_consumer_processes = saver_process_count
         self._running: bool = False
 
         self._producer_process: Process | None = None
         self._consumer_processes: list[Process] = []
         self._terminator_array: SharedMemoryArray | None = None
-        self._mpManager: SyncManager | None = None
+        self._mp_manager: SyncManager | None = None
         self._image_queue: multiprocessing.Queue[Any] | None = None
         self._interactive_mode: bool | None = None
 
@@ -314,7 +242,7 @@ class VideoSystem:
         and instantiating the specialized Camera class based on the requested camera backend. All Camera classes from
         this library have to be initialized using this method.
 
-        Note:
+        Notes:
             While the method contains many arguments that allow to flexibly configure the instantiated camera, the only
             crucial ones are camera name, backend, and the numeric ID of the camera. Everything else is automatically
             queried from the camera, unless provided.
@@ -458,13 +386,245 @@ class VideoSystem:
 
         # If the input backend does not match any of the supported backends, raises an error
         else:
-            if not isinstance(camera_backend, int):
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
+                f"camera_backend has to be one of the options available from the CameraBackends enumeration."
+            )
+            raise console.error(error=ValueError, message=message)
+
+    @staticmethod
+    def create_saver(
+        output_directory: Path,
+        saver_backend: SaverBackends = SaverBackends.VIDEO,
+        image_format: ImageFormats = ImageFormats.TIFF,
+        tiff_compression: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
+        jpeg_quality: int = 95,
+        jpeg_sampling_factor: int = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        png_compression: int = 1,
+        thread_count: int = 5,
+        hardware_encoding: bool = False,
+        video_format: VideoFormats = VideoFormats.MP4,
+        video_codec: VideoCodecs = VideoCodecs.H265,
+        preset: GPUEncoderPresets | CPUEncoderPresets = CPUEncoderPresets.SLOW,
+        input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
+        output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
+        quantization_parameter: int = 15,
+        gpu: int = 0,
+    ) -> VideoSaver | ImageSaver:
+        """Creates and returns a Saver class instance that uses the specified saver backend.
+
+        This method centralizes Saver class instantiation. It contains methods for verifying the input information
+        and instantiating the specialized Saver class based on the requested saver backend. All Saver classes from
+        this library have to be initialized using this method.
+
+        Notes:
+            While the method contains many arguments that allow to flexibly configure the instantiated saver, the only
+            crucial ones are the output directory and saver backend. That said, it is advised to optimize all parameters
+            relevant for your chosen backend as needed, as it directly controls the quality, file size and encoding
+            speed of the generated file(s).
+
+        Args:
+            output_directory: The path to the output directory where the image or video files will be saved after
+                encoding.
+            saver_backend: The backend to use for the saver class. Currently, all supported backends are derived from
+                the SaverBackends enumeration. It is advised to use the Video saver backend and, if possible, to
+                enable hardware encoding, to save frames as video files. Alternatively, Image backend is also available
+                to save frames as image files.
+            image_format: Only for Image savers. The format to use for the output images. Use ImageFormats enumeration
+                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
+            tiff_compression: Only for Image savers. The integer-code that specifies the compression strategy used for
+                Tiff image files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended
+                to use code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good
+                speed-to-compression balance.
+            jpeg_quality: Only for Image savers. An integer value between 0 and 100 that controls the 'loss' of the
+                JPEG compression. A higher value means better quality, less data loss, bigger file size, and slower
+                processing time.
+            jpeg_sampling_factor: Only for Image savers. An integer-code that specifies how JPEG encoder samples image
+                color-space. Has to be one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended
+                to use code 444 to preserve the full color-space of the image for scientific applications.
+            png_compression: Only for Image savers. An integer value between 0 and 9 that specifies the compression of
+                the PNG file. Unlike JPEG, PNG files are always lossless. This value controls the trade-off between
+                the compression ratio and the processing time.
+            thread_count: Only for Image savers. The number of writer threads to be used by the saver class. Since
+                ImageSaver uses the c-backed OpenCV library, it can safely process multiple frames at the same time
+                via multithreading. This controls the number of simultaneously saved images the class will support.
+            hardware_encoding: Only for Video savers. Determines whether to use GPU (hardware) encoding or CPU
+                (software) encoding. It is almost always recommended to use the GPU encoding for considerably faster
+                encoding with almost no quality loss. GPU encoding is only supported by modern Nvidia GPUs, however.
+            video_format: Only for Video savers. The container format to use for the output video. Use VideoFormats
+                enumeration to specify the desired container format. Currently, only 'MP4', 'MKV', and 'AVI' are
+                supported.
+            video_codec: Only for Video savers. The codec (encoder) to use for generating the video file. Use
+                VideoCodecs enumeration to specify the desired codec. Currently, only 'H264' and 'H265' are supported.
+            preset: Only for Video savers. The encoding preset to use for generating the video file. Use
+                GPUEncoderPresets or CPUEncoderPresets enumerations to specify the preset. Note, you have to select the
+                correct preset enumeration based on whether hardware encoding is enabled!
+            input_pixel_format: Only for Video savers. The pixel format used by input data. This only applies when
+                encoding simultaneously acquired frames. When encoding pre-acquire images, FFMPEG will resolve color
+                formats automatically. Use InputPixelFormats enumeration to specify the desired pixel format.
+                Currently, only 'MONOCHROME' and 'BGR' and 'BGRA' options are supported. The option to choose depends
+                on the configuration of the Camera class that was used for frame acquisition.
+            output_pixel_format: Only for Video savers. The pixel format to be used by the output video. Use
+                OutputPixelFormats enumeration to specify the desired pixel format. Currently, only 'YUV420' and
+                'YUV444' options are supported.
+            quantization_parameter: Only for Video savers. The integer value to use for the 'quantization parameter'
+                of the encoder. The encoder uses 'constant quantization' to discard the same amount of information from
+                each macro-block of the frame, instead of varying the discarded information amount with the complexity
+                of macro-blocks. This allows precisely controlling output video size and distortions introduced by the
+                encoding process, as the changes are uniform across the whole video. Lower values mean better quality
+                (0 is best, 51 is worst). Note, the default assumes H265 encoder and is likely too low for H264 encoder.
+                H264 encoder should default to ~25.
+            gpu: Only for Video savers. The index of the GPU to use for encoding. Valid GPU indices can be obtained
+                from 'nvidia-smi' command. This is only used when hardware_encoding is True.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+            ValueError: If the input saver_backend is not one of the supported options.
+        """
+        # Verifies that the input arguments are of the correct type. Note, checks backend-specific arguments in
+        # backend-specific clause.
+        if not isinstance(output_directory, Path):
+            message = (
+                f"Unable to instantiate a Saver class object. Expected a Path instance for output_directory argument, "
+                f"but got {output_directory} of type {type(output_directory).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Image Saver
+        if saver_backend == SaverBackends.IMAGE:
+            # Verifies ImageSaver initialization arguments:
+            if not isinstance(image_format, ImageFormats):
                 message = (
-                    f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
-                    f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
-                    f"camera_backend has to be one of the options available from the CameraBackends enumeration."
+                    f"Unable to instantiate an ImageSaver class object. Expected an ImageFormats instance for "
+                    f"image_format argument, but got {image_format} of type {type(image_format).__name__}."
                 )
-                raise console.error(error=ValueError, message=message)
+                raise console.error(error=TypeError, message=message)
+            if not isinstance(tiff_compression, int):
+                message = (
+                    f"Unable to instantiate an ImageSaver class object. Expected an integer for tiff_compression "
+                    f"argument, but got {tiff_compression} of type {type(tiff_compression).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not 0 <= jpeg_quality <= 100:
+                message = (
+                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 100 for "
+                    f"jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not 0 <= jpeg_sampling_factor <= 4:
+                message = (
+                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 4 for "
+                    f"jpeg_sampling_factor argument, but got {jpeg_sampling_factor} of type "
+                    f"{type(jpeg_sampling_factor).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not 0 <= png_compression <= 9:
+                message = (
+                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 9 for "
+                    f"png_compression argument, but got {png_compression} of type "
+                    f"{type(png_compression).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not isinstance(thread_count, int):
+                message = (
+                    f"Unable to instantiate an ImageSaver class object. Expected an integer for thread_count "
+                    f"argument, but got {thread_count} of type {type(thread_count).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+
+            # Configures, initializes and returns an ImageSaver instance
+            return ImageSaver(
+                output_directory=output_directory,
+                image_format=image_format,
+                tiff_compression=tiff_compression,
+                jpeg_quality=jpeg_quality,
+                jpeg_sampling_factor=jpeg_sampling_factor,
+                png_compression=png_compression,
+                thread_count=thread_count,
+            )
+
+        # Video Saver
+        elif saver_backend == SaverBackends.VIDEO:
+            # Verifies VideoSaver initialization arguments:
+            if not isinstance(hardware_encoding, bool):
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected a boolean for hardware_encoding "
+                    f"argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not isinstance(video_format, VideoFormats):
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected a VideoFormats instance for "
+                    f"video_format argument, but got {video_format} of type {type(video_format).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not isinstance(video_codec, VideoCodecs):
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected a VideoCodecs instance for "
+                    f"video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+
+            # Preset source depends on hardware_encoding value
+            if hardware_encoding:
+                if not isinstance(preset, GPUEncoderPresets):
+                    message = (
+                        f"Unable to instantiate a GPU VideoSaver class object. Expected a GPUEncoderPresets instance "
+                        f"for preset argument, but got {preset} of type {type(preset).__name__}."
+                    )
+                    raise console.error(error=TypeError, message=message)
+            else:
+                if not isinstance(preset, CPUEncoderPresets):
+                    message = (
+                        f"Unable to instantiate a CPU VideoSaver class object. Expected a CPUEncoderPresets instance "
+                        f"for preset argument, but got {preset} of type {type(preset).__name__}."
+                    )
+                    raise console.error(error=TypeError, message=message)
+
+            if not isinstance(input_pixel_format, InputPixelFormats):
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected an InputPixelFormats instance for "
+                    f"input_pixel_format argument, but got {input_pixel_format} of type "
+                    f"{type(input_pixel_format).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not isinstance(output_pixel_format, OutputPixelFormats):
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected an OutputPixelFormats instance for "
+                    f"output_pixel_format argument, but got {output_pixel_format} of type "
+                    f"{type(output_pixel_format).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+            if not -1 < quantization_parameter <= 51:
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. Expected an integer between 0 and 51 for "
+                    f"quantization_parameter argument, but got {quantization_parameter} of type "
+                    f"{type(quantization_parameter).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+
+            # Configures, initializes and returns a VideoSaver instance
+            return VideoSaver(
+                output_directory=output_directory,
+                hardware_encoding=hardware_encoding,
+                video_format=video_format,
+                video_codec=video_codec,
+                preset=preset,
+                input_pixel_format=input_pixel_format,
+                output_pixel_format=output_pixel_format,
+                quantization_parameter=quantization_parameter,
+                gpu=gpu,
+            )
+
+        # If the input backend does not match any of the supported backends, raises an error
+        else:
+            message = (
+                f"Unable to instantiate a Saver class object due to encountering an unsupported "
+                f"saver_backend argument {saver_backend} of type {type(saver_backend).__name__}. "
+                f"saver_backend has to be one of the options available from the SaverBackends enumeration."
+            )
+            raise console.error(error=ValueError, message=message)
 
     @staticmethod
     def _empty_function() -> None:
@@ -478,13 +638,6 @@ class VideoSystem:
         self,
         listen_for_keypress: bool = False,
         terminator_array_name: str = "terminator_array",
-        display_video: bool | None = None,
-        save_format: Save_Format_Type | None = None,
-        tiff_compression_level: int | None = None,
-        jpeg_quality: int | None = None,
-        mp4_config: dict[str, str | int] = {},
-        num_processes: int | None = None,
-        num_threads: int | None = None,
     ) -> None:
         """Starts the video system.
 
@@ -493,17 +646,6 @@ class VideoSystem:
                 and stop image saving when the 'w' key is pressed.
             terminator_array_name: The name of the shared_memory_array to be created. When running multiple
                 video_systems concurrently, each terminator_array should have a unique name.
-            save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
-                is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive.
-                0 gives fastest saving but most memory used. 9 gives slowest saving but least amount of memory used. This
-                compression value is onlyrelevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives
-                highest level of compression but the most loss of image detail. 100 gives the lowest level of compression
-                but no loss of image detail. Thiscompression value is only relevant when save_format is specified as 'jpg.'
-            mp4_config: A dictionary of ffmpeg parameters in the form {parameter_name: parameter_value, ...}
-            num_processes: number of processes to run the image consumer loop on. Applies only to image saving.
-            num_threads: The number of image-saving threads to run per process. Applies only to image saving.
 
         Raises:
             ProcessError: If the function is created not within the '__main__' scope.
@@ -527,52 +669,6 @@ class VideoSystem:
                 message="Instantiation method outside of '__main__' scope", error=ProcessError
             )  # pragma: no cover
 
-        if display_video is not None:
-            self._display_video = display_video
-
-        if save_format is not None:
-            if save_format in get_args(VideoSystem.Save_Format_Type):
-                self._save_format = save_format
-            else:
-                console.error(
-                    message=f"'{save_format}' is an invalid save format. Expects one of {get_args(VideoSystem.Save_Format_Type)}.",
-                    error=ValueError,
-                )
-
-        if tiff_compression_level is not None:
-            if 0 <= tiff_compression_level <= 9:
-                self._tiff_compression_level = tiff_compression_level
-            else:
-                console.error(
-                    message=f"{tiff_compression_level} is an invalid tiff_compression_level. tiff_compression_level should be in [0,9] inclusive.",
-                    error=ValueError,
-                )
-
-        if jpeg_quality is not None:
-            if 0 <= jpeg_quality <= 100:
-                self._jpeg_quality = jpeg_quality
-            else:
-                console.error(
-                    message=f"{jpeg_quality} is an invalid jpeg_quality. jpeg_quality should be in [0,100] inclusive.",
-                    error=ValueError,
-                )
-
-        for key in mp4_config.keys():
-            self._mp4_config[key] = mp4_config[key]
-
-        if num_processes is not None:
-            num_cores = multiprocessing.cpu_count()
-            if num_processes > num_cores:
-                console.error(
-                    message=f"{num_processes} processes were specified but the computer only has {num_cores} cpu cores.",
-                    error=ProcessError,
-                )
-
-            self._num_consumer_processes = num_processes
-
-        if num_threads is not None:
-            self._threads_per_process = num_threads
-
         self._interactive_mode = listen_for_keypress
 
         self.delete_images()
@@ -590,7 +686,7 @@ class VideoSystem:
 
         self._producer_process = Process(
             target=VideoSystem._produce_images_loop,
-            args=(self.camera, self._image_queue, self._terminator_array, self._display_video),
+            args=(self._camera, self._image_queue, self._terminator_array, self._display_video),
             daemon=True,
         )
 
@@ -619,7 +715,7 @@ class VideoSystem:
                         self._image_queue,
                         self._terminator_array,
                         self.save_directory,
-                        self.camera._specs,
+                        self._camera._specs,
                         self._mp4_config,
                     ),
                     daemon=True,
@@ -979,70 +1075,70 @@ class VideoSystem:
         ffmpeg_process.wait()
         terminator_array.disconnect()
 
-    # def save_imgs_as_vid(self) -> None:
-    #     """Converts a set of id labeled images into an mp4 video file.
-    #
-    #     This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
-    #     specific object instance.
-    #
-    #     Raises:
-    #         Exception: If there are no images of the specified type in the specified directory.
-    #     """
-    #     VideoSystem.imgs_to_vid(
-    #         fps=int(self.camera.fps), img_directory=self.save_directory, img_filetype=self._save_format
-    #     )
-    #
-    # @staticmethod
-    # def imgs_to_vid(
-    #     fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
-    # ) -> None:
-    #     """Converts a set of id labeled images into an mp4 video file.
-    #
-    #     Args:
-    #         fps: The framerate of the video to be created.
-    #         img_directory: The directory where the images are saved.
-    #         img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
-    #         vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
-    #
-    #     Raises:
-    #         Exception: If there are no images of the specified type in the specified directory.
-    #     """
-    #
-    #     if vid_directory is None:
-    #         vid_directory = img_directory
-    #
-    #     vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
-    #
-    #     sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
-    #
-    #     if sample_img is None:
-    #         console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
-    #
-    #     frame_height, frame_width, _ = sample_img.shape
-    #
-    #     ffmpeg_process = (
-    #         ffmpeg.input(
-    #             "pipe:",
-    #             framerate="{}".format(fps),
-    #             format="rawvideo",
-    #             pix_fmt="bgr24",
-    #             s="{}x{}".format(int(frame_width), int(frame_height)),
-    #         )
-    #         .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
-    #         .overwrite_output()
-    #         .run_async(pipe_stdin=True)
-    #     )
-    #
-    #     search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
-    #     files = glob.glob(search_pattern)
-    #     num_files = len(files)
-    #     for id in range(num_files):
-    #         file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
-    #         dat = cv2.imread(file)
-    #         ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
-    #
-    #     ffmpeg_process.stdin.close()
-    #     ffmpeg_process.wait()
+    def save_imgs_as_vid(self) -> None:
+        """Converts a set of id labeled images into an mp4 video file.
+
+        This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
+        specific object instance.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        """
+        VideoSystem.imgs_to_vid(
+            fps=int(self._camera.fps), img_directory=self.save_directory, img_filetype=self._save_format
+        )
+
+    @staticmethod
+    def imgs_to_vid(
+        fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
+    ) -> None:
+        """Converts a set of id labeled images into an mp4 video file.
+
+        Args:
+            fps: The framerate of the video to be created.
+            img_directory: The directory where the images are saved.
+            img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
+            vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
+
+        Raises:
+            Exception: If there are no images of the specified type in the specified directory.
+        """
+
+        if vid_directory is None:
+            vid_directory = img_directory
+
+        vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
+
+        sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
+
+        if sample_img is None:
+            console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
+
+        frame_height, frame_width, _ = sample_img.shape
+
+        ffmpeg_process = (
+            ffmpeg.input(
+                "pipe:",
+                framerate="{}".format(fps),
+                format="rawvideo",
+                pix_fmt="bgr24",
+                s="{}x{}".format(int(frame_width), int(frame_height)),
+            )
+            .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
+            .overwrite_output()
+            .run_async(pipe_stdin=True)
+        )
+
+        search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
+        files = glob.glob(search_pattern)
+        num_files = len(files)
+        for id in range(num_files):
+            file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
+            dat = cv2.imread(file)
+            ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
+
+        ffmpeg_process.stdin.close()
+        ffmpeg_process.wait()
 
     def _on_press_q(self) -> None:
         self._on_press("q")

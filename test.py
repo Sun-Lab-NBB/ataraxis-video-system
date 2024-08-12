@@ -150,7 +150,7 @@ if test_type == 1:
             once = False
             timer.reset()
 
-        image_saver.save_image(image_id=f"{image_id:08d}", data=frame)
+        image_saver.save_frame(frame_id=f"{image_id:08d}", frame=frame)
 
     camera.disconnect()
     video_saver.create_video_from_image_folder(
@@ -168,7 +168,7 @@ if test_type == 2:
     once = True
     while timer.elapsed < 10:
         frame = camera.grab_frame()
-        video_saver.encode_live_frame(frame=frame)
+        video_saver.save_frame(frame=frame)
 
         # Mitigates the openCV ramp time
         if once:

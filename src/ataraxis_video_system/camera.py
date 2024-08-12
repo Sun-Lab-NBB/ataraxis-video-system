@@ -620,7 +620,7 @@ class HarvestersCamera:
                             int(content.num_components_per_pixel),  # Sets of R, G, B, and Alpha
                         )
 
-                        # Swaps every R and B value (RGB -> BGR) ot produce BGR / BGRA images. This ensures consistency
+                        # Swaps every R and B value (RGB → BGR) ot produce BGR / BGRA images. This ensures consistency
                         # with our OpenCVCamera API. Uses copy, which is VERY important. Once the buffer is released,
                         # the original 'content' is lost, so we need to force numpy to copy the data instead of using
                         # the default referencing behavior.

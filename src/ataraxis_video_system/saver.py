@@ -34,7 +34,7 @@ class SaverBackends(Enum):
     available if it is desirable to save frames as images.
     """
 
-    VIDEO_GPU: str = "video"
+    VIDEO: str = "video"
     """
     This backend is used to instantiate a Saver class that outputs a video-file. All video savers use FFMPEG to write
     video frames or pre-acquired images as a video-file and require that FFMPEG is installed, and available on the 
@@ -435,32 +435,32 @@ class ImageSaver:
         else:
             cv2.imwrite(filename=str(output_path), img=data, params=self._png_parameters)
 
-    def save_image(self, image_id: str, data: NDArray[Any]) -> None:
-        """Queues an image to be saved by one of the writer threads.
+    def save_frame(self, frame_id: str, frame: NDArray[Any]) -> None:
+        """Queues the input frame to be saved by one of the writer threads.
 
-        This method functions as the class API entry-point. For a well-configured class to save an image, only image
-        data and ID passed to this method are necessary. The class automatically handles everything else.
+        This method functions as the class API entry-point. For a well-configured class to save a frame as an image,
+        only frame data and ID passed to this method are necessary. The class automatically handles everything else.
 
         Args:
-            image_id: The zero-padded ID of the image to save, e.g.: '0001'. The IDs have to be unique, as images are
-                saved to the same directory and are only distinguished by the ID. For other library methods to work as
+            frame_id: The zero-padded ID of the frame to save, e.g.: '0001'. The IDs have to be unique, as frames are
+                saved to the same directory and are only distinguished by the ID. For other library classes to work as
                 expected, the ID must be a digit-convertible string.
-            data: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
+            frame: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
 
         Raises:
-            ValueError: If input image_id does not conform to the expected format.
+            ValueError: If input frame_id does not conform to the expected format.
         """
 
         # Ensures that input IDs conform to the expected format.
-        if not image_id.isdigit():
+        if not frame_id.isdigit():
             message = (
-                f"Unable to save the image with the ID {image_id} as the ID is not valid. The ID must be a "
+                f"Unable to save the image with the ID {frame_id} as the ID is not valid. The ID must be a "
                 f"digit-convertible string, such as 0001."
             )
             console.error(error=ValueError, message=message)
 
         # Queues the data to be saved locally
-        self._queue.put((image_id, data))
+        self._queue.put((frame_id, frame))
 
     def shutdown(self):
         """Stops the worker thread and waits for all pending tasks to complete.
@@ -812,7 +812,7 @@ class VideoSaver:
         video_id: str,
         video_frames_per_second: int | float,
     ) -> None:
-        """Creates a 'live' FFMPEG encoder process, making it possible to use encode_live_frame() class method.
+        """Creates a 'live' FFMPEG encoder process, making it possible to use save_frame() class method.
 
         Until the 'live' encoder is created, other class methods related to live encoding will not function. Every
         saver class can have a single 'live' encoder at a time. This number does not include any encoders initialized
@@ -857,12 +857,17 @@ class VideoSaver:
             )
             console.error(message=message, error=RuntimeError)
 
-    def encode_live_frame(self, frame: np.ndarray) -> None:
+    def save_frame(self, frame: np.ndarray) -> None:
         """Sends the input frame to be encoded by the 'live' FFMPEG encoder process.
 
-        This method is used to submit frames to be encoded to a precreated FFMPEG process. It expects that the
+        This method is used to submit frames to be saved to a precreated FFMPEG process. It expects that the
         process has been created by create_live_video_encoder() method. The frames must have the dimensions and color
         format specified during saver class instantiation and create_live_video_encoder() method runtime.
+
+        Notes:
+            This method should only be used to save frames that are continuously grabbed from a live camera. When
+            encoding a set of pre-acquired images, it is more efficient to use the create_video_from_image_folder()
+            method.
 
         Args:
             frame: The frame to be encoded stored in a numpy array.
@@ -876,7 +881,7 @@ class VideoSaver:
         if self._ffmpeg_process is None:
             message = (
                 f"Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
-                f"create_live_video_encoder() method to create a 'live' encoder before calling this method."
+                f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
             )
             console.error(message=message, error=RuntimeError)
 
@@ -884,13 +889,14 @@ class VideoSaver:
         try:
             self._ffmpeg_process.stdin.write(frame.tobytes())
         except Exception as e:
-            message = f"FFMPEG process failed to process the input 'live' frame with error: {e}"
+            message = f"FFMPEG process failed to process the input frame with error: {e}"
             console.error(message=message, error=RuntimeError)
 
     def terminate_live_encoder(self, timeout: Optional[float] = None) -> None:
         """Terminates the 'live' FFMPEG encoder process if it exists.
 
-        This method has to be called to properly release FFMPEG resources once the process is no longer necessary.
+        This method has to be called to properly release FFMPEG resources once the process is no longer necessary. Only
+        call this method if you have created an encoder through create_live_video_encoder() method.
 
         Args:
             timeout: The number of seconds to wait for the process to terminate or None to disable timeout. The timeout
@@ -905,7 +911,7 @@ class VideoSaver:
         # Specified termination timeout. If the process does not terminate 'gracefully,' it is terminated
         # forcefully to prevent deadlocks.
         try:
-            stdout, stderr = self._ffmpeg_process.communicate(timeout=timeout)
+            _ = self._ffmpeg_process.communicate(timeout=timeout)
         except TimeoutExpired:
             self._ffmpeg_process.kill()
 
