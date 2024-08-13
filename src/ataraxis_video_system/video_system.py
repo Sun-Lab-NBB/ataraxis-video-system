@@ -10,7 +10,7 @@ from types import NoneType
 from threading import Thread
 import multiprocessing
 from multiprocessing import (
-    Queue as UntypedMPQueue,
+    Queue as MPQueue,
     Process,
     ProcessError,
 )
@@ -23,6 +23,7 @@ import keyboard
 import tifffile as tff
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
+from ataraxis_time.time_helpers import convert_time
 from ataraxis_base_utilities import console
 from ataraxis_data_structures import SharedMemoryArray
 
@@ -47,39 +48,14 @@ Precision_Type = Literal["ns", "us", "ms", "s"]
 unit_conversion: dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
 precision: Precision_Type = "ms"
 
-T = TypeVar("T")
-
-
-class MPQueue(Generic[T]):
-    """A wrapper for a multiprocessing queue object that makes Queue typed. This is used to appease mypy type checker"""
-
-    def __init__(self) -> None:
-        self._queue = UntypedMPQueue()  # type: ignore
-
-    def put(self, item: T) -> None:
-        self._queue.put(item)
-
-    def get(self) -> T:
-        return cast(T, self._queue.get())
-
-    def get_nowait(self) -> T:
-        return cast(T, self._queue.get_nowait())
-
-    def empty(self) -> bool:
-        return self._queue.empty()
-
-    def qsize(self) -> int:
-        return self._queue.qsize()  # pragma: no cover
-
-    def cancel_join_thread(self) -> None:
-        return self._queue.cancel_join_thread()
-
 
 class VideoSystem:
     """Provides a system for efficiently taking, processing, and saving images in real time.
 
     Args:
         display_frames: whether or not to display a video of the current frames being recorded.
+        listen_for_keypress: If true, the video system will stop the image collection when the 'q' key is pressed
+                and stop image saving when the 'w' key is pressed.
 
     Attributes:
         _camera: camera for image collection.
@@ -90,7 +66,7 @@ class VideoSystem:
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
         _image_queue: multiprocessing queue to hold images before saving.
-        _num_consumer_processes: number of processes to run the image consumer loop on. Applies only to image saving.
+        _image_saver_count: number of processes to run the image consumer loop on. Applies only to image saving.
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
@@ -107,23 +83,71 @@ class VideoSystem:
         self,
         camera: HarvestersCamera | OpenCVCamera | MockCamera,
         saver: VideoSaver | ImageSaver,
-        saver_process_count: int,
+        image_saver_process_count: int,
         *,
         display_frames: bool = True,
+        listen_for_keypress: bool = False,
     ):
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
         self._saver: VideoSaver | ImageSaver = saver
         self._display_video = display_frames
-
-        self._num_consumer_processes = saver_process_count
+        self._interactive_mode: bool = listen_for_keypress
         self._running: bool = False
 
-        self._producer_process: Process | None = None
-        self._consumer_processes: list[Process] = []
-        self._terminator_array: SharedMemoryArray | None = None
-        self._mp_manager: SyncManager | None = None
-        self._image_queue: multiprocessing.Queue[Any] | None = None
-        self._interactive_mode: bool | None = None
+        self._producer_process: Process = Process(
+            target=self._produce_images_loop,
+            args=(self._camera, self._image_queue, self._terminator_array, self._display_video),
+            daemon=True,
+        )
+        if isinstance(saver, ImageSaver):
+            processes = [
+                Process(
+                    target=VideoSystem._save_images_loop,
+                    args=(
+                        self._image_queue,
+                        self._terminator_array,
+                        self.save_directory,
+                        self._save_format,
+                        self._tiff_compression_level,
+                        self._jpeg_quality,
+                        self._threads_per_process,
+                    ),
+                    daemon=True,
+                )
+                for _ in range(image_saver_process_count)
+            ]
+            self._consumer_processes: tuple[Process, ...] = tuple(processes)
+
+        else:
+            self._consumer_processes = (
+                Process(
+                    target=VideoSystem._save_video_loop,
+                    args=(
+                        self._image_queue,
+                        self._terminator_array,
+                        self.save_directory,
+                        self._camera._specs,
+                        self._mp4_config,
+                    ),
+                    daemon=True,
+                ),
+            )
+
+        # First entry represents whether input stream is active, second entry represents whether output stream is active
+        # TODO And the third entry?
+        prototype = np.array([1, 1, 1], dtype=np.int32)
+
+        self._terminator_array: SharedMemoryArray = SharedMemoryArray.create_array(
+            name=terminator_array_name,
+            prototype=prototype,
+        )
+
+        self._mp_manager: SyncManager = multiprocessing.Manager()
+        self._image_queue: MPQueue[Any] = self._mp_manager.Queue()  # type: ignore
+
+    def __del__(self):
+        """Ensures that the system is stopped upon garbage collection."""
+        self.stop()
 
     @staticmethod
     def get_opencv_ids() -> tuple[str, ...]:
@@ -627,6 +651,136 @@ class VideoSystem:
             raise console.error(error=ValueError, message=message)
 
     @staticmethod
+    def _image_display_loop(display_queue: Queue, camera_name: str) -> None:
+        """Continuously fetches images from display_queue and displays them via OpenCV imshow() method.
+
+        This method is used as a thread target as part of the _produce_images_loop() runtime. It is used to display
+        frames as they are grabbed from the camera and passed to the multiprocessing queue. This allows visually
+        inspecting the frames as they are processed, which is often desired during scientific experiments.
+
+        Notes:
+            Since the method uses OpenCV under-the-hood, it repeatedly releases GIL as it runs. This makes it
+            beneficial to have this functionality as a sub-thread, instead of realizing it at the same level as the
+            rest of the image production loop code.
+
+            This thread runs until it is terminated through the display window GUI or by passing a non-NumPy-array
+            object (e.g.: integer -1) through the display_queue.
+
+        Args:
+            display_queue: A multithreading Queue object that is used to buffer grabbed frames to de-couple display from
+                acquisition. It is expected that the queue yields frames as NumPy ndarray objects. If the queue yields a
+                non-array object, the thread terminates.
+            camera_name: The name of the camera which produces displayed images. This is used to generate a
+                descriptive window name for the display GUI.
+        """
+
+        # Initializes the display window using 'normal' mode to support user-controlled resizing.
+        window_name = f"{camera_name} Camera Feed"
+        cv2.namedWindow(winname=window_name, flags=cv2.WINDOW_NORMAL)
+
+        # Runs until manually terminated by the user through GUI or programmatically through the thread kill argument.
+        while True:
+            frame = display_queue.get()
+
+            # Programmatic termination is done by passing a non-numpy-array input through the queue
+            if not isinstance(frame, np.ndarray):
+                break
+
+            # Displays the image using the window created above
+            cv2.imshow(winname=window_name, mat=frame)
+
+            # Manual termination is done through window GUI
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+        # Cleans up after runtime by destroying the window. Specifically targets the window created by this thread to
+        # avoid interfering with any other windows.
+        cv2.destroyWindow(window_name)
+
+    @staticmethod
+    def _produce_images_loop(
+        camera: OpenCVCamera | HarvestersCamera | MockCamera,
+        image_queue: MPQueue[Any],
+        terminator_array: SharedMemoryArray,
+        display_video: bool = False,
+        fps: float | None = None,
+    ) -> None:
+        """Iteratively grabs images from the camera and adds to the img_queue.
+
+        This function loops while the third element in terminator_array (index 2) is nonzero. It grabs frames as long as
+        the first element in terminator_array (index 0) is nonzero. This function can be run at a specific fps or as
+        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
+        own.
+
+        Args:
+            camera: a Camera object to take collect images.
+            image_queue: A multiprocessing queue to hold images before saving.
+            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 0 is zero
+                and completes when index 2 is zero.
+            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
+        """
+
+        # If the method is configured to display acquired frames, sets up the display thread and a queue that buffers
+        # and pipes the frames to be displayed to the worker thread.
+        display_queue = Queue()
+        if display_video:
+            display_thread = Thread(target=VideoSystem._image_display_loop, args=(display_queue, camera.name))
+            display_thread.start()
+
+        # If the method is configured to manually control the acquisition frame rate, initializes the high precision
+        # timer to control the acquisition and translates the desired frame per second parameter into the precision
+        # units of the timer.
+        acquisition_timer: PrecisionTimer = PrecisionTimer("us")  # Uses microsecond precision
+        if fps is not None:
+            # Translates the fps to use the timer-units of the timer. In this case, converts from frames per second to
+            # frames per microsecond.
+            # noinspection PyTypeChecker
+            frame_time = convert_time(time=fps, from_units="s", to_units="us", convert_output=True)
+        else:
+            frame_time = None
+
+        # Connects to the camera and to the terminator array.
+        camera.connect()
+        terminator_array.connect()
+
+        frame_number = 1  # Tracks the number of acquired frames. This is used to generate IDs for acquired frames.
+
+        # The loop runs until the VideoSystem is terminated by setting the third element (index 2) of the array to 0
+        while terminator_array.read_data(index=2, convert_output=True):
+
+            # If frame acquisition is enabled, acquires and processes the frame. This uses a separate flow-control
+            # element (index 0) to make it possible to pause and resume frame acquisition without terminating the
+            # VideoSystem as a whole. This also handles the 'manual' fps control, which is helpful for some cameras
+            # that do not have a built-in acquisition control functionality.
+            if terminator_array.read_data(index=0, convert_output=True) and (
+                frame_time is None or acquisition_timer.elapsed > frame_time
+            ):
+                # Grabs the frames as a numpy ndarray
+                frame = camera.grab_frame()
+
+                # If manual frame rate control is enabled, resets the timer after acquiring each frame. This results in
+                # the time spent on further processing below to be 'absorbed' into the between-frame wait time.
+                if fps:
+                    acquisition_timer.reset()
+
+                # Bundles frame data with ID and passes it to the multiprocessing Queue that delivers the data
+                # to the consumer process that saves it to non-volatile memory. This is likely the 'slowest' of all
+                # processing steps done by this loop.
+                image_queue.put((frame, f"{frame_number:08d}"))
+
+                # Increments the frame number to continuously update IDs for newly acquired frames
+                frame_number += 1
+
+                # If the process is configured to display acquired frames, queues each frame to be displayed
+                if display_video:
+                    display_queue.put(frame)
+
+        # Once the loop above is escaped by setting the terminator array index 2 to 0, disconnects from the camera and
+        # the terminator array as part of Process termination procedure.
+        camera.disconnect()
+        terminator_array.disconnect()
+
+    @staticmethod
     def _empty_function() -> None:
         """A placeholder function used to verify the class is only instantiated inside the main scope of each runtime.
 
@@ -636,22 +790,16 @@ class VideoSystem:
 
     def start(
         self,
-        listen_for_keypress: bool = False,
         terminator_array_name: str = "terminator_array",
     ) -> None:
         """Starts the video system.
 
         Args:
-            listen_for_keypress: If true, the video system will stop the image collection when the 'q' key is pressed
-                and stop image saving when the 'w' key is pressed.
             terminator_array_name: The name of the shared_memory_array to be created. When running multiple
                 video_systems concurrently, each terminator_array should have a unique name.
 
         Raises:
             ProcessError: If the function is created not within the '__main__' scope.
-            ValueError: If the save format is specified to an invalid format.
-            ValueError: If a specified tiff_compression_level is not within [0, 9] inclusive.
-            ValueError: If a specified jpeg_quality is not within [0, 100] inclusive.
             ProcessError: If the computer does not have enough cpu cores.
         """
 
@@ -668,59 +816,6 @@ class VideoSystem:
             console.error(
                 message="Instantiation method outside of '__main__' scope", error=ProcessError
             )  # pragma: no cover
-
-        self._interactive_mode = listen_for_keypress
-
-        self.delete_images()
-
-        self._mpManager = multiprocessing.Manager()
-        self._image_queue = self._mpManager.Queue()  # type: ignore
-
-        # First entry represents whether input stream is active, second entry represents whether output stream is active
-        prototype = np.array([1, 1, 1], dtype=np.int32)
-
-        self._terminator_array = SharedMemoryArray.create_array(
-            name=terminator_array_name,
-            prototype=prototype,
-        )
-
-        self._producer_process = Process(
-            target=VideoSystem._produce_images_loop,
-            args=(self._camera, self._image_queue, self._terminator_array, self._display_video),
-            daemon=True,
-        )
-
-        if self._save_format in {"png", "tiff", "tif", "jpg", "jpeg"}:
-            for _ in range(self._num_consumer_processes):
-                self._consumer_processes.append(
-                    Process(
-                        target=VideoSystem._save_images_loop,
-                        args=(
-                            self._image_queue,
-                            self._terminator_array,
-                            self.save_directory,
-                            self._save_format,
-                            self._tiff_compression_level,
-                            self._jpeg_quality,
-                            self._threads_per_process,
-                        ),
-                        daemon=True,
-                    )
-                )
-        else:  # self._save_format == "mp4"
-            self._consumer_processes.append(
-                Process(
-                    target=VideoSystem._save_video_loop,
-                    args=(
-                        self._image_queue,
-                        self._terminator_array,
-                        self.save_directory,
-                        self._camera._specs,
-                        self._mp4_config,
-                    ),
-                    daemon=True,
-                )
-            )
 
         # Start save processes first to minimize queue buildup
         for process in self._consumer_processes:
@@ -766,8 +861,8 @@ class VideoSystem:
                 console.error(message, error=TypeError)
                 raise TypeError(message)  # pragma:no cover
 
-            if self._mpManager is not None:
-                self._mpManager.shutdown()
+            if self._mp_manager is not None:
+                self._mp_manager.shutdown()
             else:  # This error should never occur
                 console.error(
                     message="Failure to start the stop image production process because _mpManager is not initialized.",
@@ -799,79 +894,6 @@ class VideoSystem:
                 self._terminator_array._buffer.unlink()  # kill terminator array
 
             self._running = False
-
-    # def __del__(self):
-    #     """Ensures that the system is stopped upon garbage collection. """
-    #     self.stop()
-
-    @staticmethod
-    def _delete_files_in_directory(path: str) -> None:
-        """Generic method to delete all files in a specific folder.
-
-        Args:
-            path: Location of the folder.
-        Raises:
-            FileNotFoundError when the path does not exist.
-        """
-        with os.scandir(path) as entries:
-            for entry in entries:
-                if entry.is_file():
-                    os.unlink(entry.path)
-
-    def delete_images(self) -> None:
-        """Clears the save directory of all images.
-
-        Raises:
-            FileNotFoundError when self.save_directory does not exist.
-        """
-        VideoSystem._delete_files_in_directory(self.save_directory)
-
-    @staticmethod
-    def _produce_images_loop(
-        camera: OpenCVCamera | HarvestersCamera | MockCamera,
-        img_queue: MPQueue[Any],
-        terminator_array: SharedMemoryArray,
-        display_video: bool = False,
-        fps: float | None = None,
-    ) -> None:
-        """Iteratively grabs images from the camera and adds to the img_queue.
-
-        This function loops while the third element in terminator_array (index 2) is nonzero. It grabs frames as long as
-        the first element in terminator_array (index 0) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
-        own.
-
-        Args:
-            camera: a Camera object to take collect images.
-            img_queue: A multiprocessing queue to hold images before saving.
-            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 0 is zero
-                and completes when index 2 is zero.
-            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
-        """
-        # img_queue.cancel_join_thread()
-        if display_video:
-            window_name = "Camera Feed"
-            cv2.namedWindow("Camera Feed", cv2.WINDOW_AUTOSIZE)
-        camera.connect()
-        terminator_array.connect()
-        run_timer: PrecisionTimer = PrecisionTimer(precision)
-        n_images_produced = 0
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=0, convert_output=True):
-                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    frame = camera.grab_frame()
-                    img_queue.put((frame, n_images_produced))
-                    if display_video:
-                        cv2.imshow(window_name, frame)
-                        cv2.waitKey(1)
-                    n_images_produced += 1
-                    if fps:
-                        run_timer.reset()
-
-        camera.disconnect()
-        if display_video:
-            cv2.destroyWindow(window_name)
-        terminator_array.disconnect()
 
     @staticmethod
     def imwrite(filename: str, data: NDArray[Any], tiff_compression_level: int = 6, jpeg_quality: int = 95) -> None:
