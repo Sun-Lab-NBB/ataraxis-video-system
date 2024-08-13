@@ -9,6 +9,7 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_saver()' method from the VideoSystem class.
 """
 
+from operator import truediv
 from pathlib import Path
 import cv2
 from enum import Enum
@@ -655,6 +656,14 @@ class VideoSaver:
         """Ensures live encoder is terminated when the VideoEncoder object is deleted."""
         if self._ffmpeg_process is not None:
             self.terminate_live_encoder(timeout=600)
+
+    @property
+    def is_live(self) -> bool:
+        """Returns True if the class is running an active 'live' encoder and False otherwise."""
+        if self._ffmpeg_process is None:
+            return False
+        else:
+            return True
 
     @staticmethod
     def _report_encoding_progress(process: Popen[bytes], video_id: str) -> None:

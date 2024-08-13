@@ -1,11 +1,15 @@
-"""This module contains the VideoSystem class and the helper Camera class...
+"""This module contains the main VideoSystem class that contains methods for setting up, running, and tearing down
+interactions between Camera and Saver classes.
 
-Brief description the module's purpose and the main VideoSystem class.
+While Camera and Saver classes provide convenient interface for cameras and saver backends, VideoSystem connects
+cameras to savers and manages the flow of frames between them. Each VideoSystem is a self-contained entity that
+provides a simple API for recording data from a wide range of cameras as images or videos. The class is written to
+maximize runtime performance.
+
+All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
-
-import os
-from queue import Empty, Queue
-from typing import Any, Generic, Literal, TypeVar, cast, Optional
+from queue import Queue
+from typing import Any, Optional
 from types import NoneType
 from threading import Thread
 import multiprocessing
@@ -18,10 +22,7 @@ from multiprocessing.managers import SyncManager
 
 import cv2
 import numpy as np
-import ffmpeg  # type: ignore
 import keyboard
-import tifffile as tff
-from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
 from ataraxis_time.time_helpers import convert_time
 from ataraxis_base_utilities import console
@@ -43,11 +44,6 @@ from .saver import (
 from pathlib import Path
 from harvesters.core import Harvester
 
-# Used in many functions to convert between units
-Precision_Type = Literal["ns", "us", "ms", "s"]
-unit_conversion: dict[Precision_Type, int] = {"ns": 10**9, "us": 10**6, "ms": 10**3, "s": 1}
-precision: Precision_Type = "ms"
-
 
 class VideoSystem:
     """Provides a system for efficiently taking, processing, and saving images in real time.
@@ -59,14 +55,12 @@ class VideoSystem:
 
     Attributes:
         _camera: camera for image collection.
-        _display_video: whether or not to display a video of the current frames being recorded.
         _running: whether or not the video system is running.
         _producer_process: multiprocessing process to control the image collection.
         _consumer_processes: list multiprocessing processes to control image saving.
         _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
             termination.
         _image_queue: multiprocessing queue to hold images before saving.
-        _image_saver_count: number of processes to run the image consumer loop on. Applies only to image saving.
 
     Raises:
         ProcessError: If the function is created not within the '__main__' scope
@@ -78,72 +72,101 @@ class VideoSystem:
 
     img_name = "img"
     vid_name = "video"
+    _timer_precision: str = "us"
 
     def __init__(
         self,
         camera: HarvestersCamera | OpenCVCamera | MockCamera,
         saver: VideoSaver | ImageSaver,
-        image_saver_process_count: int,
+        system_name: str,
+        image_saver_process_count: int = 1,
+        fps_override: Optional[int | float] = None,
         *,
         display_frames: bool = True,
         listen_for_keypress: bool = False,
     ):
+        # Saves input arguments to class attributes
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
         self._saver: VideoSaver | ImageSaver = saver
-        self._display_video = display_frames
         self._interactive_mode: bool = listen_for_keypress
-        self._running: bool = False
+        self._name: str = system_name
+        self._running: bool = False  # Tracks whether the start() method has been called for the system
 
+        # Sets up the multiprocessing Queue, which is used to buffer and pipe images from the producer (camera) to
+        # one or more consumers (savers). Uses Manager() instantiation as it supports qsize() on all OS versions.
+        self._mp_manager: SyncManager = multiprocessing.Manager()
+        self._image_queue: MPQueue[Any] = self._mp_manager.Queue()  # type: ignore
+
+        # Instantiates an array shared between all processes. The class uses this array to control
+        # child processes from the main process. Index 0 is used to control frame acquisition (producer), index 1 is
+        # used to control frame saving (consumer), and index 2 is used to trigger global class shutdown.
+        self._terminator_array: SharedMemoryArray = SharedMemoryArray.create_array(
+            name=f"{system_name}_terminator_array",  # Uses class name
+            prototype=np.array([1, 1, 1], dtype=np.int32),
+        )  # Instantiation automatically connects the main process to the array.
+
+        # When the saver class is configured to use the Video backend, it requires additional information to properly
+        # encode grabbed frames as a video file. Some of this formation needs to be obtained from a connected
+        # camera:
+        camera.connect()  # Connects to the camera. This is necessary to retrieve the parameters below
+
+        # Retrieves the necessary settings from the camera
+        frame_width = camera.width
+        frame_height = camera.height
+
+        # For framerate, only retrieves and uses camera framerate if fps_override is not provided. Otherwise, uses the
+        # override value. This ensures that the video framerate always matches camera acquisition rate.
+        if fps_override is None:
+            frame_rate = camera.fps
+        else:
+            frame_rate = fps_override
+
+        # Disconnects from the camera, since the producer Process has its own connection loop.
+        camera.disconnect()
+
+        # Sets up the image producer Process. This process continuously executes a loop that conditionally grabs frames
+        # from camera and queues them up to be saved by the consumers and displayed by the display module.
         self._producer_process: Process = Process(
-            target=self._produce_images_loop,
-            args=(self._camera, self._image_queue, self._terminator_array, self._display_video),
+            target=self._frame_production_loop,
+            args=(self._camera, self._image_queue, self._terminator_array, display_frames, fps_override),
             daemon=True,
         )
+
+        # Sets up image consumer Processes, depending on whether the saver class is an ImageSaver or VideoSaver.
         if isinstance(saver, ImageSaver):
+            # For ImageSaver, spawns the requested number of saver processes. Each process needs less information than
+            # VideoSaver class does. Uses list comprehension for speed.
             processes = [
                 Process(
-                    target=VideoSystem._save_images_loop,
+                    target=self._frame_saving_loop,
                     args=(
+                        self._saver,
                         self._image_queue,
                         self._terminator_array,
-                        self.save_directory,
-                        self._save_format,
-                        self._tiff_compression_level,
-                        self._jpeg_quality,
-                        self._threads_per_process,
                     ),
                     daemon=True,
                 )
                 for _ in range(image_saver_process_count)
             ]
+
+            # Casts the list to tuple and saves it to class attribute.
             self._consumer_processes: tuple[Process, ...] = tuple(processes)
-
         else:
-            self._consumer_processes = (
-                Process(
-                    target=VideoSystem._save_video_loop,
-                    args=(
-                        self._image_queue,
-                        self._terminator_array,
-                        self.save_directory,
-                        self._camera._specs,
-                        self._mp4_config,
-                    ),
-                    daemon=True,
+            # For VideoSaver, spawns a single process and packages it into a tuple. Since VideoSaver relies on FFMPEG,
+            # it automatically scales with available resources without the need for additional Python processes.
+            self._consumer_processes = Process(
+                target=self._frame_saving_loop,
+                args=(
+                    self._saver,
+                    self._image_queue,
+                    self._terminator_array,
+                    frame_width,
+                    frame_height,
+                    frame_rate,
+                    self._name,
                 ),
+                daemon=True,
             )
-
-        # First entry represents whether input stream is active, second entry represents whether output stream is active
-        # TODO And the third entry?
-        prototype = np.array([1, 1, 1], dtype=np.int32)
-
-        self._terminator_array: SharedMemoryArray = SharedMemoryArray.create_array(
-            name=terminator_array_name,
-            prototype=prototype,
-        )
-
-        self._mp_manager: SyncManager = multiprocessing.Manager()
-        self._image_queue: MPQueue[Any] = self._mp_manager.Queue()  # type: ignore
 
     def __del__(self):
         """Ensures that the system is stopped upon garbage collection."""
@@ -651,8 +674,8 @@ class VideoSystem:
             raise console.error(error=ValueError, message=message)
 
     @staticmethod
-    def _image_display_loop(display_queue: Queue, camera_name: str) -> None:
-        """Continuously fetches images from display_queue and displays them via OpenCV imshow() method.
+    def _frame_display_loop(display_queue: Queue, camera_name: str) -> None:
+        """Continuously fetches frame images from display_queue and displays them via OpenCV imshow() method.
 
         This method is used as a thread target as part of the _produce_images_loop() runtime. It is used to display
         frames as they are grabbed from the camera and passed to the multiprocessing queue. This allows visually
@@ -684,6 +707,7 @@ class VideoSystem:
 
             # Programmatic termination is done by passing a non-numpy-array input through the queue
             if not isinstance(frame, np.ndarray):
+                display_queue.task_done()  # If the thread is terminated, ensures join() will work as expected
                 break
 
             # Displays the image using the window created above
@@ -691,43 +715,59 @@ class VideoSystem:
 
             # Manual termination is done through window GUI
             if cv2.waitKey(1) & 0xFF == 27:
+                display_queue.task_done()  # If the thread is terminated, ensures join() will work as expected
                 break
 
-        # Cleans up after runtime by destroying the window. Specifically targets the window created by this thread to
+            display_queue.task_done()  # Ensures each get() is paired with a task_done() call once display cycle is over
+
+        # Cleans up after runtime by destroying the window. Specifically, targets the window created by this thread to
         # avoid interfering with any other windows.
         cv2.destroyWindow(window_name)
 
     @staticmethod
-    def _produce_images_loop(
+    def _frame_production_loop(
         camera: OpenCVCamera | HarvestersCamera | MockCamera,
         image_queue: MPQueue[Any],
         terminator_array: SharedMemoryArray,
         display_video: bool = False,
-        fps: float | None = None,
+        fps: Optional[float] = None,
     ) -> None:
-        """Iteratively grabs images from the camera and adds to the img_queue.
+        """Continuously grabs frames from the camera and queues them up to be saved by the consumer processes and
+        displayed via the display thread.
 
-        This function loops while the third element in terminator_array (index 2) is nonzero. It grabs frames as long as
-        the first element in terminator_array (index 0) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
-        own.
+        This method loops while the third element in terminator_array (index 2) is nonzero. It grabs frames from the
+        camera as long as the first element in terminator_array (index 0) is nonzero. This method is meant to be run
+        as a process and will create an infinite loop if run on its own.
+
+        Notes:
+            The method can be configured with an fps override to manually control the acquisition frame rate. Generally,
+            this functionality should be avoided for most scientific and industrial cameras, as they all have a
+            built-in frame rate limiter that will be considerably more efficient than the local implementation. For
+            cameras without a built-in frame-limiter however, this functionality can be used to enforce a certain
+            frame rate via software.
 
         Args:
-            camera: a Camera object to take collect images.
-            image_queue: A multiprocessing queue to hold images before saving.
-            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 0 is zero
-                and completes when index 2 is zero.
-            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
+            camera: One of the supported Camera classes that is used to interface with the camera that produces frames.
+            image_queue: A multiprocessing queue that buffers and pipes acquired frames to consumer processes.
+            terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
+                and terminate it during global shutdown.
+            display_video: Determines whether to display acquired frames to the user through an OpenCV backend.
+            fps: Manually overrides camera acquisition frame rate by triggering frame grab procedure at the specified
+                interval. The override should be avoided for most higher-end cameras, and their built-in frame limiter
+                module should be used instead (fps can be specified when instantiating Camera classes).
         """
 
         # If the method is configured to display acquired frames, sets up the display thread and a queue that buffers
         # and pipes the frames to be displayed to the worker thread.
-        display_queue = Queue()
         if display_video:
-            display_thread = Thread(target=VideoSystem._image_display_loop, args=(display_queue, camera.name))
+            display_queue = Queue()
+            display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, camera.name))
             display_thread.start()
+        else:
+            display_queue = None
+            display_thread = None
 
-        # If the method is configured to manually control the acquisition frame rate, initializes the high precision
+        # If the method is configured to manually control the acquisition frame rate, initializes the high-precision
         # timer to control the acquisition and translates the desired frame per second parameter into the precision
         # units of the timer.
         acquisition_timer: PrecisionTimer = PrecisionTimer("us")  # Uses microsecond precision
@@ -747,7 +787,6 @@ class VideoSystem:
 
         # The loop runs until the VideoSystem is terminated by setting the third element (index 2) of the array to 0
         while terminator_array.read_data(index=2, convert_output=True):
-
             # If frame acquisition is enabled, acquires and processes the frame. This uses a separate flow-control
             # element (index 0) to make it possible to pause and resume frame acquisition without terminating the
             # VideoSystem as a whole. This also handles the 'manual' fps control, which is helpful for some cameras
@@ -775,23 +814,116 @@ class VideoSystem:
                 if display_video:
                     display_queue.put(frame)
 
-        # Once the loop above is escaped by setting the terminator array index 2 to 0, disconnects from the camera and
-        # the terminator array as part of Process termination procedure.
-        camera.disconnect()
+        # Once the loop above is escaped by setting the terminator array index 2 to 0, releases all resources and
+        # terminates the Process.
+
+        if display_video:
+            display_queue.put(None)  # Terminates the display thread
+            display_thread.join()  # Waits for the thread to close
+        camera.disconnect()  # Disconnects from the camera
+        terminator_array.disconnect()  # Disconnects from the terminator array
+
+    @staticmethod
+    def _frame_saving_loop(
+        saver: VideoSaver | ImageSaver,
+        image_queue: MPQueue[Any],
+        terminator_array: SharedMemoryArray,
+        frame_width: Optional[int] = None,
+        frame_height: Optional[int] = None,
+        video_frames_per_second: Optional[float] = None,
+        video_id: Optional[str] = None,
+    ) -> None:
+        """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
+        on the saver class backend.
+
+        This method loops while the third element in terminator_array (index 2) is nonzero. It saves frames as long as
+        the second element in terminator_array (index 1) is nonzero. This method is meant to be run as a process,
+        and it will create an infinite loop if run on its own.
+
+        Notes:
+            If Saver class is configured to use Image backend and multiple saver processes were requested during
+            VideoSystem instantiation, this loop will be used by multiple processes at the same time. This increases
+            saving throughput at the expense of using more resources.
+
+            For Video encoder, the class requires additional information about the encoded data, including the
+            identifier to use for the video file. Otherwise, all additional setup / teardown steps are resolved
+            automatically as part of this method's runtime.
+
+            This method's main loop will be kept alive until the image_queue is empty. This is an intentional security
+            feature that ensures all buffered images are processed before the saver is terminated. To override this
+            behavior, you will need to use the process kill command, but it is strongly advised not to tamper
+            with this feature.
+
+        Args:
+            saver: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
+                the OpenCV or FFMPEG libraries.
+            image_queue: A multiprocessing queue that buffers and pipes frames acquired by the producer process.
+            terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
+                and terminate it during global shutdown.
+            frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
+                This has to match the width reported by the Camera class that produces the frames.
+            frame_height: Same as above, but specifies the height of the frames to be saved, in pixels.
+            video_frames_per_second: Only for VideoSaver classes. Specifies the desired frames-per-second of the
+                encoded video file.
+            video_id: Only for VideoSaver classes. Specifies the unique identifier used as the name of the
+                encoded video file.
+        """
+
+        # Video savers require additional setup before they can save 'live' frames. Image savers are ready to save
+        # frames with no additional setup
+        if isinstance(saver, VideoSaver):
+            # Initializes the video encoding by instantiating the FFMPEG process that does the encoding. For this, it
+            # needs some additional information. Subsequently, Video and Image savers can be accessed via the same
+            # frame-saving API.
+            saver.create_live_video_encoder(
+                frame_width=frame_width,
+                frame_height=frame_height,
+                video_id=video_id,
+                video_frames_per_second=video_frames_per_second,
+            )
+
+        # Connects to the terminator array to manage loop runtime
+        terminator_array.connect()
+
+        # The loop runs continuously until the third (index 2) element of the array is set to 0. Note, the loop is
+        # kept alive until all frames in the queue are processed!
+        while terminator_array.read_data(index=2, convert_output=True) or not image_queue.empty():
+
+            # Internally, the second element (index 1) of the array is used to conditionally enable or disable image
+            # saving. Additionally, the code below is only executed if the queue is not empty.
+            if terminator_array.read_data(index=1, convert_output=True) and not image_queue.empty():
+
+                # Grabs the image bundled with its ID from the queue and passes it to Saver class. This relies on
+                # both Image and Video savers having the same 'live' frame saving API. Uses a non-blocking binding to
+                # prevent deadlocking the loop, as it does not use the queue-based termination method for reliability
+                # reasons.
+                try:
+                    frame, frame_id = image_queue.get(block=False)
+                except Exception:
+                    # The only expected exception here is when queue is empty. This block overall makes the code
+                    # repeatedly cycle through the loop, allowing flow control statements to properly terminate the
+                    # 'while' loop if necessary and the queue is empty.
+                    continue
+
+                saver.save_frame(frame_id, frame)
+
+        # Terminates the video encoder as part of the shutdown procedure
+        if isinstance(saver, VideoSaver):
+            saver.terminate_live_encoder()
+
+        # Once the loop above is escaped, releases all resources and terminates the Process.
         terminator_array.disconnect()
 
     @staticmethod
     def _empty_function() -> None:
         """A placeholder function used to verify the class is only instantiated inside the main scope of each runtime.
 
-        The function itself does nothing.
+        The function itself does nothing. It is used to enforce that the start() method of the class only triggers
+        inside the main scope, to avoid uncontrolled spawning of daemon processes.
         """
         pass
 
-    def start(
-        self,
-        terminator_array_name: str = "terminator_array",
-    ) -> None:
+    def start(self) -> None:
         """Starts the video system.
 
         Args:
@@ -894,273 +1026,6 @@ class VideoSystem:
                 self._terminator_array._buffer.unlink()  # kill terminator array
 
             self._running = False
-
-    @staticmethod
-    def imwrite(filename: str, data: NDArray[Any], tiff_compression_level: int = 6, jpeg_quality: int = 95) -> None:
-        """Saves an image to a specified file.
-
-        Args:
-            filename: path to image file to be created.
-            data: pixel data of image.
-            save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
-                is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. Range is [0, 9] inclusive. 0 gives fastest saving but
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-                relevant when save_format is specified as 'tiff.'
-            jpeg_quality: The amount of compression to apply for jpeg image saving. Range is [0, 100] inclusive. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-                compression value is only relevant when save_format is specified as 'jpg.'
-        """
-        save_format = os.path.splitext(filename)[1][1:]
-        if save_format in {"tiff", "tif"}:
-            img_rgb = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
-            tff.imwrite(
-                filename, img_rgb, compression="zlib", compressionargs={"level": tiff_compression_level}
-            )  # 0 to 9 default is 6
-        elif save_format in {"jpg", "jpeg"}:
-            cv2.imwrite(filename, data, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])  # 0 to 100 default is 95
-        else:  # save_format == "png"
-            cv2.imwrite(filename, data)
-
-    @staticmethod
-    def _frame_saver(
-        q: Queue[Any], save_directory: str, save_format: str, tiff_compression_level: int, jpeg_quality: int
-    ) -> None:
-        """A method that iteratively gets an image from a queue and saves it to save_directory. This method loops until
-        it pulls an image off the queue whose id is 0. This loop is not meant to be called directly, rather it is meant
-        to be the target of a separate thread.
-
-        Args:
-            q: A queue to hold images before saving.
-            save_directory: relative path to location where image is to be saved.
-            save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
-                is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-                relevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-                compression value is only relevant when save_format is specified as 'jpg.'
-        """
-        terminated = False
-        while not terminated:
-            frame, img_id = q.get()
-            if img_id != -1:
-                filename = os.path.join(save_directory, VideoSystem.img_name + str(img_id) + "." + save_format)
-                VideoSystem.imwrite(
-                    filename, frame, tiff_compression_level=tiff_compression_level, jpeg_quality=jpeg_quality
-                )
-            else:
-                terminated = True
-            q.task_done()
-
-    @staticmethod
-    def _save_images_loop(
-        img_queue: MPQueue[Any],
-        terminator_array: SharedMemoryArray,
-        save_directory: str,
-        save_format: str,
-        tiff_compression_level: int,
-        jpeg_quality: int,
-        num_threads: int,
-        fps: float | None = None,
-    ) -> None:
-        """Iteratively grabs images from the img_queue and saves them as png files.
-
-        This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
-        the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a thread and will create an infinite loop if run on its
-        own.
-
-        Args:
-            img_queue: A multiprocessing queue to hold images before saving.
-            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 1 is zero
-                and completes when index 2 is zero.
-            save_directory: relative path to location where images are to be saved.
-            save_format: the format in which to save camera data. Note 'tiff' and 'png' formats are lossless while 'jpg'
-                is a lossy format
-            tiff_compression_level: the amount of compression to apply for tiff image saving. 0 gives fastest saving but
-                most memory used. 9 gives slowest saving but least amount of memory used. This compression value is only
-                relevant when save_format is specified as 'tiff.'
-            jpeg_quality: the amount of compression to apply for jpeg image saving. 0 gives highest level of compression but
-                the most loss of image detail. 100 gives the lowest level of compression but no loss of image detail. This
-                compression value is only relevant when save_format is specified as 'jpg.'
-            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
-        """
-        q: Queue[Any] = Queue()
-        workers = []
-        for i in range(num_threads):
-            workers.append(
-                Thread(
-                    target=VideoSystem._frame_saver,
-                    args=(q, save_directory, save_format, tiff_compression_level, jpeg_quality),
-                )
-            )
-        for worker in workers:
-            worker.daemon = True
-            worker.start()
-
-        terminator_array.connect()
-        run_timer: PrecisionTimer = PrecisionTimer(precision)
-        # img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=1, convert_output=True):
-                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    try:
-                        img = img_queue.get_nowait()
-                        q.put(img)
-                    except Empty:
-                        pass
-                    if fps:
-                        run_timer.reset()
-        terminator_array.disconnect()
-        for _ in range(num_threads):
-            q.put((None, -1))
-        for worker in workers:
-            worker.join()
-
-    @staticmethod
-    def _save_video_loop(
-        img_queue: MPQueue[Any],
-        terminator_array: SharedMemoryArray,
-        save_directory: str,
-        camera_specs: dict[str, Any],
-        config: dict[str, str | int],
-        fps: float | None = None,
-    ) -> None:
-        """Iteratively grabs images from the img_queue and adds them to an mp4 file.
-
-        This creates runs the ffmpeg image saving process on a separate thread. It iteratively grabs images from the
-        queue on the main thread.
-
-        This function loops while the third element in terminator_array (index 2) is nonzero. It saves images as long as
-        the second element in terminator_array (index 1) is nonzero. This function can be run at a specific fps or as
-        fast as possible. This function is meant to be run as a process 264rgbnd will create an infinite loop if run on its
-        own.
-
-        Args:
-            img_queue: A multiprocessing queue to hold images before saving.
-            terminator_array: A multiprocessing array to hold terminate flags, the function idles when index 1 is zero
-                and completes when index 2 is zero.
-            save_directory: relative path to location where images are to be saved.
-            camera_specs: a dictionary containing specifications of the camera. Specifically, the dictionary must
-                contain the camera's frames per second, denoted 'fps', and the camera frame size denoted by
-                'frame_width' and 'frame_height'.
-            config:
-            fps: frames per second of loop. If fps is None, the loop will run as fast as possible.
-        """
-        filename = os.path.join(save_directory, f"{VideoSystem.vid_name}.mp4")
-
-        codec = "libx264"
-
-        default_keys = ["codec", "preset", "profile", "crf", "quality", "threads"]
-        additional_config = {}
-        for key in config.keys():
-            if key not in default_keys:
-                additional_config[key] = config[key]
-
-        ffmpeg_process = (
-            ffmpeg.input(
-                "pipe:",
-                framerate="{}".format(camera_specs["fps"]),
-                format="rawvideo",
-                pix_fmt="bgr24",
-                s="{}x{}".format(int(camera_specs["frame_width"]), int(camera_specs["frame_height"])),
-            )
-            .output(
-                filename,
-                vcodec=config["codec"],
-                pix_fmt="nv21",
-                preset=config["preset"],
-                profile=config["profile"],
-                crf=config["crf"],
-                quality=config["quality"],
-                threads=config["threads"],
-                **additional_config,
-            )
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
-
-        terminator_array.connect()
-        run_timer: PrecisionTimer = PrecisionTimer(precision)
-        # img_queue.cancel_join_thread()
-        while terminator_array.read_data(index=2, convert_output=True):
-            if terminator_array.read_data(index=1, convert_output=True):
-                if not fps or run_timer.elapsed / unit_conversion[precision] >= 1 / fps:
-                    if not img_queue.empty():
-                        image, _ = img_queue.get()
-                        ffmpeg_process.stdin.write(image.astype(np.uint8).tobytes())
-                    if fps:
-                        run_timer.reset()
-        ffmpeg_process.stdin.close()
-        ffmpeg_process.wait()
-        terminator_array.disconnect()
-
-    def save_imgs_as_vid(self) -> None:
-        """Converts a set of id labeled images into an mp4 video file.
-
-        This is a wrapper class for the static method imgs_to_vid. It calls imgs_to_vid with arguments fitting a
-        specific object instance.
-
-        Raises:
-            Exception: If there are no images of the specified type in the specified directory.
-        """
-        VideoSystem.imgs_to_vid(
-            fps=int(self._camera.fps), img_directory=self.save_directory, img_filetype=self._save_format
-        )
-
-    @staticmethod
-    def imgs_to_vid(
-        fps: int, img_directory: str = "imgs", img_filetype: str = "png", vid_directory: str | None = None
-    ) -> None:
-        """Converts a set of id labeled images into an mp4 video file.
-
-        Args:
-            fps: The framerate of the video to be created.
-            img_directory: The directory where the images are saved.
-            img_filetype: The type of image to be read. Supported types are "tiff", "png", and "jpg"
-            vid_directory: The location to save the video. Defaults to the directory that the images are saved in.
-
-        Raises:
-            Exception: If there are no images of the specified type in the specified directory.
-        """
-
-        if vid_directory is None:
-            vid_directory = img_directory
-
-        vid_name = os.path.join(vid_directory, f"{VideoSystem.vid_name}.mp4")
-
-        sample_img = cv2.imread(os.path.join(img_directory, f"{VideoSystem.img_name}0.{img_filetype}"))
-
-        if sample_img is None:
-            console.error(message=f"No {img_filetype} images found in {img_directory}.", error=Exception)
-
-        frame_height, frame_width, _ = sample_img.shape
-
-        ffmpeg_process = (
-            ffmpeg.input(
-                "pipe:",
-                framerate="{}".format(fps),
-                format="rawvideo",
-                pix_fmt="bgr24",
-                s="{}x{}".format(int(frame_width), int(frame_height)),
-            )
-            .output(vid_name, vcodec="h264", pix_fmt="nv21", **{"b:v": 2000000})
-            .overwrite_output()
-            .run_async(pipe_stdin=True)
-        )
-
-        search_pattern = os.path.join(img_directory, f"{VideoSystem.img_name}*.{img_filetype}")
-        files = glob.glob(search_pattern)
-        num_files = len(files)
-        for id in range(num_files):
-            file = os.path.join(img_directory, f"{VideoSystem.img_name}{id}.{img_filetype}")
-            dat = cv2.imread(file)
-            ffmpeg_process.stdin.write(dat.astype(np.uint8).tobytes())
-
-        ffmpeg_process.stdin.close()
-        ffmpeg_process.wait()
 
     def _on_press_q(self) -> None:
         self._on_press("q")
