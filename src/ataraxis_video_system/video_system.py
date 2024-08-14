@@ -8,22 +8,19 @@ maximize runtime performance.
 
 All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
+
 from queue import Queue
 from typing import Any, Optional
 from types import NoneType
 from threading import Thread
 import multiprocessing
-from multiprocessing import (
-    Queue as MPQueue,
-    Process,
-    ProcessError,
-    Lock
-)
+from multiprocessing import Queue as MPQueue, Process, ProcessError, Lock
 from multiprocessing.managers import SyncManager
 
 import cv2
 import numpy as np
 import keyboard
+from ataraxis_base_utilities.console.console_class import LogLevel
 from ataraxis_time import PrecisionTimer
 from ataraxis_time.time_helpers import convert_time
 from ataraxis_base_utilities import console
@@ -54,6 +51,10 @@ class VideoSystem:
         display_frames: whether or not to display a video of the current frames being recorded.
         listen_for_keypress: If true, the video system will stop the image collection when the 'q' key is pressed
                 and stop image saving when the 'w' key is pressed.
+        shutdown_timeout: The number of seconds after which non-terminated processes will be forcibly terminated.
+            The method first attempts to shut the processes gracefully, which may require some time. If you need to shut
+            everything down fast and data loss is not an issue, you can specify a timeout, after which the processes
+            will be terminated with data loss.
 
     Attributes:
         _camera: camera for image collection.
@@ -72,8 +73,6 @@ class VideoSystem:
         ProcessError: If the computer does not have enough cpu cores.
     """
 
-    _timer_precision: str = "us"
-
     def __init__(
         self,
         camera: HarvestersCamera | OpenCVCamera | MockCamera,
@@ -81,6 +80,7 @@ class VideoSystem:
         system_name: str,
         image_saver_process_count: int = 1,
         fps_override: Optional[int | float] = None,
+        shutdown_timeout: Optional[int] = 600,
         *,
         display_frames: bool = True,
         listen_for_keypress: bool = False,
@@ -90,6 +90,7 @@ class VideoSystem:
         self._saver: VideoSaver | ImageSaver = saver
         self._interactive_mode: bool = listen_for_keypress
         self._name: str = system_name
+        self._shutdown_timeout: Optional[int] = shutdown_timeout
         self._running: bool = False  # Tracks whether the system has active processes
 
         # Sets up the multiprocessing Queue, which is used to buffer and pipe images from the producer (camera) to
@@ -102,7 +103,7 @@ class VideoSystem:
         # is stored in the same directory to which saved frames are written as images or video. The file is used to
         # store the acquisition time for each saved frame.
         # noinspection PyProtectedMember
-        log_path = saver._output_directory.joinpath(f'{self._name}_frame_acquisition_log.txt')
+        log_path = saver._output_directory.joinpath(f"{self._name}_frame_acquisition_log.txt")
 
         # Instantiates an array shared between all processes. This array is used to control all child processes.
         # Index 0 (element 1) is used to issue global process termination command, index 1 (element 2) is used to
@@ -120,14 +121,13 @@ class VideoSystem:
             daemon=True,
         )
 
-        # Instantiates the lock class to be used by consumer processes. Technically, this is only needed when
+        # Instantiates the lock class to be used by consumer processes. Technically, this is only necessary when
         # multiple ImageSavers are used, but this should be a very minor performance concern, so it is used for all
         # use cases.
-        lock = Lock()
+        lock = self._mp_manager.Lock()
 
         # Sets up image consumer Process(es), depending on whether the saver class is an ImageSaver or a VideoSaver.
         if isinstance(saver, VideoSaver):
-
             # When the saver class is configured to use the Video backend, it requires additional information to
             # properly encode grabbed frames as a video file. Some of this formation needs to be obtained from a
             # connected camera.
@@ -703,7 +703,7 @@ class VideoSystem:
             beneficial to have this functionality as a sub-thread, instead of realizing it at the same level as the
             rest of the image production loop code.
 
-            This thread runs until it is terminated through the display window GUI or by passing a non-NumPy-array
+            This thread runs until it is terminated through the display window GUI or passing a non-NumPy-array
             object (e.g.: integer -1) through the display_queue.
 
         Args:
@@ -754,7 +754,7 @@ class VideoSystem:
         displayed via the display thread.
 
         This method loops while the first element in terminator_array (index 0) is nonzero. It continuously grabs
-        frames from the camera, but only queues them up to be saved by the consume processes as long as the second
+        frames from the camera, but only queues them up to be saved by the consumer processes as long as the second
         element in terminator_array (index 1) is nonzero. This method is meant to be run as a process and will create
         an infinite loop if run on its own.
 
@@ -765,7 +765,7 @@ class VideoSystem:
             cameras without a built-in frame-limiter however, this functionality can be used to enforce a certain
             frame rate via software.
 
-            When enabled, the method writes each frame data, ID and acquisition timestamp relative to onset time to the
+            When enabled, the method writes each frame data, ID, and acquisition timestamp relative to onset time to the
             image_queue as a 3-element tuple.
 
         Args:
@@ -782,12 +782,12 @@ class VideoSystem:
                 module should be used instead (fps can be specified when instantiating Camera classes).
         """
 
-        # Creates a timer that time-stamps acquired frames. This information is crucial for subsequent alignment
+        # Creates a timer that time-stamps acquired frames. This information is crucial for later alignment
         # of multiple data sources.
         # noinspection PyTypeChecker
-        stamp_timer: PrecisionTimer = PrecisionTimer(VideoSystem._timer_precision)
+        stamp_timer: PrecisionTimer = PrecisionTimer("us")
 
-        # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all subsequent time
+        # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all later time
         # readouts.
         onset = datetime.datetime.now(datetime.UTC)
         stamp_timer.reset()  # Immediately resets the stamp timer to make it as close as possible to the onset time
@@ -806,7 +806,7 @@ class VideoSystem:
         # timer to control the acquisition and translates the desired frame per second parameter into the precision
         # units of the timer.
         # noinspection PyTypeChecker
-        acquisition_timer: PrecisionTimer = PrecisionTimer(VideoSystem._timer_precision)
+        acquisition_timer: PrecisionTimer = PrecisionTimer("us")
         if fps is not None:
             # Translates the fps to use the timer-units of the timer. In this case, converts from frames per second to
             # frames per microsecond.
@@ -823,12 +823,11 @@ class VideoSystem:
 
         # Saves onset data to the log file. Due to how the consumer processes work, this should always be the very
         # first entry to the file. Also includes the name of the camera.
-        with open(log_path, mode='wt') as log:
+        with open(log_path, mode="wt") as log:
             log.write(f"{camera.name}-{str(onset)}\n")  # Includes a newline to efficiently separate further entries
 
         # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 0
         while terminator_array.read_data(index=0, convert_output=True):
-
             # If the fps override is enabled, this loop is further limited to acquire frames at the specified rate,
             # which is helpful for some cameras that do not have a built-in acquisition control functionality.
             if frame_time is None or acquisition_timer.elapsed > frame_time:
@@ -843,7 +842,6 @@ class VideoSystem:
 
                 # Only buffers the frame for saving if this behavior is enabled through the terminator array
                 if terminator_array.read_data(index=1, convert_output=True):
-
                     # Bundles frame data, ID, and acquisition timestamp relative to onset and passes it to the
                     # multiprocessing Queue that delivers the data to the consumer process that saves it to
                     # non-volatile memory. This is likely the 'slowest' of all processing steps done by this loop.
@@ -914,7 +912,7 @@ class VideoSystem:
                 creates an entry that bundles each frame ID with its acquisition timestamp and appends it to the log
                 file.
             lock: A multiprocessing Lock instance, that is used to prevent race conditions when multiple ImageSavers
-                need to access frame acquisition log file. This should not majorly detract the benefit of multiple
+                need to access the frame acquisition log file. This should not majorly detract the benefit of multiple
                 ImageSavers as logging is very fast compared to writing frames to disk.
             frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
                 This has to match the width reported by the Camera class that produces the frames.
@@ -944,7 +942,6 @@ class VideoSystem:
         # The loop runs continuously until the first (index 0) element of the array is set to 0. Note, the loop is
         # kept alive until all frames in the queue are processed!
         while terminator_array.read_data(index=0, convert_output=True) or not image_queue.empty():
-
             # Grabs the image bundled with its ID and acquisition time from the queue and passes it to Saver class.
             # This relies on both Image and Video savers having the same 'live' frame saving API. Uses a non-blocking
             # binding to prevent deadlocking the loop, as it does not use the queue-based termination method for
@@ -965,7 +962,7 @@ class VideoSystem:
             # performance, as writing a short text string to file is still much faster than saving an image. For
             # Video savers, this is even less of a concern as there is always one saver at any given time.
             lock.acquire()
-            with open(log_path, mode='at') as log:
+            with open(log_path, mode="at") as log:
                 log.write(f"{str(frame_id)}-{str(frame_time)}\n")  # This produces entries like: '0001-18528'
             lock.release()
 
@@ -986,56 +983,113 @@ class VideoSystem:
         pass
 
     def start(self) -> None:
-        """Starts the video system.
+        """Starts the consumer and producer processes of the video system class and begins acquiring camera frames.
+
+        This process begins frame acquisition, but not frame saving. To enable saving acquired frames, call
+        start_frame_saving() method. A call to this method is required to make the system operation and should only be
+        carried out from the main scope of the runtime context. A call to this method should always be paired with a
+        call to the stop() method to properly release the resources allocated to the class.
+
+        Notes:
+            When the class is configured to run in the interactive mode, calling this method automatically enables
+            console output, even if it has been previously disabled. If console class is configured to log
+            messages, the messages emitted by this class will be logged.
 
         Raises:
-            ProcessError: If the function is created not within the '__main__' scope.
-            ProcessError: If the computer does not have enough cpu cores.
+            ProcessError: If the method is called outside the '__main__' scope.
         """
 
-        # Check to see if class was run from within __name__ = "__main__" or equivalent scope
-        in_unprotected_scope: bool = False
+        # if the class is already running, does nothing. This makes it impossible to call start multiple times in a row.
+        if self._running:
+            return
+
+        # Ensures that it is onl;y possible to call this method from the main scope. This is to prevent uncontrolled
+        # daemonic process spawning behavior.
         try:
-            p = Process(target=VideoSystem._empty_function)
+            p = Process(target=self._empty_function)
             p.start()
             p.join()
         except RuntimeError:  # pragma: no cover
-            in_unprotected_scope = True
+            message: str = (
+                f"The start method of the VideoSystem {self._name} was called outside of '__main__' scope, which is "
+                f"not allowed. Make sure that the start() and stop() methods are only called from the main scope."
+            )
+            console.error(message=message, error=ProcessError)
 
-        if in_unprotected_scope:
-            console.error(
-                message="Instantiation method outside of '__main__' scope", error=ProcessError
-            )  # pragma: no cover
-
-        # Start save processes first to minimize queue buildup
+        # Starts consumer processes first to minimize queue buildup once the producer process is initialized.
+        # Technically, due to saving frames being initially disabled, queue buildup is no longer a major concern.
         for process in self._consumer_processes:
             process.start()
+
+        # Starts the producer process
         self._producer_process.start()
 
+        # If the class is configured to run in the interactive mode, pairs interactive hotkeys with specific
+        # 'on trigger' events.
         if self._interactive_mode:
+            console.enable()  # Interactive mode automatically enables console output
             keyboard.add_hotkey("q", self._on_press_q)
             keyboard.add_hotkey("w", self._on_press_w)
+            keyboard.add_hotkey("s", self._on_press_s)
+            message = (
+                f"Started VideoSystem {self._name} in interactive mode. Press 'q' to stop the system, 'w' to start "
+                f"saving acquired camera frames and 's' to stop saving camera frames."
+            )
+            console.echo(message=message, level=LogLevel.INFO)
 
+        # Sets the running tracker
         self._running = True
 
     def stop(self) -> None:
-        """Stops image collection and saving. Ends all processes."""
-        if self._running:
-            self._terminator_array.write_data(index=(0, 2), data=[0, 0])
-            self._mp_manager.shutdown()
-            self._producer_process.join()
+        """Stops all producer and consumer processes and terminates class runtime by releasing all resources.
 
-            for process in self._consumer_processes:
-                process.join()
+        While this does not delete the class instance itself, it is generally recommended to only call this method once,
+        during the general termination of the runtime that instantiated the class. Calling start() and stop() multiple
+        times should be avoided, and instead it is better to re-initialize the class before cycling through start() and
+        stop() calls. Every call to the start() method should be paired with the call to this method to properly release
+        resources.
 
-            # Ends listening for keypresses, does nothing if no keypresses were enabled.
-            if self._interactive_mode:
-                keyboard.unhook_all_hotkeys()
+        Notes:
+            The class will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
+            security feature that prevents information loss. If you want to override that behavior, you can initialize
+            the class with a 'shutdown_timeout' argument to specify a delay after which all consumers will be forcibly
+            terminated. Generally, it is highly advised not to tamper with this feature. The class uses the default
+            timeout of 10 minutes (600 seconds), unless this is overridden at instantiation.
+        """
+        # Ensures that the stop procedure is only executed if the class is running
+        if not self._running:
+            return
 
-            self._terminator_array.disconnect()
-            self._terminator_array.destroy()
+        # Sets both variables in the terminator array to 0, which initializes the shutdown procedure. Technically, only
+        # the first variable needs to be set to 0 for this, but resetting the array to 0 works too.
+        self._terminator_array.write_data(index=(0, 2), data=[0, 0])
 
-            self._running = False
+        # This statically blocks until either the queue is empty or the timeout (in seconds) is reached.
+        wait_timer = PrecisionTimer("s")
+        while self._shutdown_timeout is None or wait_timer.elapsed > self._shutdown_timeout:
+            if self._image_queue.empty():
+                break
+
+        # Shuts down the manager. This terminates the Queue and discards any information buffered in the queue if it
+        # is not saved. This has to be executed for the processes to be able to join, but after allowing them to
+        # gracefully empty the queue through the timeout functionality.
+        self._mp_manager.shutdown()
+
+        # Joins the producer and consumer processes
+        self._producer_process.join()
+        for process in self._consumer_processes:
+            process.join()
+
+        # Ends listening for keypresses, does nothing if no keypresses were enabled.
+        if self._interactive_mode:
+            keyboard.unhook_all_hotkeys()
+
+        # Disconnects from and destroys the terminator array buffer
+        self._terminator_array.disconnect()
+        self._terminator_array.destroy()
+
+        # Sets running tracker
+        self._running = False
 
     def stop_frame_saving(self) -> None:
         """Disables saving acquired camera frames.
@@ -1049,34 +1103,49 @@ class VideoSystem:
     def start_frame_saving(self) -> None:
         """Enables saving acquired camera frames.
 
-        The frames are grabbed and (optionally) displayed to user after the start() method is called, but they are not
-        initially written to non-volatile memory. The call to this method additionally enables saving the frames to
-        non-volatile memory.
+        The frames are grabbed and (optionally) displayed to user after the main start() method is called, but they
+        are not initially written to non-volatile memory. The call to this method additionally enables saving the
+        frames to non-volatile memory.
         """
         if self._running:
             self._terminator_array.write_data(index=1, data=1)
 
     def _on_press_q(self) -> None:
+        """Specializes the 'on_press' method to 'q' key press."""
         self._on_press("q")
 
+    def _on_press_s(self) -> None:
+        """Specializes the 'on_press' method to 's' key press."""
+        self._on_press("s")
+
     def _on_press_w(self) -> None:
+        """Specializes the 'on_press' method to 'w' key press."""
         self._on_press("w")
 
     def _on_press(self, key: str) -> None:
-        """Stops certain aspects of the system (production, saving) based on specific key_presses ("q", "w")
+        """Allows controlling certain class runtime behaviors based on specific keyboard key presses.
 
-        Stops video system if both terminator flags have been set to 0.
+        This method is only used when the VideoSystem runs in the interactive mode. It allows toggling flow-control
+        class methods (stop, start_frame_saving, stop_frame_saving) by pressing specific keyboard keys (q, w, s). By
+        toggling these commands, the class alters certain values in the shared terminator_array, which alters the
+        behavior of running consumer and producer processes.
+
+        Notes:
+            This method is designed to be used together with the keyboard library, which sets up the background
+            listener loop and triggers appropriate _on_press() method specification depending on the key that was
+            pressed.
 
         Args:
-            key: the key that was pressed.
-            terminator_array: A multiprocessing array to hold terminate flags.
+            key: The keyboard key that was pressed.
         """
         if key == "q":
-            self.stop_frame_saving()
-            console.echo("Stopped taking images")
-        elif key == "w":
-            self._stop_image_saving()
-            console.echo("Stopped saving images")
-        
-        if self._running and not self._terminator_array.read_data(index=1, convert_output=True):
             self.stop()
+            console.echo(f"Initiated shutdown sequence for VideoSystem {self._name}")
+
+        elif key == "s":
+            self.stop_frame_saving()
+            console.echo(f"Stopped saving frames acquired by VideoSystem {self._name}")
+
+        elif key == "w":
+            self.start_frame_saving()
+            console.echo(f"Started saving frames acquired by VideoSystem {self._name}")
