@@ -9,7 +9,6 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_saver()' method from the VideoSystem class.
 """
 
-from operator import truediv
 from pathlib import Path
 import cv2
 from enum import Enum

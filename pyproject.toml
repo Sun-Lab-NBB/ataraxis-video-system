@@ -45,12 +45,9 @@ classifiers = [
 dependencies = [
     "numpy>=2,<3",
     "opencv-python>=4,<5",
-    "ffmpeg-python>=0,<1",
     "ataraxis-time>=2,<3",
     "ataraxis-base-utilities>=2,<3",
     "ataraxis-data-structures>=1,<2",
-    "tifffile>=2024,<2025",
-    "imagecodecs >= 2024,< 2025",
     "keyboard>=0,<1"
 ]
 
@@ -67,9 +64,6 @@ Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/ov
 # project dependencies with conda over pip as possible.
 condarun = [
     "numpy>=2,<3",
-    "ffmpeg-python>=0,<1",
-    "tifffile>=2024,<2025",
-    "imagecodecs>=2024,<2025",
     "keyboard>=0,<1"
 ]
 
@@ -141,7 +135,7 @@ dev = [
 # Exposes a cli interface that can directly run the video system in an interactive mode. Primarily, this is used to
 # manually test the system.
 [project.scripts]
-interactive-run = "ataraxis_video_system.video_system.interactive_run:interactive_run"
+interactive-run = "ataraxis_video_system.interactive_run:interactive_run"
 
 # Specifies files that should not be included in the source-code distribution, but are also not part of gitignore.
 [tool.hatch.build.targets.sdist]

@@ -3,14 +3,15 @@ interactions between Camera and Saver classes.
 
 While Camera and Saver classes provide convenient interface for cameras and saver backends, VideoSystem connects
 cameras to savers and manages the flow of frames between them. Each VideoSystem is a self-contained entity that
-provides a simple API for recording data from a wide range of cameras as images or videos. The class is written to
-maximize runtime performance.
+provides a simple API for recording data from a wide range of cameras as images or videos. The class is written in a
+way that maximizes runtime performance.
 
 All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
 
+import os
 from queue import Queue
-from typing import Any, Optional
+from typing import Optional
 from types import NoneType
 from threading import Thread
 import multiprocessing
@@ -45,32 +46,73 @@ from harvesters.core import Harvester
 
 
 class VideoSystem:
-    """Provides a system for efficiently taking, processing, and saving images in real time.
+    """Efficiently combines Camera and Saver classes to acquire and save camera frames in real time.
+
+    This class exposes methods for instantiating Camera and Saver classes, which, in turn, can be used to instantiate
+    a VideoSystem class. The class achieves two main objectives: It efficiently moves frames acquired by the Camera
+    class to be saved by the Saver class and manages runtime behavior of the bound classes. To do so, the class
+    initializes and controls multiple subprocesses to ensure frame producer and consumer classes have sufficient
+    computational resources. The class abstracts away all necessary steps to set up, execute, and tear down the
+    processes through an easy-to-use API.
+
+    Notes:
+        Due to using multiprocessing to improve efficiency, this class needs a minimum of 2 logical cores per class
+        instance to operate efficiently. Additionally, due to a time-lag of moving frames from a producer process to a
+        consumer process, the class will reserve a variable portion of the RAM to buffer the frame images. The reserved
+        memory depends on many factors and can only be known during runtime.
+
+        This class requires Camera and Saver class instances during instantiation. To initialize
+        these classes, use create_camera() and create_saver() static methods available from the VideoSystem class.
 
     Args:
-        display_frames: whether or not to display a video of the current frames being recorded.
-        listen_for_keypress: If true, the video system will stop the image collection when the 'q' key is pressed
-                and stop image saving when the 'w' key is pressed.
-        shutdown_timeout: The number of seconds after which non-terminated processes will be forcibly terminated.
-            The method first attempts to shut the processes gracefully, which may require some time. If you need to shut
-            everything down fast and data loss is not an issue, you can specify a timeout, after which the processes
-            will be terminated with data loss.
+        camera: An initialized Camera class instance that interfaces with one of the supported cameras and allows
+            acquiring camera frames. Use create_camera() method to instantiate this class.
+        saver: An initialized Saver class instance that interfaces with OpenCV or FFMPEG and allows saving camera
+            frames as images or videos. Use create_saver() method to instantiate this class.
+        system_name: A unique identifier for the VideoSystem instance. This is used to identify the system in messages,
+            logs, and generated video files.
+        image_saver_process_count: The number of ImageSaver processes to use. This parameter is only used when the
+            saver class is an instance of ImageSaver. Since each saved image is independent of all other images, the
+            performance of ImageSvers can be improved by using multiple processes with multiple threads to increase the
+            saving throughput. For most use cases, a single saver process will be enough.
+        fps_override: The number of frames to grab from the camera per second. This argument allows optionally
+            overriding the frames per second (fps) parameter of the Camera class. When provided, the frame acquisition
+            process will only trigger the frame grab procedure at the specified interval. Generally, this override
+            should only be used for cameras with a fixed framerate or cameras that do not have framerate control
+            capability at all. For cameras that support onboard framerate control, setting the fps through the Camera
+            class will almost always be better. The override will not be able to exceed the acquisition speed enforced
+            by the camera hardware.
+        shutdown_timeout: The number of seconds after which non-terminated processes will be forcibly terminated during
+            class shutdown. When class shutdown is triggered by calling stop() method, it first attempts to shut the
+            processes gracefully, which may require some time. Primarily, this is because the consumer process tries
+            to save all buffered images before it is allowed to shut down. If this process exceeds the specified
+            timeout, the class will discard all unsaved data by forcing the processes to terminate.
+        display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
+            the camera feed in real time, which is frequently desirable in scientific experiments.
+        listen_for_keypress: Determines whether the system should listen for certain key presses, allowing to control
+            runtime behavior through keyboard. When this is enabled, use 'q' to trigger class shutdown, 'w' to start
+            saving camera frames, and 's' to stop saving camera frames.
 
     Attributes:
-        _camera: camera for image collection.
-        _running: whether or not the video system is running.
-        _producer_process: multiprocessing process to control the image collection.
-        _consumer_processes: list multiprocessing processes to control image saving.
-        _terminator_array: multiprocessing array to keep track of process activity and facilitate safe process
-            termination.
-        _image_queue: multiprocessing queue to hold images before saving.
+        _camera: Stores the Camera class instance that provides camera interface.
+        _saver: Stores the Saver class instance that provides saving backend interface.
+        _interactive_mode: Determines whether keyboard-based class behavior control is allowed.
+        _name: Stores the system name.
+        _shutdown_timeout: Stores the time in seconds after which to forcefully terminate processes
+            during shutdown.
+        _running: Tracks whether the system is currently running (has active subprocesses).
+        _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
+        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from producer to
+            consumer processes.
+        _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
+            manage runtime behavior of spawned processes.
+        _producer_process: A process that acquires camera frames using the bound Camera class.
+        _consumer_processes: A tuple of processes that save camera frames using the bound Saver class. ImageSaver
+            instance can use multiple processes, VideoSaver will use a single process.
 
     Raises:
-        ProcessError: If the function is created not within the '__main__' scope
-        ValueError: If the save format is specified to an invalid format.
-        ValueError: If a specified tiff_compression_level is not within [0, 9] inclusive.
-        ValueError: If a specified jpeg_quality is not within [0, 100] inclusive.
-        ProcessError: If the computer does not have enough cpu cores.
+        TypeError: If any of the provided arguments has an invalid type.
+        ValueError: If any of the provided arguments has an invalid value.
     """
 
     def __init__(
@@ -85,6 +127,59 @@ class VideoSystem:
         display_frames: bool = True,
         listen_for_keypress: bool = False,
     ):
+        # Ensures that arguments are valid:
+
+        # Resolves the system-name first, to use it in further error messages
+        if not isinstance(system_name, str):
+            raise TypeError(
+                f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
+                f"{system_name} of type {type(system_name).__name__}"
+            )
+        if not isinstance(camera, (HarvestersCamera, OpenCVCamera, MockCamera)):
+            raise TypeError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected one of the Camera class "
+                f"instances available through the create_camera() VideoSystem method for camera, but got "
+                f"{camera} of type {type(camera).__name__}"
+            )
+        if not isinstance(saver, (VideoSaver, ImageSaver)):
+            raise TypeError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected one of the Saver class "
+                f"instances available through the create_saver() VideoSystem method for saver, but got "
+                f"{saver} of type {type(saver).__name__}"
+            )
+        if not isinstance(display_frames, bool):
+            raise TypeError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a boolean for "
+                f"display_frames, but got {display_frames} of type {type(display_frames).__name__}"
+            )
+        if not isinstance(listen_for_keypress, bool):
+            raise TypeError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a boolean for "
+                f"listen_for_keypress, but got {listen_for_keypress} of type {type(listen_for_keypress).__name__}"
+            )
+        if image_saver_process_count < 1:
+            raise ValueError(
+                f"Unable to initialize a {system_name} VideoSystem class instance. Expected a positive integer for "
+                f"image_saver_process_count, but got {image_saver_process_count} of type "
+                f"{type(image_saver_process_count).__name__}"
+            )
+        if image_saver_process_count > os.cpu_count():
+            raise ValueError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. The specified "
+                f"image_saver_process_count {image_saver_process_count} exceeds the number of available logical CPU "
+                f"cores of the host-system ({os.cpu_count()})"
+            )
+        if shutdown_timeout is not None and shutdown_timeout < 1:
+            raise ValueError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a positive integer or "
+                f"NoneType for shutdown_timeout, but got {shutdown_timeout} of type {type(shutdown_timeout).__name__}"
+            )
+        if fps_override is not None and fps_override < 1:
+            raise ValueError(
+                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a positive integer or "
+                f"NoneType for fps_override, but got {fps_override} of type {type(fps_override).__name__}"
+            )
+
         # Saves input arguments to class attributes
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
         self._saver: VideoSaver | ImageSaver = saver
@@ -97,7 +192,7 @@ class VideoSystem:
         # one or more consumers (savers). Uses Manager() instantiation as it has a working qsize() method for all
         # supported platforms.
         self._mp_manager: SyncManager = multiprocessing.Manager()
-        self._image_queue: MPQueue[Any] = self._mp_manager.Queue()  # type: ignore
+        self._image_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
 
         # Uses the saver class output directory to construct the path to the frame acquisition log file. This file
         # is stored in the same directory to which saved frames are written as images or video. The file is used to
@@ -148,20 +243,22 @@ class VideoSystem:
 
             # For VideoSaver, spawns a single process and packages it into a tuple. Since VideoSaver relies on FFMPEG,
             # it automatically scales with available resources without the need for additional Python processes.
-            self._consumer_processes = Process(
-                target=self._frame_saving_loop,
-                args=(
-                    self._saver,
-                    self._image_queue,
-                    self._terminator_array,
-                    log_path,
-                    lock,
-                    frame_width,
-                    frame_height,
-                    frame_rate,
-                    self._name,
+            self._consumer_processes: tuple[Process, ...] = (
+                Process(
+                    target=self._frame_saving_loop,
+                    args=(
+                        self._saver,
+                        self._image_queue,
+                        self._terminator_array,
+                        log_path,
+                        lock,
+                        frame_width,
+                        frame_height,
+                        frame_rate,
+                        self._name,
+                    ),
+                    daemon=True,
                 ),
-                daemon=True,
             )
         else:
             # For ImageSaver, spawns the requested number of saver processes. ImageSaver-based processed do not need
@@ -188,6 +285,11 @@ class VideoSystem:
     def __del__(self):
         """Ensures that all resources are released upon garbage collection."""
         self.stop()
+
+    @property
+    def is_running(self) -> bool:
+        """Returns true oif the class has active subprocesses (is running) and false otherwise."""
+        return self._running
 
     @staticmethod
     def get_opencv_ids() -> tuple[str, ...]:
@@ -744,7 +846,7 @@ class VideoSystem:
     @staticmethod
     def _frame_production_loop(
         camera: OpenCVCamera | HarvestersCamera | MockCamera,
-        image_queue: MPQueue[Any],
+        image_queue: MPQueue,
         terminator_array: SharedMemoryArray,
         log_path: Path,
         display_video: bool = False,
@@ -866,7 +968,7 @@ class VideoSystem:
     @staticmethod
     def _frame_saving_loop(
         saver: VideoSaver | ImageSaver,
-        image_queue: MPQueue[Any],
+        image_queue: MPQueue,
         terminator_array: SharedMemoryArray,
         log_path: Path,
         lock: Lock,
@@ -994,6 +1096,10 @@ class VideoSystem:
             When the class is configured to run in the interactive mode, calling this method automatically enables
             console output, even if it has been previously disabled. If console class is configured to log
             messages, the messages emitted by this class will be logged.
+
+            By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
+            in some cases the user may want to see the camera feed, but only record the frames after some initial
+            setup. To enable saving camera frames, call the start_frame_saving() method.
 
         Raises:
             ProcessError: If the method is called outside the '__main__' scope.

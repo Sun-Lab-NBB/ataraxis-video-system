@@ -693,9 +693,9 @@ class MockCamera:
         self,
         name: str = "MockCamera",
         camera_id: int = 0,
-        fps: Optional[float] = None,
-        width: Optional[float] = None,
-        height: Optional[float] = None,
+        fps: float = 30,
+        width: int = 600,
+        height: int = 600,
         *,
         color: bool = True,
     ) -> None:
@@ -704,9 +704,9 @@ class MockCamera:
         self._name: str = name
         self._camera_id: int = camera_id
         self._camera: bool = False
-        self._fps: Optional[float] = fps
-        self._width: Optional[float] = width
-        self._height: Optional[float] = height
+        self._fps: float = fps
+        self._width: float = width
+        self._height: float = height
         self._acquiring: bool = False
 
         # To allow reproducible testing, the class statically generates a pool of 10 images that is drawn from during
