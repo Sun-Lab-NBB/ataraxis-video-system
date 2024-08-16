@@ -13,7 +13,6 @@ from pathlib import Path
 import cv2
 from enum import Enum
 
-import numpy as np
 from ataraxis_base_utilities import console, LogLevel
 from typing import Any, Optional
 import subprocess
@@ -865,7 +864,7 @@ class VideoSaver:
             )
             console.error(message=message, error=RuntimeError)
 
-    def save_frame(self, _frame_id: int, frame: np.ndarray) -> None:
+    def save_frame(self, _frame_id: int, frame: NDArray[Any]) -> None:
         """Sends the input frame to be encoded by the 'live' FFMPEG encoder process.
 
         This method is used to submit frames to be saved to a precreated FFMPEG process. It expects that the
