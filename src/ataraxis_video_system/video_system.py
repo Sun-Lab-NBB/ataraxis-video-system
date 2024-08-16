@@ -20,7 +20,6 @@ from multiprocessing.managers import SyncManager
 
 import cv2
 import numpy as np
-import keyboard
 from ataraxis_base_utilities.console.console_class import LogLevel
 from ataraxis_time import PrecisionTimer
 from ataraxis_time.time_helpers import convert_time
@@ -89,15 +88,10 @@ class VideoSystem:
             timeout, the class will discard all unsaved data by forcing the processes to terminate.
         display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
             the camera feed in real time, which is frequently desirable in scientific experiments.
-        listen_for_keypress: Determines whether the system should listen for certain key presses, allowing to control
-            runtime behavior through keyboard. When this is enabled, use 'q' to trigger class shutdown, 'w' to start
-            saving camera frames, and 's' to stop saving camera frames.
 
     Attributes:
         _camera: Stores the Camera class instance that provides camera interface.
         _saver: Stores the Saver class instance that provides saving backend interface.
-        _interactive_mode: Determines whether keyboard-based class behavior control is allowed.
-        _name: Stores the system name.
         _shutdown_timeout: Stores the time in seconds after which to forcefully terminate processes
             during shutdown.
         _running: Tracks whether the system is currently running (has active subprocesses).
@@ -125,7 +119,6 @@ class VideoSystem:
         shutdown_timeout: Optional[int] = 600,
         *,
         display_frames: bool = True,
-        listen_for_keypress: bool = False,
     ):
         # Ensures that arguments are valid:
 
@@ -151,11 +144,6 @@ class VideoSystem:
             raise TypeError(
                 f"Unable to initialize the {system_name} VideoSystem class instance. Expected a boolean for "
                 f"display_frames, but got {display_frames} of type {type(display_frames).__name__}"
-            )
-        if not isinstance(listen_for_keypress, bool):
-            raise TypeError(
-                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a boolean for "
-                f"listen_for_keypress, but got {listen_for_keypress} of type {type(listen_for_keypress).__name__}"
             )
         if image_saver_process_count < 1:
             raise ValueError(
@@ -183,7 +171,6 @@ class VideoSystem:
         # Saves input arguments to class attributes
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera = camera
         self._saver: VideoSaver | ImageSaver = saver
-        self._interactive_mode: bool = listen_for_keypress
         self._name: str = system_name
         self._shutdown_timeout: Optional[int] = shutdown_timeout
         self._running: bool = False  # Tracks whether the system has active processes
@@ -290,6 +277,11 @@ class VideoSystem:
     def is_running(self) -> bool:
         """Returns true oif the class has active subprocesses (is running) and false otherwise."""
         return self._running
+
+    @property
+    def name(self) -> str:
+        """Returns the name of the VideoSystem class instance."""
+        return self._name
 
     @staticmethod
     def get_opencv_ids() -> tuple[str, ...]:
@@ -822,6 +814,7 @@ class VideoSystem:
 
         # Runs until manually terminated by the user through GUI or programmatically through the thread kill argument.
         while True:
+            # No need to unblock here as the loop is terminated by sending None through the loop.
             frame = display_queue.get()
 
             # Programmatic termination is done by passing a non-numpy-array input through the queue
@@ -1130,19 +1123,6 @@ class VideoSystem:
         # Starts the producer process
         self._producer_process.start()
 
-        # If the class is configured to run in the interactive mode, pairs interactive hotkeys with specific
-        # 'on trigger' events.
-        if self._interactive_mode:
-            console.enable()  # Interactive mode automatically enables console output
-            keyboard.add_hotkey("q", self._on_press_q)
-            keyboard.add_hotkey("w", self._on_press_w)
-            keyboard.add_hotkey("s", self._on_press_s)
-            message = (
-                f"Started VideoSystem {self._name} in interactive mode. Press 'q' to stop the system, 'w' to start "
-                f"saving acquired camera frames and 's' to stop saving camera frames."
-            )
-            console.echo(message=message, level=LogLevel.INFO)
-
         # Sets the running tracker
         self._running = True
 
@@ -1186,10 +1166,6 @@ class VideoSystem:
         for process in self._consumer_processes:
             process.join()
 
-        # Ends listening for keypresses, does nothing if no keypresses were enabled.
-        if self._interactive_mode:
-            keyboard.unhook_all_hotkeys()
-
         # Disconnects from and destroys the terminator array buffer
         self._terminator_array.disconnect()
         self._terminator_array.destroy()
@@ -1215,43 +1191,3 @@ class VideoSystem:
         """
         if self._running:
             self._terminator_array.write_data(index=1, data=1)
-
-    def _on_press_q(self) -> None:
-        """Specializes the 'on_press' method to 'q' key press."""
-        self._on_press("q")
-
-    def _on_press_s(self) -> None:
-        """Specializes the 'on_press' method to 's' key press."""
-        self._on_press("s")
-
-    def _on_press_w(self) -> None:
-        """Specializes the 'on_press' method to 'w' key press."""
-        self._on_press("w")
-
-    def _on_press(self, key: str) -> None:
-        """Allows controlling certain class runtime behaviors based on specific keyboard key presses.
-
-        This method is only used when the VideoSystem runs in the interactive mode. It allows toggling flow-control
-        class methods (stop, start_frame_saving, stop_frame_saving) by pressing specific keyboard keys (q, w, s). By
-        toggling these commands, the class alters certain values in the shared terminator_array, which alters the
-        behavior of running consumer and producer processes.
-
-        Notes:
-            This method is designed to be used together with the keyboard library, which sets up the background
-            listener loop and triggers appropriate _on_press() method specification depending on the key that was
-            pressed.
-
-        Args:
-            key: The keyboard key that was pressed.
-        """
-        if key == "q":
-            self.stop()
-            console.echo(f"Initiated shutdown sequence for VideoSystem {self._name}")
-
-        elif key == "s":
-            self.stop_frame_saving()
-            console.echo(f"Stopped saving frames acquired by VideoSystem {self._name}")
-
-        elif key == "w":
-            self.start_frame_saving()
-            console.echo(f"Started saving frames acquired by VideoSystem {self._name}")

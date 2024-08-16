@@ -80,14 +80,32 @@ def interactive_run(camera_backend, saver_backend, output_directory, display_fra
         shutdown_timeout=60,
         system_name="interactive_video_system",
         display_frames=display_frames,
-        listen_for_keypress=True,
     )
     video_system.start()
+    console.enable() # Enables console output
 
-    # Since interactive mode uses interactive controls, this blocks until the user triggers the shutdown method with a
-    # 'q' key
+    # Ues terminal input to control the video system
     while video_system.is_running:
-        pass
+        key = input("Enter command key:")
+        if key.lower()[0] == 'q':
+            message = f"Terminating VideoSystem {video_system.name}"""
+            console.echo(message)
+            video_system.stop()
+        elif key.lower()[0] == 'w':
+            message = f"Starting VideoSystem {video_system.name} camera frames saving"""
+            console.echo(message)
+            video_system.start_frame_saving()
+        elif key.lower()[0] == 's':
+            message = f"Stopping VideoSystem {video_system.name} camera frames saving"""
+            console.echo(message)
+            video_system.stop_frame_saving()
+        else:
+            message = (
+                f"Unknown input key {key.lower()[0]} encountered while interacting with VideoSystem "
+                f"{video_system.name}. Use 'q' to terminate the system, 'w' to start saving frames, and 's' to stop "
+                f"saving frames."
+            )
+            console.echo(message)
 
 
 if __name__ == "__main__":

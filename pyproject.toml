@@ -12,7 +12,7 @@ version = "1.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as images or videos."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.10, <3.11"
 authors = [
     { name = "Jacob Groner", email = "jrg349@cornell.edu" },
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
@@ -45,10 +45,11 @@ classifiers = [
 dependencies = [
     "numpy>=2,<3",
     "opencv-python>=4,<5",
+    "harvesters>=1.4",
     "ataraxis-time>=2,<3",
     "ataraxis-base-utilities>=2,<3",
     "ataraxis-data-structures>=1,<2",
-    "keyboard>=0,<1"
+    "click>=8,<9",
 ]
 
 [project.urls]
@@ -64,7 +65,7 @@ Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/ov
 # project dependencies with conda over pip as possible.
 condarun = [
     "numpy>=2,<3",
-    "keyboard>=0,<1"
+    "click>=8,<9",
 ]
 
 # Dependencies known to be installable with conda for all development platforms (OSX ARM64, WIN AMD64, LIN AMD64).
@@ -95,7 +96,6 @@ conda = [
 
     # Types:
     "types-pillow>=10,<11",
-    "types-keyboard>=0,<1",
 
     # Building
     "hatchling>=1,<2",
@@ -117,8 +117,6 @@ noconda =[
 
     # Building
     "build>=1,<2",
-
-    # Types
 
     # Automation
     "ataraxis-automation>=3,<4",
