@@ -146,8 +146,8 @@ class OpenCVCamera:
         backend: int = cv2.CAP_ANY,
         camera_id: int = 0,
         fps: Optional[float] = None,
-        width: Optional[float] = None,
-        height: Optional[float] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
     ) -> None:
         # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
         # the necessary input filtering.
@@ -159,8 +159,8 @@ class OpenCVCamera:
         self._camera_id: int = camera_id
         self._camera: Optional[cv2.VideoCapture] = None
         self._fps: Optional[float] = fps
-        self._width: Optional[float] = width
-        self._height: Optional[float] = height
+        self._width: Optional[int] = width
+        self._height: Optional[int] = height
         self._acquiring: bool = False
 
     def __del__(self) -> None:
@@ -192,7 +192,7 @@ class OpenCVCamera:
         if self._camera is None:
             # Generates an OpenCV VideoCapture object to acquire images from the camera. Uses the specified backend and
             # camera ID index.
-            self._camera = cv2.VideoCapture(index=self._camera_id, apiPreference=self._backend)
+            self._camera = cv2.VideoCapture(index=self._camera_id, apiPreference=int(self._backend))
 
             # Writes image acquisition parameters to the camera via the object generated above. If any of the
             # acquisition parameters were not provided, skips setting them and instead retrieves them from the
@@ -200,9 +200,9 @@ class OpenCVCamera:
             if self._fps is not None:
                 self._camera.set(cv2.CAP_PROP_FPS, self._fps)
             if self._width is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, round(self._width))
+                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))
             if self._height is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, round(self._height))
+                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))
 
             # Overwrites class attributes with the current properties of the camera. They may differ from the expected
             # result of setting the properties above!
@@ -405,8 +405,8 @@ class HarvestersCamera:
         cti_path: Path,
         camera_id: int = 0,
         fps: Optional[float] = None,
-        width: Optional[float] = None,
-        height: Optional[float] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
     ) -> None:
         # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
         # the necessary input filtering.
@@ -416,13 +416,13 @@ class HarvestersCamera:
         self._camera_id: int = camera_id
         self._camera: Optional[ImageAcquirer] = None
         self._fps: Optional[float] = fps
-        self._width: Optional[float] = width
-        self._height: Optional[float] = height
+        self._width: Optional[int] = width
+        self._height: Optional[int] = height
 
         # Initializes the Harvester class to discover the list of available cameras.
         self._harvester = Harvester()
-        self._harvester.add_cti_file(file_path=str(cti_path))  # Adds the .cti file to the class
-        self._harvester.update_device_info_list()  # Discovers compatible cameras using the input .cti file interface
+        self._harvester.add_file(file_path=str(cti_path))  # Adds the .cti file to the class
+        self._harvester.update()  # Discovers compatible cameras using the input .cti file interface
 
     def __del__(self) -> None:
         """Ensures that camera is disconnected upon garbage collection."""
@@ -454,27 +454,26 @@ class HarvestersCamera:
         if self._camera is None:
             # Generates a Harvester ImageAcquirer camera interface object using the provided camera ID as the list_index
             # input.
-            self._camera = self._harvester.create_image_acquirer(list_index=self._camera_id)
+            self._camera = self._harvester.create(search_key=self._camera_id)
 
             # Writes image acquisition parameters to the camera via the object generated above.
-            if self._fps is not None:
-                # noinspection PyProtectedMember
-                self._camera._device.node_map.AcquisitionFrameRate.value = self._fps
             if self._width is not None:
-                # noinspection PyProtectedMember
-                self._camera._device.node_map.Width.value = int(self._width)
+                self._camera.remote_device.node_map.Width.value = self._width
             if self._height is not None:
-                # noinspection PyProtectedMember
-                self._camera._device.node_map.Height.value = int(self._height)
+                self._camera.remote_device.node_map.Height.value = self._height
+            # Since the newest version of Harvesters checks inputs for validity, the fps have to be set last, as
+            # the maximum fps is affected by frame width and height
+            if self._fps is not None:
+                self._camera.remote_device.node_map.AcquisitionFrameRate.value = self._fps
 
             # Overwrites class attributes with the current properties of the camera. They may differ from the expected
             # result of setting the properties above!
             # noinspection PyProtectedMember
-            self._fps = self._camera._device.node_map.AcquisitionFrameRate.value
+            self._fps = self._camera.remote_device.node_map.AcquisitionFrameRate.value
             # noinspection PyProtectedMember
-            self._width = self._camera._device.node_map.Width.value
+            self._width = self._camera.remote_device.node_map.Width.value
             # noinspection PyProtectedMember
-            self._height = self._camera._device.node_map.Height.value
+            self._height = self._camera.remote_device.node_map.Height.value
 
     def disconnect(self) -> None:
         """Disconnects from the camera by stopping image acquisition, clearing any unconsumed buffers, and releasing
@@ -487,11 +486,11 @@ class HarvestersCamera:
 
         # If the camera is already disconnected, returns without doing anything.
         if self._camera is not None:
-            self._camera.stop_image_acquisition()  # Stops image acquisition
+            self._camera.stop()  # Stops image acquisition
 
             # Discards any unconsumed buffers to ensure proper memory release
             while self._camera.num_holding_filled_buffers != 0:
-                _ = self._camera.fetch_buffer()
+                _ = self._camera.fetch()
 
             self._camera.destroy()  # Releases the camera object
             self._camera = None  # Sets the camera object to None
@@ -509,7 +508,7 @@ class HarvestersCamera:
         has been called, continuously acquires and buffers images even if they are not retrieved.
         """
         if self._camera is not None:
-            return self._camera.is_acquiring_images()
+            return self._camera.is_acquiring()
         else:
             return False  # If the camera is not connected, it cannot be acquiring images.
 
@@ -576,69 +575,7 @@ class HarvestersCamera:
             RuntimeError: If the camera does not yield an image, or if the method is called for a class not currently
                 connected to a camera.
         """
-        if self._camera:
-            # If necessary, initializes image acquisition
-            if not self._camera.is_acquiring_images():
-                self._camera.start_image_acquisition()
-
-            # Retrieves the next available image buffer from the camera. Uses the 'with' context to properly
-            # re-queue the buffer to acquire further images.
-            with self._camera.fetch_buffer() as buffer:
-                if buffer is None:
-                    message = (
-                        f"The Harvesters-managed camera {self._name} with id {self._camera_id} did not yield an image, "
-                        f"which is not expected. This may indicate initialization or connectivity issues."
-                    )
-                    console.error(message=message, error=RuntimeError)
-
-                # Retrieves the contents (frame data) from the buffer
-                content = buffer.payload.components[0]
-
-                # Collects the information necessary to reshape the originally 1-dimensional frame array into the
-                # 2-dimensional array using the correct number and order of color channels.
-                width = content.width
-                height = content.height
-                data_format = content.data_format
-
-                # For monochrome formats, reshapes the 1D array into a 2D array and returns it to caller.
-                if data_format in mono_location_formats:
-                    # Uses copy, which is VERY important. Once the buffer is released, the original 'content' is lost,
-                    # so we need to force numpy to copy the data instead of using the default referencing behavior.
-                    return content.data.reshape(height, width).copy()
-                else:
-                    # For color data, evaluates the input format and reshapes the data as necessary
-                    if (
-                        data_format in rgb_formats
-                        or data_format in rgba_formats
-                        or data_format in bgr_formats
-                        or data_format in bgra_formats
-                    ):
-                        # Reshapes the data into RGB + A format as the first processing step.
-                        content.data.reshape(
-                            height,
-                            width,
-                            int(content.num_components_per_pixel),  # Sets of R, G, B, and Alpha
-                        )
-
-                        # Swaps every R and B value (RGB → BGR) ot produce BGR / BGRA images. This ensures consistency
-                        # with our OpenCVCamera API. Uses copy, which is VERY important. Once the buffer is released,
-                        # the original 'content' is lost, so we need to force numpy to copy the data instead of using
-                        # the default referencing behavior.
-                        frame = content[:, :, ::-1].copy()
-
-                        # Returns the reshaped frame array to caller
-                        return frame
-
-                    # If the image ahs an unsupported data format, raises an error
-                    else:
-                        message = (
-                            f"The Harvesters-managed camera {self._name} with id {self._camera_id} yielded an image "
-                            f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
-                            f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
-                            f"Otherwise, you may need to implement a custom data reshaper algorithm."
-                        )
-                        console.error(message=message, error=RuntimeError)
-        else:
+        if not self._camera:
             message = (
                 f"The Harvesters-managed camera {self._name} with id {self._camera_id} is not connected and cannot "
                 f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
@@ -646,6 +583,69 @@ class HarvestersCamera:
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
             raise RuntimeError(message)  # pragma: no cover
+
+        # If necessary, initializes image acquisition
+        if not self._camera.is_acquiring():
+            self._camera.start()
+
+        # Retrieves the next available image buffer from the camera. Uses the 'with' context to properly
+        # re-queue the buffer to acquire further images.
+        with self._camera.fetch() as buffer:
+            if buffer is None:
+                message = (
+                    f"The Harvesters-managed camera {self._name} with id {self._camera_id} did not yield an image, "
+                    f"which is not expected. This may indicate initialization or connectivity issues."
+                )
+                console.error(message=message, error=RuntimeError)
+
+            # Retrieves the contents (frame data) from the buffer
+            content = buffer.payload.components[0]
+
+            # Collects the information necessary to reshape the originally 1-dimensional frame array into the
+            # 2-dimensional array using the correct number and order of color channels.
+            width = content.width
+            height = content.height
+            data_format = content.data_format
+
+            # For monochrome formats, reshapes the 1D array into a 2D array and returns it to caller.
+            if data_format in mono_location_formats:
+                # Uses copy, which is VERY important. Once the buffer is released, the original 'content' is lost,
+                # so we need to force numpy to copy the data instead of using the default referencing behavior.
+                return content.data.reshape(height, width).copy()
+
+            else:
+                # For color data, evaluates the input format and reshapes the data as necessary
+                if (
+                    data_format in rgb_formats
+                    or data_format in rgba_formats
+                    or data_format in bgr_formats
+                    or data_format in bgra_formats
+                ):
+                    # Reshapes the data into RGB + A format as the first processing step.
+                    content.data.reshape(
+                        height,
+                        width,
+                        int(content.num_components_per_pixel),  # Sets of R, G, B, and Alpha
+                    )
+
+                    # Swaps every R and B value (RGB → BGR) ot produce BGR / BGRA images. This ensures consistency
+                    # with our OpenCVCamera API. Uses copy, which is VERY important. Once the buffer is released,
+                    # the original 'content' is lost, so we need to force numpy to copy the data instead of using
+                    # the default referencing behavior.
+                    frame = content[:, :, ::-1].copy()
+
+                    # Returns the reshaped frame array to caller
+                    return frame
+
+                # If the image ahs an unsupported data format, raises an error
+                else:
+                    message = (
+                        f"The Harvesters-managed camera {self._name} with id {self._camera_id} yielded an image "
+                        f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
+                        f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
+                        f"Otherwise, you may need to implement a custom data reshaper algorithm."
+                    )
+                    console.error(message=message, error=RuntimeError)
 
 
 class MockCamera:

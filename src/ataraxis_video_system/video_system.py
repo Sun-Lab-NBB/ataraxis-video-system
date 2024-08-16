@@ -15,21 +15,20 @@ from typing import Optional
 from types import NoneType
 from threading import Thread
 import multiprocessing
-from multiprocessing import Queue as MPQueue, Process, ProcessError, Lock
+from multiprocessing import Queue as MPQueue, Process, ProcessError
 from multiprocessing.managers import SyncManager
 
 import cv2
 import numpy as np
-from ataraxis_base_utilities.console.console_class import LogLevel
 from ataraxis_time import PrecisionTimer
 from ataraxis_time.time_helpers import convert_time
 from ataraxis_base_utilities import console
 from ataraxis_data_structures import SharedMemoryArray
 import datetime
+import subprocess
 
 from .camera import HarvestersCamera, OpenCVCamera, MockCamera, CameraBackends
 from .saver import (
-    SaverBackends,
     ImageFormats,
     VideoFormats,
     VideoCodecs,
@@ -61,13 +60,19 @@ class VideoSystem:
         memory depends on many factors and can only be known during runtime.
 
         This class requires Camera and Saver class instances during instantiation. To initialize
-        these classes, use create_camera() and create_saver() static methods available from the VideoSystem class.
+        these classes, use create_camera(), create_image_saver(), and create_video_saver() static methods available
+        from the VideoSystem class.
+
+        This class is written using a 'one-shot' design: start() and stop() methods can only be called one time. The
+        class ahs to be re-initialized to be able to cycle these methods again. This is a conscious design decision that
+        ensures proper resource release and cleanup, which was deemed important for our use pattern of this class.
 
     Args:
         camera: An initialized Camera class instance that interfaces with one of the supported cameras and allows
             acquiring camera frames. Use create_camera() method to instantiate this class.
         saver: An initialized Saver class instance that interfaces with OpenCV or FFMPEG and allows saving camera
-            frames as images or videos. Use create_saver() method to instantiate this class.
+            frames as images or videos. Use create_image_saver() or create_video_saver() methods to instantiate this
+            class.
         system_name: A unique identifier for the VideoSystem instance. This is used to identify the system in messages,
             logs, and generated video files.
         image_saver_process_count: The number of ImageSaver processes to use. This parameter is only used when the
@@ -137,8 +142,8 @@ class VideoSystem:
         if not isinstance(saver, (VideoSaver, ImageSaver)):
             raise TypeError(
                 f"Unable to initialize the {system_name} VideoSystem class instance. Expected one of the Saver class "
-                f"instances available through the create_saver() VideoSystem method for saver, but got "
-                f"{saver} of type {type(saver).__name__}"
+                f"instances available through the create_image_saver() or create_video_saver() VideoSystem methods for "
+                f"saver, but got {saver} of type {type(saver).__name__}"
             )
         if not isinstance(display_frames, bool):
             raise TypeError(
@@ -181,11 +186,15 @@ class VideoSystem:
         self._mp_manager: SyncManager = multiprocessing.Manager()
         self._image_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
 
+        # This tracker is sued to make it impossible to call start() after calling stop(). Stop() destroys critical
+        # flow-control infrastructure, requiring the class ot be re-initialized to enable calling start() again.
+        self._expired: bool = False
+
         # Uses the saver class output directory to construct the path to the frame acquisition log file. This file
-        # is stored in the same directory to which saved frames are written as images or video. The file is used to
-        # store the acquisition time for each saved frame.
+        # is stored in the same directory to which saved frames are written as images or video. The file stores the
+        # onset time, to which all frame acquisition timestamps are referenced.
         # noinspection PyProtectedMember
-        log_path = saver._output_directory.joinpath(f"{self._name}_frame_acquisition_log.txt")
+        onset_log = saver._output_directory.joinpath(f"{self._name}_frame_acquisition_onset.txt")
 
         # Instantiates an array shared between all processes. This array is used to control all child processes.
         # Index 0 (element 1) is used to issue global process termination command, index 1 (element 2) is used to
@@ -199,14 +208,9 @@ class VideoSystem:
         # from camera, optionally displays them to the user and queues them up to be saved by the consumers.
         self._producer_process: Process = Process(
             target=self._frame_production_loop,
-            args=(self._camera, self._image_queue, self._terminator_array, log_path, display_frames, fps_override),
+            args=(self._camera, self._image_queue, self._terminator_array, onset_log, display_frames, fps_override),
             daemon=True,
         )
-
-        # Instantiates the lock class to be used by consumer processes. Technically, this is only necessary when
-        # multiple ImageSavers are used, but this should be a very minor performance concern, so it is used for all
-        # use cases.
-        lock = self._mp_manager.Lock()
 
         # Sets up image consumer Process(es), depending on whether the saver class is an ImageSaver or a VideoSaver.
         if isinstance(saver, VideoSaver):
@@ -228,6 +232,12 @@ class VideoSystem:
             # Disconnects from the camera, since the producer Process has its own connection subroutine.
             camera.disconnect()
 
+            # Similar to onset_log above, but a separate file to prevent race conditions when multiple savers are used.
+            # This is only relevant for ImageSaver(s) (see below), but the interface is kept the same to make it easier
+            # to work with this code
+            # noinspection PyProtectedMember
+            timestamp_log = saver._output_directory.joinpath(f"{self._name}_frame_acquisition_timestamps_saver_1.txt")
+
             # For VideoSaver, spawns a single process and packages it into a tuple. Since VideoSaver relies on FFMPEG,
             # it automatically scales with available resources without the need for additional Python processes.
             self._consumer_processes: tuple[Process, ...] = (
@@ -237,8 +247,7 @@ class VideoSystem:
                         self._saver,
                         self._image_queue,
                         self._terminator_array,
-                        log_path,
-                        lock,
+                        timestamp_log,
                         frame_width,
                         frame_height,
                         frame_rate,
@@ -251,20 +260,24 @@ class VideoSystem:
             # For ImageSaver, spawns the requested number of saver processes. ImageSaver-based processed do not need
             # additional arguments required by VideoSaver processes, so instantiation does not require retrieving any
             # camera information.
-            processes = [
+            processes = []
+            for num in range(image_saver_process_count):
+                # To prevent race conditions from multiple savers, each saver writes stamps into a separate file. To do
+                # so, the name of the log file is incremented by the count of each saver.
+                # noinspection PyProtectedMember
+                timestamp_log = saver._output_directory.joinpath(
+                    f"{self._name}_frame_acquisition_timestamps_saver_{num+1}.txt"
+                )
                 Process(
                     target=self._frame_saving_loop,
                     args=(
                         self._saver,
                         self._image_queue,
                         self._terminator_array,
-                        log_path,
-                        lock,
+                        timestamp_log,
                     ),
                     daemon=True,
                 )
-                for _ in range(image_saver_process_count)
-            ]
 
             # Casts the list to tuple and saves it to class attribute.
             self._consumer_processes: tuple[Process, ...] = tuple(processes)
@@ -295,8 +308,8 @@ class VideoSystem:
         Notes:
             Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this method
             tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
-            advised to use the interactive imaging mode with each of the IDs to manually map IDs to cameras based on the
-            produced visual stream.
+            advised to use test each of the IDs with interactive-run CLI command to manually map IDs to cameras based
+            on the produced visual stream.
 
             This method works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The method
             connects to each camera and takes a test image to ensure the camera is accessible, and it should ONLY be
@@ -365,10 +378,10 @@ class VideoSystem:
 
         # Instantiates the class and adds the input .cti file.
         harvester = Harvester()
-        harvester.add_cti_file(file_path=str(cti_path))
+        harvester.add_file(file_path=str(cti_path))
 
         # Gets the list of accessible cameras
-        harvester.update_device_info_list()
+        harvester.update()
 
         # Loops over all discovered cameras and parses basic ID information from each camera to generate a descriptive
         # string.
@@ -466,26 +479,24 @@ class VideoSystem:
                 f"frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
             )
             raise console.error(error=TypeError, message=message)
-        if not isinstance(frame_height, (int, float, NoneType)):
+        if not isinstance(frame_height, (int, NoneType)):
             message = (
                 f"Unable to instantiate a {camera_name} Camera class object. Expected an integer or None for "
                 f"frame_height argument, but got {frame_height} of type {type(frame_height).__name__}."
             )
             raise console.error(error=TypeError, message=message)
 
-        # Casts frame arguments to floats, as this is what camera classes expect
+        # Casts frames_per_second to float, as this is what camera classes expect
         frames_per_second = float(frames_per_second)
-        frame_width = float(frame_width)
-        frame_height = float(frame_height)
 
         # OpenCVCamera
         if camera_backend == CameraBackends.OPENCV:
             # If backend preference is None, uses generic preference
-            if opencv_backend is None:
-                opencv_backend = cv2.CAP_ANY
+            if isinstance(opencv_backend, NoneType):
+                opencv_backend = int(cv2.CAP_ANY)
 
-            # Otherwise, if the backend is not an integer, raises an error
-            elif not isinstance(opencv_backend, int):
+            # If the backend is still not an integer, raises an error
+            if not isinstance(opencv_backend, int):
                 message = (
                     f"Unable to instantiate a {camera_name} OpenCVCamera class object. Expected an integer or None "
                     f"for opencv_backend argument, but got {opencv_backend} of type {type(opencv_backend).__name__}."
@@ -509,7 +520,7 @@ class VideoSystem:
         # HarvestersCamera
         elif camera_backend == CameraBackends.HARVESTERS:
             # Ensures that the cti_path is a valid Path object and that it points to a '.cti' file.
-            if not isinstance(cti_path, Path) or cti_path.suffix is not ".cti":
+            if not isinstance(cti_path, Path) or cti_path.suffix != ".cti":
                 message = (
                     f"Unable to instantiate a {camera_name} HarvestersCamera class object. Expected a Path object "
                     f"pointing to the '.cti' file for cti_path argument, but got {cti_path} of "
@@ -536,8 +547,8 @@ class VideoSystem:
             return MockCamera(
                 name=camera_name,
                 camera_id=camera_id,
-                height=frame_height,
-                width=frame_width,
+                height=int(frame_height),
+                width=int(frame_width),
                 fps=frames_per_second,
                 color=mock_color,
             )
@@ -552,15 +563,112 @@ class VideoSystem:
             raise console.error(error=ValueError, message=message)
 
     @staticmethod
-    def create_saver(
+    def create_image_saver(
         output_directory: Path,
-        saver_backend: SaverBackends = SaverBackends.VIDEO,
         image_format: ImageFormats = ImageFormats.TIFF,
         tiff_compression: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
         jpeg_quality: int = 95,
         jpeg_sampling_factor: int = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
         png_compression: int = 1,
         thread_count: int = 5,
+    ) -> ImageSaver:
+        """Creates and returns a Saver class instance configured to save camera frame as independent images.
+
+        This method centralizes Saver class instantiation. It contains methods for verifying the input information
+        and instantiating the specialized Saver class to output images. All Saver classes from this library have to be
+        initialized using this method or a companion create_video_saver() method.
+
+        Notes:
+            While the method contains many arguments that allow to flexibly configure the instantiated saver, the only
+            crucial one is the output directory. That said, it is advised to optimize all parameters
+            relevant for your chosen backend as needed, as it directly controls the quality, file size and encoding
+            speed of the generated file(s).
+
+        Args:
+            output_directory: The path to the output directory where the image or video files will be saved after
+                encoding.
+            image_format: The format to use for the output images. Use ImageFormats enumeration
+                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
+            tiff_compression: The integer-code that specifies the compression strategy used for
+                Tiff image files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended
+                to use code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good
+                speed-to-compression balance.
+            jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the
+                JPEG compression. A higher value means better quality, less data loss, bigger file size, and slower
+                processing time.
+            jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image
+                color-space. Has to be one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended
+                to use code 444 to preserve the full color-space of the image for scientific applications.
+            png_compression: An integer value between 0 and 9 that specifies the compression of
+                the PNG file. Unlike JPEG, PNG files are always lossless. This value controls the trade-off between
+                the compression ratio and the processing time.
+            thread_count: The number of writer threads to be used by the saver class. Since
+                ImageSaver uses the c-backed OpenCV library, it can safely process multiple frames at the same time
+                via multithreading. This controls the number of simultaneously saved images the class will support.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+        """
+        # Verifies that the input arguments are of the correct type.
+        if not isinstance(output_directory, Path):
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected a Path instance for output_directory "
+                f"argument, but got {output_directory} of type {type(output_directory).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(image_format, ImageFormats):
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an ImageFormats instance for "
+                f"image_format argument, but got {image_format} of type {type(image_format).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(tiff_compression, int):
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an integer for tiff_compression "
+                f"argument, but got {tiff_compression} of type {type(tiff_compression).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not 0 <= jpeg_quality <= 100:
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 100 for "
+                f"jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not 0 <= jpeg_sampling_factor <= 4:
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 4 for "
+                f"jpeg_sampling_factor argument, but got {jpeg_sampling_factor} of type "
+                f"{type(jpeg_sampling_factor).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not 0 <= png_compression <= 9:
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 9 for "
+                f"png_compression argument, but got {png_compression} of type "
+                f"{type(png_compression).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(thread_count, int):
+            message = (
+                f"Unable to instantiate an ImageSaver class object. Expected an integer for thread_count "
+                f"argument, but got {thread_count} of type {type(thread_count).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Configures, initializes and returns an ImageSaver instance
+        return ImageSaver(
+            output_directory=output_directory,
+            image_format=image_format,
+            tiff_compression=tiff_compression,
+            jpeg_quality=jpeg_quality,
+            jpeg_sampling_factor=jpeg_sampling_factor,
+            png_compression=png_compression,
+            thread_count=thread_count,
+        )
+
+    @staticmethod
+    def create_video_saver(
+        output_directory: Path,
         hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
@@ -569,44 +677,22 @@ class VideoSystem:
         output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
         quantization_parameter: int = 15,
         gpu: int = 0,
-    ) -> VideoSaver | ImageSaver:
-        """Creates and returns a Saver class instance that uses the specified saver backend.
+    ) -> VideoSaver:
+        """Creates and returns a Saver class instance configured to save camera frame as video files.
 
         This method centralizes Saver class instantiation. It contains methods for verifying the input information
-        and instantiating the specialized Saver class based on the requested saver backend. All Saver classes from
-        this library have to be initialized using this method.
+        and instantiating the specialized Saver class to output video files. All Saver classes from this library have
+        to be initialized using this method or a companion create_image_saver() method.
 
         Notes:
             While the method contains many arguments that allow to flexibly configure the instantiated saver, the only
-            crucial ones are the output directory and saver backend. That said, it is advised to optimize all parameters
+            crucial one is the output directory. That said, it is advised to optimize all parameters
             relevant for your chosen backend as needed, as it directly controls the quality, file size and encoding
             speed of the generated file(s).
 
         Args:
             output_directory: The path to the output directory where the image or video files will be saved after
                 encoding.
-            saver_backend: The backend to use for the saver class. Currently, all supported backends are derived from
-                the SaverBackends enumeration. It is advised to use the Video saver backend and, if possible, to
-                enable hardware encoding, to save frames as video files. Alternatively, Image backend is also available
-                to save frames as image files.
-            image_format: Only for Image savers. The format to use for the output images. Use ImageFormats enumeration
-                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
-            tiff_compression: Only for Image savers. The integer-code that specifies the compression strategy used for
-                Tiff image files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended
-                to use code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good
-                speed-to-compression balance.
-            jpeg_quality: Only for Image savers. An integer value between 0 and 100 that controls the 'loss' of the
-                JPEG compression. A higher value means better quality, less data loss, bigger file size, and slower
-                processing time.
-            jpeg_sampling_factor: Only for Image savers. An integer-code that specifies how JPEG encoder samples image
-                color-space. Has to be one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended
-                to use code 444 to preserve the full color-space of the image for scientific applications.
-            png_compression: Only for Image savers. An integer value between 0 and 9 that specifies the compression of
-                the PNG file. Unlike JPEG, PNG files are always lossless. This value controls the trade-off between
-                the compression ratio and the processing time.
-            thread_count: Only for Image savers. The number of writer threads to be used by the saver class. Since
-                ImageSaver uses the c-backed OpenCV library, it can safely process multiple frames at the same time
-                via multithreading. This controls the number of simultaneously saved images the class will support.
             hardware_encoding: Only for Video savers. Determines whether to use GPU (hardware) encoding or CPU
                 (software) encoding. It is almost always recommended to use the GPU encoding for considerably faster
                 encoding with almost no quality loss. GPU encoding is only supported by modern Nvidia GPUs, however.
@@ -638,151 +724,101 @@ class VideoSystem:
 
         Raises:
             TypeError: If the input arguments are not of the correct type.
-            ValueError: If the input saver_backend is not one of the supported options.
+            RuntimeError: If the instantiated saver is configured to use GPU video encoding, but the method does not
+                detect any available NVIDIA GPUs.
         """
-        # Verifies that the input arguments are of the correct type. Note, checks backend-specific arguments in
-        # backend-specific clause.
+
+        # Verifies that the input arguments are of the correct type.
         if not isinstance(output_directory, Path):
             message = (
                 f"Unable to instantiate a Saver class object. Expected a Path instance for output_directory argument, "
                 f"but got {output_directory} of type {type(output_directory).__name__}."
             )
             raise console.error(error=TypeError, message=message)
-
-        # Image Saver
-        if saver_backend == SaverBackends.IMAGE:
-            # Verifies ImageSaver initialization arguments:
-            if not isinstance(image_format, ImageFormats):
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an ImageFormats instance for "
-                    f"image_format argument, but got {image_format} of type {type(image_format).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not isinstance(tiff_compression, int):
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an integer for tiff_compression "
-                    f"argument, but got {tiff_compression} of type {type(tiff_compression).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not 0 <= jpeg_quality <= 100:
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 100 for "
-                    f"jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not 0 <= jpeg_sampling_factor <= 4:
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 4 for "
-                    f"jpeg_sampling_factor argument, but got {jpeg_sampling_factor} of type "
-                    f"{type(jpeg_sampling_factor).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not 0 <= png_compression <= 9:
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 9 for "
-                    f"png_compression argument, but got {png_compression} of type "
-                    f"{type(png_compression).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not isinstance(thread_count, int):
-                message = (
-                    f"Unable to instantiate an ImageSaver class object. Expected an integer for thread_count "
-                    f"argument, but got {thread_count} of type {type(thread_count).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-
-            # Configures, initializes and returns an ImageSaver instance
-            return ImageSaver(
-                output_directory=output_directory,
-                image_format=image_format,
-                tiff_compression=tiff_compression,
-                jpeg_quality=jpeg_quality,
-                jpeg_sampling_factor=jpeg_sampling_factor,
-                png_compression=png_compression,
-                thread_count=thread_count,
-            )
-
-        # Video Saver
-        elif saver_backend == SaverBackends.VIDEO:
-            # Verifies VideoSaver initialization arguments:
-            if not isinstance(hardware_encoding, bool):
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected a boolean for hardware_encoding "
-                    f"argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not isinstance(video_format, VideoFormats):
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected a VideoFormats instance for "
-                    f"video_format argument, but got {video_format} of type {type(video_format).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not isinstance(video_codec, VideoCodecs):
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected a VideoCodecs instance for "
-                    f"video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-
-            # Preset source depends on hardware_encoding value
-            if hardware_encoding:
-                if not isinstance(preset, GPUEncoderPresets):
-                    message = (
-                        f"Unable to instantiate a GPU VideoSaver class object. Expected a GPUEncoderPresets instance "
-                        f"for preset argument, but got {preset} of type {type(preset).__name__}."
-                    )
-                    raise console.error(error=TypeError, message=message)
-            else:
-                if not isinstance(preset, CPUEncoderPresets):
-                    message = (
-                        f"Unable to instantiate a CPU VideoSaver class object. Expected a CPUEncoderPresets instance "
-                        f"for preset argument, but got {preset} of type {type(preset).__name__}."
-                    )
-                    raise console.error(error=TypeError, message=message)
-
-            if not isinstance(input_pixel_format, InputPixelFormats):
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected an InputPixelFormats instance for "
-                    f"input_pixel_format argument, but got {input_pixel_format} of type "
-                    f"{type(input_pixel_format).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not isinstance(output_pixel_format, OutputPixelFormats):
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected an OutputPixelFormats instance for "
-                    f"output_pixel_format argument, but got {output_pixel_format} of type "
-                    f"{type(output_pixel_format).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-            if not -1 < quantization_parameter <= 51:
-                message = (
-                    f"Unable to instantiate a VideoSaver class object. Expected an integer between 0 and 51 for "
-                    f"quantization_parameter argument, but got {quantization_parameter} of type "
-                    f"{type(quantization_parameter).__name__}."
-                )
-                raise console.error(error=TypeError, message=message)
-
-            # Configures, initializes and returns a VideoSaver instance
-            return VideoSaver(
-                output_directory=output_directory,
-                hardware_encoding=hardware_encoding,
-                video_format=video_format,
-                video_codec=video_codec,
-                preset=preset,
-                input_pixel_format=input_pixel_format,
-                output_pixel_format=output_pixel_format,
-                quantization_parameter=quantization_parameter,
-                gpu=gpu,
-            )
-
-        # If the input backend does not match any of the supported backends, raises an error
-        else:
+        if not isinstance(hardware_encoding, bool):
             message = (
-                f"Unable to instantiate a Saver class object due to encountering an unsupported "
-                f"saver_backend argument {saver_backend} of type {type(saver_backend).__name__}. "
-                f"saver_backend has to be one of the options available from the SaverBackends enumeration."
+                f"Unable to instantiate a VideoSaver class object. Expected a boolean for hardware_encoding "
+                f"argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
             )
-            raise console.error(error=ValueError, message=message)
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(video_format, VideoFormats):
+            message = (
+                f"Unable to instantiate a VideoSaver class object. Expected a VideoFormats instance for "
+                f"video_format argument, but got {video_format} of type {type(video_format).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(video_codec, VideoCodecs):
+            message = (
+                f"Unable to instantiate a VideoSaver class object. Expected a VideoCodecs instance for "
+                f"video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Preset source depends on hardware_encoding value
+        if hardware_encoding:
+            if not isinstance(preset, GPUEncoderPresets):
+                message = (
+                    f"Unable to instantiate a GPU VideoSaver class object. Expected a GPUEncoderPresets instance "
+                    f"for preset argument, but got {preset} of type {type(preset).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+        else:
+            if not isinstance(preset, CPUEncoderPresets):
+                message = (
+                    f"Unable to instantiate a CPU VideoSaver class object. Expected a CPUEncoderPresets instance "
+                    f"for preset argument, but got {preset} of type {type(preset).__name__}."
+                )
+                raise console.error(error=TypeError, message=message)
+
+        if not isinstance(input_pixel_format, InputPixelFormats):
+            message = (
+                f"Unable to instantiate a VideoSaver class object. Expected an InputPixelFormats instance for "
+                f"input_pixel_format argument, but got {input_pixel_format} of type "
+                f"{type(input_pixel_format).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not isinstance(output_pixel_format, OutputPixelFormats):
+            message = (
+                f"Unable to instantiate a VideoSaver class object. Expected an OutputPixelFormats instance for "
+                f"output_pixel_format argument, but got {output_pixel_format} of type "
+                f"{type(output_pixel_format).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+        if not -1 < quantization_parameter <= 51:
+            message = (
+                f"Unable to instantiate a VideoSaver class object. Expected an integer between 0 and 51 for "
+                f"quantization_parameter argument, but got {quantization_parameter} of type "
+                f"{type(quantization_parameter).__name__}."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
+        # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
+        try:
+            # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
+            subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError:
+            message = (
+                f"Unable to instantiate a VideoSaver class object. The object is configured to use the GPU "
+                f"video encoding backend, which currently only supports NVIDIA GPUs. Calling 'nvidia-smi' to "
+                f"verify the presence of NVIDIA GPUs did not run successfully, indicating that there are no "
+                f"available NVIDIA GPUs on the host system. Use a CPU encoder or make sure nvidia-smi is callable "
+                f"from Python shell."
+            )
+            console.error(error=RuntimeError, message=message)
+
+        # Configures, initializes and returns a VideoSaver instance
+        return VideoSaver(
+            output_directory=output_directory,
+            hardware_encoding=hardware_encoding,
+            video_format=video_format,
+            video_codec=video_codec,
+            preset=preset,
+            input_pixel_format=input_pixel_format,
+            output_pixel_format=output_pixel_format,
+            quantization_parameter=quantization_parameter,
+            gpu=gpu,
+        )
 
     @staticmethod
     def _frame_display_loop(display_queue: Queue, camera_name: str) -> None:
@@ -814,7 +850,7 @@ class VideoSystem:
 
         # Runs until manually terminated by the user through GUI or programmatically through the thread kill argument.
         while True:
-            # No need to unblock here as the loop is terminated by sending None through the loop.
+            # This can be blocking, since the loop is terminated by passing 'None' through the queue
             frame = display_queue.get()
 
             # Programmatic termination is done by passing a non-numpy-array input through the queue
@@ -882,6 +918,12 @@ class VideoSystem:
         # noinspection PyTypeChecker
         stamp_timer: PrecisionTimer = PrecisionTimer("us")
 
+        # Also initializes a timer to limit displayed frames to 30 fps. This is to save computational resources, as
+        # displayed framerate does not need to be as high as acquisition framerate. This becomes very relevant for
+        # displaying large frames at high speeds, as the imshow backend can easily become overwhelmed, leading to
+        # queue backlogging and displayed data lagging behind the real stream.
+        show_timer: PrecisionTimer = PrecisionTimer("ms")
+
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all later time
         # readouts.
         onset = datetime.datetime.now(datetime.UTC)
@@ -918,7 +960,7 @@ class VideoSystem:
 
         # Saves onset data to the log file. Due to how the consumer processes work, this should always be the very
         # first entry to the file. Also includes the name of the camera.
-        with open(log_path, mode="wt") as log:
+        with open(log_path, mode="wt", buffering=1) as log:
             log.write(f"{camera.name}-{str(onset)}\n")  # Includes a newline to efficiently separate further entries
 
         # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 0
@@ -932,7 +974,7 @@ class VideoSystem:
 
                 # If manual frame rate control is enabled, resets the timer after acquiring each frame. This results in
                 # the time spent on further processing below to be 'absorbed' into the between-frame wait time.
-                if fps:
+                if fps is not None:
                     acquisition_timer.reset()
 
                 # Only buffers the frame for saving if this behavior is enabled through the terminator array
@@ -946,15 +988,18 @@ class VideoSystem:
                     frame_number += 1
 
                 # If the process is configured to display acquired frames, queues each frame to be displayed. Note, this
-                # does not depend on whether the frame is buffered for saving.
-                if display_video:
+                # does not depend on whether the frame is buffered for saving. The display frame limiting is
+                # critically important, as it prevents the display thread from being overwhelmed, causing displayed
+                # stream to lag behind the saved stream.
+                if display_video and show_timer.elapsed > 33.333:  # Display frames at 30 fps
                     display_queue.put(frame)
+                    show_timer.reset()  # Resets the timer for the next frame
 
         # Once the loop above is escaped releases all resources and terminates the Process.
-
         if display_video:
             display_queue.put(None)  # Terminates the display thread
             display_thread.join()  # Waits for the thread to close
+
         camera.disconnect()  # Disconnects from the camera
         terminator_array.disconnect()  # Disconnects from the terminator array
 
@@ -964,7 +1009,6 @@ class VideoSystem:
         image_queue: MPQueue,
         terminator_array: SharedMemoryArray,
         log_path: Path,
-        lock: Lock,
         frame_width: Optional[int] = None,
         frame_height: Optional[int] = None,
         video_frames_per_second: Optional[float] = None,
@@ -1006,9 +1050,6 @@ class VideoSystem:
                 between grabbing frames, timestamps are logged by consumers, rather than the producer. This method
                 creates an entry that bundles each frame ID with its acquisition timestamp and appends it to the log
                 file.
-            lock: A multiprocessing Lock instance, that is used to prevent race conditions when multiple ImageSavers
-                need to access the frame acquisition log file. This should not majorly detract the benefit of multiple
-                ImageSavers as logging is very fast compared to writing frames to disk.
             frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
                 This has to match the width reported by the Camera class that produces the frames.
             frame_height: Same as above, but specifies the height of the frames to be saved, in pixels.
@@ -1034,32 +1075,31 @@ class VideoSystem:
         # Connects to the terminator array to manage loop runtime
         terminator_array.connect()
 
-        # The loop runs continuously until the first (index 0) element of the array is set to 0. Note, the loop is
-        # kept alive until all frames in the queue are processed!
-        while terminator_array.read_data(index=0, convert_output=True) or not image_queue.empty():
-            # Grabs the image bundled with its ID and acquisition time from the queue and passes it to Saver class.
-            # This relies on both Image and Video savers having the same 'live' frame saving API. Uses a non-blocking
-            # binding to prevent deadlocking the loop, as it does not use the queue-based termination method for
-            # reliability reasons.
-            try:
-                frame, frame_id, frame_time = image_queue.get(block=False)
-            except Exception:
-                # The only expected exception here is when queue is empty. This block overall makes the code
-                # repeatedly cycle through the loop, allowing flow control statements to properly terminate the
-                # 'while' loop if necessary and the queue is empty.
-                continue
+        # Minimizes IO delay by opening the file once and streaming to the file afterward. Uses line buffering
+        with open(log_path, mode="at", buffering=1) as log:
+            # The loop runs continuously until the first (index 0) element of the array is set to 0. Note, the loop is
+            # kept alive until all frames in the queue are processed!
+            while terminator_array.read_data(index=0, convert_output=True) or not image_queue.empty():
+                # Grabs the image bundled with its ID and acquisition time from the queue and passes it to Saver class.
+                # This relies on both Image and Video savers having the same 'live' frame saving API. Uses a
+                # non-blocking binding to prevent deadlocking the loop, as it does not use the queue-based termination
+                # method for reliability reasons.
+                try:
+                    frame, frame_id, frame_time = image_queue.get(block=False)
+                except Exception:
+                    # The only expected exception here is when queue is empty. This block overall makes the code
+                    # repeatedly cycle through the loop, allowing flow control statements to properly terminate the
+                    # 'while' loop if necessary and the queue is empty.
+                    continue
 
-            # This is only executed if the get() above yielded data
-            saver.save_frame(frame_id, frame)
+                # This is only executed if the get() above yielded data
+                saver.save_frame(frame_id, frame)
 
-            # Bundles frame ID with acquisition time and writes it to the log file. Uses locks to prevent race
-            # conditions when multiple ImageSavers are used at the same time. This should not majorly degrade
-            # performance, as writing a short text string to file is still much faster than saving an image. For
-            # Video savers, this is even less of a concern as there is always one saver at any given time.
-            lock.acquire()
-            with open(log_path, mode="at") as log:
+                # Bundles frame ID with acquisition time and writes it to the log file. Uses locks to prevent race
+                # conditions when multiple ImageSavers are used at the same time. This should not majorly degrade
+                # performance, as writing a short text string to file is still much faster than saving an image. For
+                # Video savers, this is even less of a concern as there is always one saver at any given time.
                 log.write(f"{str(frame_id)}-{str(frame_time)}\n")  # This produces entries like: '0001-18528'
-            lock.release()
 
         # Terminates the video encoder as part of the shutdown procedure
         if isinstance(saver, VideoSaver):
@@ -1086,21 +1126,27 @@ class VideoSystem:
         call to the stop() method to properly release the resources allocated to the class.
 
         Notes:
-            When the class is configured to run in the interactive mode, calling this method automatically enables
-            console output, even if it has been previously disabled. If console class is configured to log
-            messages, the messages emitted by this class will be logged.
-
             By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
             in some cases the user may want to see the camera feed, but only record the frames after some initial
             setup. To enable saving camera frames, call the start_frame_saving() method.
 
         Raises:
-            ProcessError: If the method is called outside the '__main__' scope.
+            ProcessError: If the method is called outside the '__main__' scope. Also, if this method is called after
+                calling the stop() method without first re-initializing the class.
         """
 
         # if the class is already running, does nothing. This makes it impossible to call start multiple times in a row.
         if self._running:
             return
+
+        # Prevents start / stop cycling
+        if self._expired:
+            message: str = (
+                f"The start method of the VideoSystem {self._name} was called after calling the stop() method, which "
+                f"is not allowed. Stop() method destroys critical flow-control infrastructure of the class and the "
+                f"class has to be re-initialized to restore that infrastructure."
+            )
+            console.error(message=message, error=ProcessError)
 
         # Ensures that it is onl;y possible to call this method from the main scope. This is to prevent uncontrolled
         # daemonic process spawning behavior.
@@ -1114,6 +1160,10 @@ class VideoSystem:
                 f"not allowed. Make sure that the start() and stop() methods are only called from the main scope."
             )
             console.error(message=message, error=ProcessError)
+
+        # Ensures the global terminator value is set to 1 (runtime). Otherwise, the processes will terminate right
+        # after initialization
+        self._terminator_array.write_data(index=0, data=1)
 
         # Starts consumer processes first to minimize queue buildup once the producer process is initialized.
         # Technically, due to saving frames being initially disabled, queue buildup is no longer a major concern.
@@ -1129,11 +1179,9 @@ class VideoSystem:
     def stop(self) -> None:
         """Stops all producer and consumer processes and terminates class runtime by releasing all resources.
 
-        While this does not delete the class instance itself, it is generally recommended to only call this method once,
-        during the general termination of the runtime that instantiated the class. Calling start() and stop() multiple
-        times should be avoided, and instead it is better to re-initialize the class before cycling through start() and
-        stop() calls. Every call to the start() method should be paired with the call to this method to properly release
-        resources.
+        While this does not delete the class instance itself, only call this method once, during the general
+        termination of the runtime that instantiated the class. This method destroys the shared memory array buffer,
+        so it is impossible to call start() after stop() has been called without re-initializing the class.
 
         Notes:
             The class will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
@@ -1166,12 +1214,15 @@ class VideoSystem:
         for process in self._consumer_processes:
             process.join()
 
-        # Disconnects from and destroys the terminator array buffer
+        # Disconnects from and destroys the terminator array buffer. This step destroys the shared memory buffer,
+        # making it impossible to call start() again.
         self._terminator_array.disconnect()
         self._terminator_array.destroy()
 
         # Sets running tracker
         self._running = False
+
+        self._expired = True  # Makes it impossible to call start() after this method finishes runtime
 
     def stop_frame_saving(self) -> None:
         """Disables saving acquired camera frames.
