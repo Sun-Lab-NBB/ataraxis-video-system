@@ -6,7 +6,7 @@ project = 'ataraxis-video-system'
 # noinspection PyShadowingBuiltins
 copyright = '2024, Ivan Kondratyev (Inkaros) & Sun Lab'
 authors = ['Ivan Kondratyev (Inkaros)', 'Jacob Groner']
-release = importlib_metadata.version("ataraxis-base-utilities")  # Extracts the project version from the .toml file.
+release = importlib_metadata.version("ataraxis-video-system")  # Extracts the project version from the .toml file.
 
 # -- General configuration ---------------------------------------------------
 extensions = [

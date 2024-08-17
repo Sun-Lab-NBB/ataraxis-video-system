@@ -10,23 +10,30 @@ through this module. Primarily, this is because the API allows fine-tuning the b
 not possible through this CLI script. Almost every use-case will benefit from using an optimally tuned Saver class.
 """
 
-import click
-from ataraxis_base_utilities import console, LogLevel
+from typing import Any
 from pathlib import Path
 
-from .video_system import VideoSystem
+import click
+from ataraxis_base_utilities import LogLevel, console
+
+from .saver import ImageSaver, VideoSaver, ImageFormats, CPUEncoderPresets, GPUEncoderPresets, InputPixelFormats
 from .camera import CameraBackends
-from .saver import CPUEncoderPresets, GPUEncoderPresets, InputPixelFormats, ImageFormats
+from .video_system import VideoSystem
 
 
-def _validate_positive_int(_ctx, _param, value) -> int | None:
+def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
     """Ensures that the provided integer value is positive."""
     if value is not None and value <= 0:
         raise click.BadParameter("Must be a positive integer.")
-    return value
+
+    if value is not None:
+        return int(value)
+
+    else:
+        return None
 
 
-def _validate_positive_float(_ctx, _param, value) -> float | None:
+def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
     """Ensures that the provided float value is positive."""
     if value is not None and value <= 0:
         raise click.BadParameter("Must be a positive number (integer or float).")
@@ -127,7 +134,16 @@ def _validate_positive_float(_ctx, _param, value) -> float | None:
     help="The frames per second (FPS) to use for the camera. Must be a positive number.",
 )
 def live_run(
-    camera_backend, camera_id, saver_backend, output_directory, display_frames, monochrome, cti_path, width, height, fps
+    camera_backend: str,
+    camera_id: int,
+    saver_backend: str,
+    output_directory: str,
+    display_frames: bool,
+    monochrome: bool,
+    cti_path: str,
+    width: int,
+    height: int,
+    fps: float,
 ) -> None:
     """Instantiates Camera, Saver and VideoSystem classes using the input parameters and runs the VideoSystem with
     manual control from the user.
@@ -181,6 +197,8 @@ def live_run(
         pixel_color = InputPixelFormats.MONOCHROME
     else:
         pixel_color = InputPixelFormats.BGR
+
+    saver: ImageSaver | VideoSaver
     if saver_backend == "image":
         saver = VideoSystem.create_image_saver(
             output_directory=Path(output_directory),

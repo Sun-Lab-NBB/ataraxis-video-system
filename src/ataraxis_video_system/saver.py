@@ -9,20 +9,20 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_saver()' method from the VideoSystem class.
 """
 
-from pathlib import Path
-import cv2
+import re
 from enum import Enum
-
-from ataraxis_base_utilities import console, LogLevel
+from queue import Empty, Queue
 from typing import Any, Optional
+from pathlib import Path
+import threading
+from threading import Thread
 import subprocess
 from subprocess import Popen, TimeoutExpired
-from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor
-from threading import Thread
+
+import cv2
 from numpy.typing import NDArray
-import re
-import threading
+from ataraxis_base_utilities import LogLevel, console
 
 
 class SaverBackends(Enum):
@@ -364,8 +364,8 @@ class ImageSaver:
         self._output_directory: Path = output_directory
         self._image_format: ImageFormats = image_format
 
-        # Initializes class multithreading control structure
-        self._queue: Queue = Queue()  # Local queue to distribute frames to writer threads
+        # Local queue to distribute frames to writer threads
+        self._queue: Queue = Queue()  # type: ignore
         # Executor to manage write operations
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=thread_count)
         self._running: bool = True  # Tracks whether the threads are running
@@ -375,7 +375,7 @@ class ImageSaver:
         self._worker_thread: Thread = Thread(target=self._worker, daemon=True)
         self._worker_thread.start()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Returns a string representation of the ImageSaver object."""
         representation_string = (
             f"ImageSaver(output_directory={self._output_directory}, image_format={self._image_format.value},"
@@ -461,7 +461,7 @@ class ImageSaver:
         # Queues the data to be saved locally
         self._queue.put((frame_id, frame))
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Stops the worker thread and waits for all pending tasks to complete.
 
         This method has to be called to properly release class resources during shutdown.
@@ -616,14 +616,15 @@ class VideoSaver:
         # Constructs the main body of the ffmpeg command that will be used to generate video file(s). This block
         # lacks the input header and the output file path, which is added by other methods of this class when they
         # are called.
+        self._ffmpeg_command: str
         if hardware_encoding:
-            self._ffmpeg_command: str = (
+            self._ffmpeg_command = (
                 f"-vcodec {video_encoder} -qp {quantization_parameter} -preset {preset.value} "
                 f"-profile:v {encoder_profile} -pixel_format {output_pixel_format.value} -gpu {gpu} -rc constqp"
             )
         else:
             # Note, the qp has to be preceded by the '-parameter' specifier for the desired h265 / h265 codec
-            self._ffmpeg_command: str = (
+            self._ffmpeg_command = (
                 f"-vcodec {video_encoder} {parameter_specifier} qp={quantization_parameter} -preset {preset.value} "
                 f"-profile {encoder_profile} -pixel_format {output_pixel_format.value}"
             )
@@ -896,7 +897,7 @@ class VideoSaver:
 
         # Writes the input frame to the ffmpeg process's standard input pipe.
         try:
-            self._ffmpeg_process.stdin.write(frame.tobytes())
+            self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore
         except Exception as e:
             message = f"FFMPEG process failed to process the input frame with error: {e}"
             console.error(message=message, error=RuntimeError)

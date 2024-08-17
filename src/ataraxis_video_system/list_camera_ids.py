@@ -1,6 +1,7 @@
+from pathlib import Path
+
 import click
 from ataraxis_base_utilities import console
-from pathlib import Path
 
 from .video_system import VideoSystem
 
@@ -22,7 +23,7 @@ from .video_system import VideoSystem
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     help="The path to the .cti file. This is required to list 'harvesters' camera ids.",
 )
-def list_ids(backend, cti_path):
+def list_ids(backend: str, cti_path: str) -> None:
     """Lists ids for the cameras available through the selected interface. Subsequently, the IDs from this list can be
     used when instantiating Camera class through API or as ain input to 'live-run' CLI script.
 
