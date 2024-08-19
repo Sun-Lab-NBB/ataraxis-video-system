@@ -350,10 +350,6 @@ class OpenCVCamera:
             if not self._color:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert BGR to Monochrome if needed
 
-            # Attempting to pipe a raw frame from OpenCV to FFMPEG results in a broken pipe error. Encoding the frame
-            # data as an image apparently fixes the issue.
-            frame = cv2.imencode(".png", img=frame)[1]
-
             return frame
         else:
             message = (
