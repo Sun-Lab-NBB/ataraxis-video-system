@@ -34,7 +34,7 @@ classifiers = [
     # Supported Python Versions
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    #"Programming Language :: Python :: 3.12",
+    #"Programming Language :: Python :: 3.12", # Disabled until genicam releases 3.12 binaries
     # Supported OS systems
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
@@ -131,7 +131,7 @@ dev = [
 ]
 
 # Exposes a cli interface that can directly run the video system in an interactive mode. Primarily, this is used to
-# manually test the system.
+# manually test the system. Also exposes a cli interface that aids discovering interfacable camera IDs.
 [project.scripts]
 axvs-live = "ataraxis_video_system.live:live_run"
 axvs-ids = "ataraxis_video_system.list_camera_ids:list_ids"
@@ -151,7 +151,7 @@ indent-width = 4          # Same as black, indents are 4 spaces
 target-version = "py310"  # Targets the lowest supported version of python 3.10
 src = ["src"]             # The name of the source directory
 
-# Excludes 'service' .py files, such as sphinx configuration file from linting.
+# Excludes 'service' .py files, such as the sphinx configuration file from linting.
 extend-exclude = ["conf.py"]
 
 # Checks for all potential violations and uses the exclusions below to target-disable specific ones.
