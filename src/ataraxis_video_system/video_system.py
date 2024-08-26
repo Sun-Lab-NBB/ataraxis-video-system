@@ -15,7 +15,7 @@ from types import NoneType
 from typing import Optional
 from pathlib import Path
 import datetime
-from datetime import UTC  # type: ignore
+from datetime import timezone
 from threading import Thread
 import subprocess
 import multiprocessing
@@ -662,11 +662,17 @@ class VideoSystem:
                 f"jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
             )
             console.error(error=TypeError, message=message)
-        if not 0 <= jpeg_sampling_factor <= 4:
+        if jpeg_sampling_factor not in [
+            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_411,
+            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_420,
+            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_422,
+            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_440,
+            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+        ]:
             message = (
-                f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 4 for "
-                f"jpeg_sampling_factor argument, but got {jpeg_sampling_factor} of type "
-                f"{type(jpeg_sampling_factor).__name__}."
+                f"Unable to instantiate an ImageSaver class object. Expected one of the "
+                f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_' constants for jpeg_sampling_factor argument, but got "
+                f"{jpeg_sampling_factor} of type {type(jpeg_sampling_factor).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not 0 <= png_compression <= 9:
@@ -954,7 +960,7 @@ class VideoSystem:
 
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all later time
         # readouts.
-        onset = datetime.datetime.now(UTC)
+        onset = datetime.datetime.now(timezone.utc)
         stamp_timer.reset()  # Immediately resets the stamp timer to make it as close as possible to the onset time
 
         # If the method is configured to display acquired frames, sets up the display thread and a queue that buffers

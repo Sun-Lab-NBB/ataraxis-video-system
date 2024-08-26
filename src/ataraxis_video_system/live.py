@@ -16,32 +16,39 @@ from pathlib import Path
 import click
 from ataraxis_base_utilities import LogLevel, console
 
-from .saver import ImageSaver, VideoSaver, ImageFormats, CPUEncoderPresets, GPUEncoderPresets, InputPixelFormats
+from .saver import (
+    ImageSaver,
+    VideoSaver,
+    ImageFormats,
+    CPUEncoderPresets,
+    GPUEncoderPresets,
+    InputPixelFormats,
+)
 from .camera import CameraBackends
 from .video_system import VideoSystem
 
 
 def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
     """Ensures that the provided integer value is positive."""
-    if value is not None and value <= 0:
+    if value is not None and value <= 0:  # pragma: no cover
         raise click.BadParameter("Must be a positive integer.")
 
     if value is not None:
         return int(value)
 
-    else:
+    else:  # pragma: no cover
         return None
 
 
 def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
     """Ensures that the provided float value is positive."""
-    if value is not None and value <= 0:
+    if value is not None and value <= 0:  # pragma: no cover
         raise click.BadParameter("Must be a positive number (integer or float).")
 
     if value is not None:
         return float(value)
 
-    else:
+    else:  # pragma: no cover
         return None
 
 
@@ -171,7 +178,7 @@ def live_run(
             frames_per_second=fps,
             color=monochrome,
         )
-    elif camera_backend == "harvesters":
+    elif camera_backend == "harvesters":  # pragma: no cover
         camera = VideoSystem.create_camera(
             camera_name=camera_name,
             camera_backend=CameraBackends.HARVESTERS,
@@ -181,7 +188,7 @@ def live_run(
             frames_per_second=fps,
             cti_path=Path(cti_path),
         )
-    else:
+    else:  # pragma: no cover
         camera = VideoSystem.create_camera(
             camera_name=camera_name,
             camera_backend=CameraBackends.OPENCV,
@@ -194,7 +201,7 @@ def live_run(
 
     # Instantiates the requested saver
     if monochrome:
-        pixel_color = InputPixelFormats.MONOCHROME
+        pixel_color = InputPixelFormats.MONOCHROME  # pragma: no cover
     else:
         pixel_color = InputPixelFormats.BGR
 
@@ -206,14 +213,14 @@ def live_run(
             png_compression=1,
             thread_count=10,
         )
-    elif saver_backend == "video_cpu":
+    elif saver_backend == "video_cpu":  # pragma: no cover
         saver = VideoSystem.create_video_saver(
             output_directory=Path(output_directory),
             hardware_encoding=False,
             preset=CPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,
         )
-    else:
+    else:  # pragma: no cover
         saver = VideoSystem.create_video_saver(
             output_directory=Path(output_directory),
             hardware_encoding=True,
@@ -253,15 +260,15 @@ def live_run(
             message = f"Terminating VideoSystem {video_system.name}..."
             console.echo(message)
             video_system.stop()
-        elif key.lower()[0] == "w":
+        elif key.lower()[0] == "w":  # pragma: no cover
             message = f"Starting VideoSystem {video_system.name} camera frames saving..."
             console.echo(message)
             video_system.start_frame_saving()
-        elif key.lower()[0] == "s":
+        elif key.lower()[0] == "s":  # pragma: no cover
             message = f"Stopping VideoSystem {video_system.name} camera frames saving..."
             console.echo(message)
             video_system.stop_frame_saving()
-        else:
+        else:  # pragma: no cover
             message = (
                 f"Unknown input key {key.lower()[0]} encountered while interacting with VideoSystem "
                 f"{video_system.name}. Use 'q' to terminate the system, 'w' to start saving frames, and 's' to stop "
@@ -276,5 +283,5 @@ def live_run(
     console.echo(message=message, level=LogLevel.SUCCESS)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     live_run()

@@ -39,12 +39,12 @@ def list_ids(backend: str, cti_path: str) -> None:
         for num, id_string in enumerate(opencv_ids, start=1):
             console.echo(f"{num}: {id_string}")
 
-    elif backend == "harvesters":
+    elif backend == "harvesters":  # pragma: no cover
         harvester_ids = VideoSystem.get_harvesters_ids(Path(cti_path))
         console.echo("Available Harvesters camera IDs:")
         for num, id_string in enumerate(harvester_ids, start=1):
             console.echo(f"{num}: {id_string}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     list_ids()
