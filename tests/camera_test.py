@@ -2,6 +2,7 @@
 
 import re
 import textwrap
+
 import pytest
 
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
