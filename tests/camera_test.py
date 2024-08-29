@@ -43,6 +43,8 @@ def test_mock_camera_init(color, fps, width, height) -> None:
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies the error-handling behavior of MockCamera grab_frame() method."""
     camera = MockCamera(name="Test Camera", camera_id=1)
+
+    # Verifies that grabbing frames before the camera is connected produces a RuntimeError.
     message = (
         f"The Mocked camera {camera._name} with id {camera._camera_id} is not 'connected' and cannot yield images."
         f"Call the connect() method of the class prior to calling the grab_frame() method."
