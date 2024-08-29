@@ -5,7 +5,7 @@ import textwrap
 
 import pytest
 
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
+from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
 
 
 def error_format(message: str) -> str:
@@ -31,10 +31,21 @@ def error_format(message: str) -> str:
         (False, 10, 3000, 3000),
     ],
 )
-def test_mock_camera_init_errors(color, fps, width, height) -> None:
+def test_mock_camera_init(color, fps, width, height) -> None:
     """Verifies Mock camera initialization under different conditions."""
     camera = MockCamera(name="Test Camera", camera_id=1, color=color, fps=fps, width=width, height=height)
     assert camera.width == width
     assert camera.height == height
     assert camera.fps == fps
     assert camera.name == "Test Camera"
+
+
+def test_mock_camera_grab_frame_errors() -> None:
+    """Verifies the error-handling behavior of MockCamera grab_frame() method."""
+    camera = MockCamera(name="Test Camera", camera_id=1)
+    message = (
+        f"The Mocked camera {camera._name} with id {camera._camera_id} is not 'connected' and cannot yield images."
+        f"Call the connect() method of the class prior to calling the grab_frame() method."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
