@@ -51,3 +51,5 @@ def test_mock_camera_grab_frame_errors() -> None:
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
         _ = camera.grab_frame()
+
+# test
