@@ -40,6 +40,30 @@ def test_mock_camera_init(color, fps, width, height) -> None:
     assert camera.name == "Test Camera"
 
 
+def test_mock_camera_attributes():
+    pass
+
+
+def test_connect_disconnect():
+    camera = MockCamera()
+
+    # Verifies that the camera is not connected when initialized
+    assert not camera.is_connected
+
+    # Verifies that the camera should be connected and disconnected when the connect() and disconnect() modules are called accordingly
+    camera.connect()
+    assert camera.is_connected
+
+    camera.disconnect()
+    assert not camera.is_connected
+
+    # # Verifies that the camera should not be acquiring images when initialized
+    # assert not self.camera.is_acquiring==("Camera should not be acquiring initially",)
+
+    # camera._acquiring = True
+    # assert self.camera.is_acquiring == ("Camera should be acquiring when _acquiring is set to True",)
+
+
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies the error-handling behavior of MockCamera grab_frame() method."""
     camera = MockCamera(name="Test Camera", camera_id=1)
@@ -52,4 +76,45 @@ def test_mock_camera_grab_frame_errors() -> None:
     with pytest.raises(RuntimeError, match=error_format(message)):
         _ = camera.grab_frame()
 
-# test
+
+
+def test_OpenCV_camera_grab_frame_errors() -> None:
+    camera = OpenCVCamera(name="Test Camera", camera_id=-1)  # Uses invalid ID -1
+
+    backend_code = camera._backend
+
+    # Verifies that the backend name of the camera has a recognized backend code
+
+    # message = (
+    #     f"Unknown backend code {backend_code} encountered when retrieving the backend name used by the "
+    #     f"OpenCV-managed {camera._name} camera with id {camera._camera_id}. Recognized backend codes are: "
+    #     f"{(camera._backends.values())}"
+    # )
+    # with pytest.raises(ValueError, match=(error_format(message))):
+    #     _ = camera.grab_frame()
+
+    # Verifies that grabbing frames before the camera is connected produces a RuntimeError.
+    message = (
+        f"The OpenCV-managed camera {camera._name} with id {camera._camera_id} is not 'connected', and cannot yield images."
+        f"Call the connect() method of the class prior to calling the grab_frame() method."
+    )
+
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
+
+    camera.connect()
+
+    # Verifies that the camera should yield images upon connection 
+    message = (
+        f"The OpenCV-managed camera {camera._name} with id {camera._camera_id} did not yield an image, "
+        f"which is not expected. This may indicate initialization or connectivity issues."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
+
+
+def test_Harvesters_camera_grab_frame_errors() -> None:
+    pass
+
+    
+
