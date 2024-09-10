@@ -817,7 +817,7 @@ class MockCamera:
             pass
 
         # Acquires the next frame from the frame pool
-        frame = self._frames[self._current_frame_index]
+        frame = self._frames[self._current_frame_index].copy()
         self._timer.reset()  # Resets the timer to measure the time elapsed since the last frame acquisition.
 
         # Increments the flame pool index. Since the frame pool size is statically set to 10, the maximum retrieval

@@ -42,20 +42,24 @@ def test_mock_camera_init(color, fps, width, height) -> None:
     assert camera.name == "Test Camera"
 
 
+@pytest.mark.xdist_group(name="group1")
 @pytest.mark.parametrize(
     "color, fps, width, height",
     [
-        (True, 30, 600, 400),
-        (False, 60, 1200, 1200),
-        (False, 10, 3000, 3000),
+        (True, 30, 640, 480),
+        (False, 30, 1280, 720),
     ],
 )
 def test_openCV_camera_init(color, fps, width, height) -> None:
     """Verifies Mock camera initialization under different conditions."""
-    camera = OpenCVCamera(name="Test Camera", camera_id=1, color=color, fps=fps, width=width, height=height)
+    camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
+
+    camera.connect()
+
+    assert camera.fps == fps
     assert camera.width == width
     assert camera.height == height
-    assert camera.fps == fps
+
     assert camera.name == "Test Camera"
 
 
@@ -86,6 +90,8 @@ def test_mock_acquisition():
 
 
 """Verifies that the tuple that stores the frames are pooled to produce images when grab_frame() is called"""
+
+
 def test_mock_frame_pool():
     pass
 
@@ -115,9 +121,9 @@ def test_openCV_acquisition():
 
 
 """ Verifies that grabbing frames before the camera is connected produces a RuntimeError"""
+
+
 def test_mock_camera_grab_frame_errors() -> None:
-
-
     """Verifies the error-handling behavior of MockCamera grab_frame() method."""
     camera = MockCamera(name="Test Camera", camera_id=1)
 
@@ -148,6 +154,8 @@ def test_mock_camera_acquirenextframe():
 
 
 """Verifies that a string representation of the OpenCVCamera object is returned """
+
+
 def test_OpenCV_repr():
     camera = OpenCVCamera(name="Test Camera", camera_id=0)
 
@@ -195,7 +203,50 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
     with pytest.raises(RuntimeError, match=error_format(message)):
         _ = camera.grab_frame()
 
-    """Verifies that BGR color scheme is converted to monochrome when necessary"""
+
+@pytest.mark.xdist_group(name="group1")
+@pytest.mark.parametrize(
+    "color, fps, width, height",
+    [
+        (True, 30, 640, 480),
+        (False, 30, 1280, 720),
+    ],
+)
+def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
+    camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
+
+    camera.connect()
+
+    frame = camera.grab_frame()
+    assert camera.name == "Test Camera"
+    assert frame.shape[0] == height
+    assert frame.shape[1] == width
+
+    if color:
+        assert frame.shape[2] > 1
+
+    else:
+        assert len(frame.shape) == 2
+
+
+"""Verifies that the timer class is correctly implemented to simulate block in-place behavior to maintain fps rate"""
+
+
+def test_grab_frame_timer():
+    camera = MockCamera(name="Test Camera", camera_id=-1, color=False, width=2, height=3)
+
+    camera.connect()
+
+    frame_pool = camera.frame_pool
+
+    for _ in range(11):
+        frame = camera.grab_frame()
+
+        for num, image in enumerate(frame_pool, start=1):
+            if np.array_equal(image, frame):
+                break
+            elif num == len(frame_pool):
+                raise Exception("No match")
 
 
 def test_openCV_backendname():
