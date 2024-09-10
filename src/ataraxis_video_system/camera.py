@@ -353,8 +353,8 @@ class OpenCVCamera:
             return frame
         else:
             message = (
-                f"The OpenCV-managed {self._name} camera with id {self._camera_id} is not connected and cannot yield "
-                f"images. Call the connect() method of the class prior to calling the grab_frame() method."
+                f"The OpenCV-managed camera {self._name} with id {self._camera_id} is not 'connected', and cannot yield images."
+                f"Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
