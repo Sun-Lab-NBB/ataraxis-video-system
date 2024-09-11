@@ -3,7 +3,6 @@
 import re
 import textwrap
 
-import cv2
 import numpy as np
 import pytest
 
@@ -77,26 +76,17 @@ def test_mock_connect_disconnect():
     assert not camera.is_connected
 
 
-""" Verifies that the camera should not be acquiring images when initialized"""
-
-
 def test_mock_acquisition():
     camera = MockCamera()
 
+    """ Verifies that the camera should not be acquiring images when initialized"""
     assert not camera.is_acquiring
 
     camera._acquiring = True
     assert camera.is_acquiring
 
 
-"""Verifies that the tuple that stores the frames are pooled to produce images when grab_frame() is called"""
-
-
-def test_mock_frame_pool():
-    pass
-
-
-def test_openCV_connect_disconnect():
+def test_OpenCV_connect_disconnect():
     camera = OpenCVCamera(name="Test camera")
 
     """Verifies that the camera is not connected when initialized"""
@@ -110,7 +100,7 @@ def test_openCV_connect_disconnect():
     assert not camera.is_connected
 
 
-def test_openCV_acquisition():
+def test_OpenCV_acquisition():
     camera = OpenCVCamera(name="Test camera")
 
     """Verifies that the camera should not be acquiring images when initialized"""
@@ -120,11 +110,8 @@ def test_openCV_acquisition():
     assert camera.is_acquiring
 
 
-""" Verifies that grabbing frames before the camera is connected produces a RuntimeError"""
-
-
 def test_mock_camera_grab_frame_errors() -> None:
-    """Verifies the error-handling behavior of MockCamera grab_frame() method."""
+    """Verifies the grabbing frames before the camera is connected produces a RuntimeError """
     camera = MockCamera(name="Test Camera", camera_id=1)
 
     message = (
@@ -135,8 +122,8 @@ def test_mock_camera_grab_frame_errors() -> None:
         _ = camera.grab_frame()
 
     """Verifies that timer class is used to force block in-place behaviour if the frame is not available to main a certain FPS rate"""
-
     assert camera._timer.elapsed >= camera._time_between_frames
+
 
 
 def test_mock_camera_acquirenextframe():
@@ -147,13 +134,6 @@ def test_mock_camera_acquirenextframe():
     """Verifies that initial frame index is 0"""
     assert camera._current_frame_index == 0
 
-    # frame = camera.grab_frame()
-    # assert np.array_equal(frame, np.array([[0]]))
-    # # assert camera._timer.reset is True
-    # # assert camera._current_frame_index == 1
-
-
-"""Verifies that a string representation of the OpenCVCamera object is returned """
 
 
 def test_OpenCV_repr():
@@ -162,6 +142,7 @@ def test_OpenCV_repr():
     camera.connect()
     camera._acquiring = True
 
+    """Verifies that a string representation of the OpenCVCamera object is returned """
     representation_string = (
         f"OpenCVCamera(name={camera._name}, camera_id={camera._camera_id}, fps={camera.fps}, width={camera.width}, "
         f"height={camera.height}, connected={camera._camera is not None}, acquiring={camera._acquiring}, "
@@ -171,11 +152,19 @@ def test_OpenCV_repr():
     assert repr(camera) == representation_string
 
 
+def test_OpenCV_backendname():
+    """Verifies that names of camera corresponding to their backend code are returned. Backend codes obtained by the VideoCapture get() method."""
+    
+    camera = OpenCVCamera(name="Test Camera", camera_id=-1)
+    assert camera.backend == "Any"
+
+
 def test_OpenCV_camera_grab_frame_errors() -> None:
     camera = OpenCVCamera(name="Test Camera", camera_id=-1)  # Uses invalid ID -1
 
     camera._backend = -10
 
+    """Verifies that all OpenCV cameras connected have a valid backend code"""
     message = (
         f"Unknown backend code {camera._backend} encountered when retrieving the backend name used by the "
         f"OpenCV-managed {camera._name} camera with id {camera._camera_id}. Recognized backend codes are: "
@@ -212,11 +201,13 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
         (False, 30, 1280, 720),
     ],
 )
+
 def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
     camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
 
     camera.connect()
 
+    """Verifies that the camera VideoCapture object is initialized and video acquisition parameters are set"""
     frame = camera.grab_frame()
     assert camera.name == "Test Camera"
     assert frame.shape[0] == height
@@ -229,14 +220,12 @@ def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
         assert len(frame.shape) == 2
 
 
-"""Verifies that the timer class is correctly implemented to simulate block in-place behavior to maintain fps rate"""
-
-
-def test_grab_frame_timer():
+def test_grab_frame_pool():
     camera = MockCamera(name="Test Camera", camera_id=-1, color=False, width=2, height=3)
 
     camera.connect()
 
+    """Verifies that the tuple that stores the frames that are pooled to produce images during grab_frame() runtime"""
     frame_pool = camera.frame_pool
 
     for _ in range(11):
@@ -247,11 +236,6 @@ def test_grab_frame_timer():
                 break
             elif num == len(frame_pool):
                 raise Exception("No match")
-
-
-def test_openCV_backendname():
-    camera = OpenCVCamera(name="Test Camera", camera_id=-1)
-    assert camera.backend == "Any"
 
 
 def test_Harvesters_camera_grab_frame_errors() -> None:
