@@ -5,6 +5,14 @@ import textwrap
 
 import numpy as np
 import pytest
+from harvesters.core import Harvester, ImageAcquirer  # type: ignore
+from harvesters.util.pfnc import (  # type: ignore
+    bgr_formats,
+    rgb_formats,
+    bgra_formats,
+    rgba_formats,
+    mono_location_formats,
+)
 
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
 
@@ -111,7 +119,7 @@ def test_OpenCV_acquisition():
 
 
 def test_mock_camera_grab_frame_errors() -> None:
-    """Verifies the grabbing frames before the camera is connected produces a RuntimeError """
+    """Verifies the grabbing frames before the camera is connected produces a RuntimeError"""
     camera = MockCamera(name="Test Camera", camera_id=1)
 
     message = (
@@ -125,7 +133,6 @@ def test_mock_camera_grab_frame_errors() -> None:
     assert camera._timer.elapsed >= camera._time_between_frames
 
 
-
 def test_mock_camera_acquirenextframe():
     camera = MockCamera(name="Test Camera", camera_id=-1)
 
@@ -133,7 +140,6 @@ def test_mock_camera_acquirenextframe():
 
     """Verifies that initial frame index is 0"""
     assert camera._current_frame_index == 0
-
 
 
 def test_OpenCV_repr():
@@ -154,7 +160,7 @@ def test_OpenCV_repr():
 
 def test_OpenCV_backendname():
     """Verifies that names of camera corresponding to their backend code are returned. Backend codes obtained by the VideoCapture get() method."""
-    
+
     camera = OpenCVCamera(name="Test Camera", camera_id=-1)
     assert camera.backend == "Any"
 
@@ -201,7 +207,6 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
         (False, 30, 1280, 720),
     ],
 )
-
 def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
     camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
 
@@ -225,7 +230,7 @@ def test_grab_frame_pool():
 
     camera.connect()
 
-    """Verifies that the tuple that stores the frames that are pooled to produce images during grab_frame() runtime"""
+    """Verifies that the tuple that stores the frames are pooled to produce images during grab_frame() runtime"""
     frame_pool = camera.frame_pool
 
     for _ in range(11):
@@ -238,5 +243,117 @@ def test_grab_frame_pool():
                 raise Exception("No match")
 
 
+# def test_disconnect():
+
+#     cti_path = "" "Fill in with actual cti path"
+#     camera = HarvestersCamera(name="Test camera", cti_path=cti_path)
+
+#     # Act: Call disconnect
+#     camera.disconnect()
+
+#     # Assert: Verify that stop() was called
+#     # assert camera.stop()
+
+
+#     assert camera.num_holding_filled_buffers == "0"
+
+#     assert camera.destroy()
+
+#     assert camera._camera is None
+
+@pytest.mark.parametrize(
+    "color, fps, width, height",
+    [
+        (True, 30, 600, 400),
+        (False, 60, 1200, 1200),
+        (False, 10, 3000, 3000),
+        (False, None, None, None)
+    ],
+)
+def test_Harvester_init(fps, width, height) -> None:
+    """Verifies Mock camera initialization under different conditions."""
+    camera = MockCamera(name="Test Camera", camera_id=1, color=color, fps=fps, width=width, height=height)
+    assert camera.width == width
+    assert camera.height == height
+    assert camera.fps == fps
+    assert camera.name == "Test Camera"
+
+
+def test_Harvester_disconnect():
+    """Verifies that the Harvester camera is disconnected upon garbage collection"""
+
+    cti_path = "" "Fill in with actual cti path"
+
+    camera = HarvestersCamera(name="Test camera", cti_path=cti_path)
+
+    camera.connect()
+
+    camera.disconnect()
+
+    assert not camera.is_connected
+    assert camera._harvester.reset() is None
+
+
+def test_Harvester_acquisition():
+    cti_path = ""
+
+    camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
+
+    """Verifies that the program returns True if the camera is acquiring video frames"""
+    assert not camera.is_acquiring
+
+    camera.connect()
+    camera.grab_frame()
+
+    assert camera.is_acquiring
+
+
+def test_Harvester_repr():
+    cti_path = ""
+
+    camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
+
+    """Verifies that a string representation of the OpenCVCamera object is returned """
+    representation_string = (
+        f"HarvestersCamera(name={camera._name}, camera_id={camera._camera_id}, fps={camera.fps}, width={camera.width}, "
+        f"height={camera.height}, connected={camera._camera is not None}, acquiring={camera.is_acquiring})"
+    )
+
+    assert repr(camera) == representation_string
+
+
+
 def test_Harvesters_camera_grab_frame_errors() -> None:
-    pass
+    cti_path = ""
+
+    camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
+
+    data_format = [rgb_formats, rgba_formats, bgr_formats, bgra_formats]
+
+    message = (
+        f"The Harvesters-managed camera {camera._name} with id {camera._camera_id} is not connected and cannot "
+        f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
+
+    """Verifies that the image has a supported color format"""
+
+    camera.connect()
+
+    """ Verifies that the camera should yield images upon connection"""
+    message = (
+        f"The Harvesters-managed camera {camera._name} with id {camera._camera_id} did not yield an image, "
+        f"which is not expected. This may indicate initialization or connectivity issues."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
+
+    message = (
+        f"The Harvesters-managed camera {camera._name} with id {camera._camera_id} yielded an image "
+        f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
+        f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
+        f"Otherwise, you may need to implement a custom data reshaper algorithm."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = camera.grab_frame()
