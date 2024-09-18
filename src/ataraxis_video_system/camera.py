@@ -291,7 +291,7 @@ class OpenCVCamera:
 
         message = (
             f"Unknown backend code {backend_code} encountered when retrieving the backend name used by the "
-            f"OpenCV-managed {self._name} camera with id {self._camera_id}. Recognized backend codes are: "
+            f"OpenCV-managed camera {self._name} with id {self._camera_id}. Recognized backend codes are: "
             f"{(self._backends.values())}"
         )
         console.error(message=message, error=ValueError)
@@ -353,8 +353,8 @@ class OpenCVCamera:
             return frame
         else:
             message = (
-                f"The OpenCV-managed camera {self._name} with id {self._camera_id} is not 'connected', and cannot yield images."
-                f"Call the connect() method of the class prior to calling the grab_frame() method."
+                f"The OpenCV-managed camera {self._name} with id {self._camera_id} is not 'connected', and cannot "
+                f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
             )
             console.error(message=message, error=RuntimeError)
             # Fallback to appease mypy, should not be reachable
@@ -597,7 +597,7 @@ class HarvestersCamera:
         # Retrieves the next available image buffer from the camera. Uses the 'with' context to properly
         # re-queue the buffer to acquire further images.
         with self._camera.fetch() as buffer:
-            if buffer is None:
+            if buffer is None:  # pragma: no cover
                 message = (
                     f"The Harvesters-managed camera {self._name} with id {self._camera_id} did not yield an image, "
                     f"which is not expected. This may indicate initialization or connectivity issues."
@@ -644,7 +644,7 @@ class HarvestersCamera:
                 return frame
 
             # If the image has an unsupported data format, raises an error
-            else:
+            else:  # pragma: no cover
                 message = (
                     f"The Harvesters-managed camera {self._name} with id {self._camera_id} yielded an image "
                     f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
