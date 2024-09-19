@@ -49,32 +49,11 @@ def cti_path() -> Path:
 )
 def test_mock_camera_init(color, fps, width, height) -> None:
     """Verifies Mock camera initialization under different conditions."""
+
     camera = MockCamera(name="Test Camera", camera_id=1, color=color, fps=fps, width=width, height=height)
     assert camera.width == width
     assert camera.height == height
     assert camera.fps == fps
-    assert camera.name == "Test Camera"
-
-
-# noinspection PyPep8Naming
-@pytest.mark.xdist_group(name="group1")
-@pytest.mark.parametrize(
-    "color, fps, width, height",
-    [
-        (True, 30, 640, 480),
-        (False, 15, 176, 144),
-    ],
-)
-def test_openCV_camera_init(color, fps, width, height) -> None:
-    """Verifies Mock camera initialization under different conditions."""
-    camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
-
-    camera.connect()
-
-    assert camera.fps == fps
-    assert camera.width == width
-    assert camera.height == height
-
     assert camera.name == "Test Camera"
 
 
@@ -84,7 +63,7 @@ def test_mock_connect_disconnect():
     """Verifies that the camera is not connected when initialized"""
     assert not camera.is_connected
 
-    """Verifies that the camera should be connected and disconnected when the connect() and disconnect() modules are called accordingly"""
+    """Verifies mock camera connection and disconnection behavior"""
     camera.connect()
     assert camera.is_connected
 
@@ -93,35 +72,10 @@ def test_mock_connect_disconnect():
 
 
 def test_mock_acquisition():
+    """Verifies that the camera should not be acquiring images when initialized"""
+
     camera = MockCamera()
 
-    """ Verifies that the camera should not be acquiring images when initialized"""
-    assert not camera.is_acquiring
-
-    camera._acquiring = True
-    assert camera.is_acquiring
-
-
-# noinspection PyPep8Naming
-def test_OpenCV_connect_disconnect():
-    camera = OpenCVCamera(name="Test camera")
-
-    """Verifies that the camera is not connected when initialized"""
-    assert not camera.is_connected
-
-    """Verifies that the camera should be connected and disconnected when the connect() and disconnect() modules are called accordingly"""
-    camera.connect()
-    assert camera.is_connected
-
-    camera.disconnect()
-    assert not camera.is_connected
-
-
-# noinspection PyPep8Naming
-def test_OpenCV_acquisition():
-    camera = OpenCVCamera(name="Test camera")
-
-    """Verifies that the camera should not be acquiring images when initialized"""
     assert not camera.is_acquiring
 
     camera._acquiring = True
@@ -129,7 +83,8 @@ def test_OpenCV_acquisition():
 
 
 def test_mock_camera_grab_frame_errors() -> None:
-    """Verifies the grabbing frames before the camera is connected produces a RuntimeError"""
+    """Verifies that a RuntimeError is produced if grab_frame() is called before connection"""
+     
     camera = MockCamera(name="Test Camera", camera_id=1)
 
     message = (
@@ -148,8 +103,78 @@ def test_mock_camera_acquirenextframe():
 
     camera.connect()
 
-    """Verifies that initial frame index is 0"""
+    """Verifies that the initial frame index is 0"""
     assert camera._current_frame_index == 0
+
+
+def test_mock_grab_frame_pool():
+    """Verifies that the tuple storing frames are pooled to produce images during grab_frame() runtime"""
+
+    camera = MockCamera(name="Test Camera", camera_id=-1, color=False, width=2, height=3)
+
+    camera.connect()
+
+    frame_pool = camera.frame_pool
+
+    for _ in range(11):
+        frame = camera.grab_frame()
+
+        for num, image in enumerate(frame_pool, start=1):
+            if np.array_equal(image, frame):
+                break
+            elif num == len(frame_pool):
+                raise Exception("No match")
+
+    camera.disconnect()
+
+
+# noinspection PyPep8Naming
+@pytest.mark.xdist_group(name="group1")
+@pytest.mark.parametrize(
+    "color, fps, width, height",
+    [
+        (True, 30, 640, 480),
+        (False, 15, 176, 144),
+    ],
+)
+def test_openCV_camera_init(color, fps, width, height) -> None:
+    """Verifies OpenCV camera initialization under different conditions."""
+    camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
+
+    camera.connect()
+
+    assert camera.fps == fps
+    assert camera.width == width
+    assert camera.height == height
+
+    assert camera.name == "Test Camera"
+
+
+# noinspection PyPep8Naming
+def test_OpenCV_connect_disconnect():
+    camera = OpenCVCamera(name="Test camera")
+
+    """Verifies that the camera is not connected when initialized"""
+    assert not camera.is_connected
+
+    """Verifies OpenCV camera connection and disconnection behavior"""
+    camera.connect()
+    assert camera.is_connected
+
+    camera.disconnect()
+    assert not camera.is_connected
+
+
+# noinspection PyPep8Naming
+def test_OpenCV_acquisition():
+    """Verifies that the camera should not be acquiring images when initialized"""
+
+    camera = OpenCVCamera(name="Test camera")
+
+    assert not camera.is_acquiring
+
+    camera._acquiring = True
+    assert camera.is_acquiring
 
 
 # noinspection PyPep8Naming
@@ -190,7 +215,7 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
 
     camera._backend = -10
 
-    """Verifies that all OpenCV cameras connected have a valid backend code"""
+    """Verifies that all connected OpenCV cameras have a valid backend code"""
     message = (
         f"Unknown backend code {camera._backend} encountered when retrieving the backend name used by the "
         f"OpenCV-managed camera {camera._name} with id {camera._camera_id}. Recognized backend codes are: "
@@ -199,7 +224,7 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
     with pytest.raises(ValueError, match=(error_format(message))):
         _ = camera.backend
 
-    """Verifies that grabbing frames before the camera is connected produces a RuntimeError"""
+    """Verifies that a RuntimeError is produced if grab_frame() is called before connection"""
     message = (
         f"The OpenCV-managed camera {camera._name} with id {camera._camera_id} is not 'connected', and "
         f"cannot yield images. Call the connect() method of the class prior to calling the grab_frame() method."
@@ -231,11 +256,13 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
     ],
 )
 def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
+    """Verifies the initialization of the camera VideoCapture object and that video acquisition parameters are set accordingly"""
+
+
     camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
 
     camera.connect()
-
-    """Verifies that the camera VideoCapture object is initialized and video acquisition parameters are set"""
+    
     frame = camera.grab_frame()
     assert camera.name == "Test Camera"
     assert frame.shape[0] == height
@@ -250,34 +277,16 @@ def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
     camera.disconnect()
 
 
-def test_grab_frame_pool():
-    camera = MockCamera(name="Test Camera", camera_id=-1, color=False, width=2, height=3)
-
-    camera.connect()
-
-    """Verifies that the tuple that stores the frames are pooled to produce images during grab_frame() runtime"""
-    frame_pool = camera.frame_pool
-
-    for _ in range(11):
-        frame = camera.grab_frame()
-
-        for num, image in enumerate(frame_pool, start=1):
-            if np.array_equal(image, frame):
-                break
-            elif num == len(frame_pool):
-                raise Exception("No match")
-
-    camera.disconnect()
-
-
 # noinspection PyPep8Naming
 @pytest.mark.parametrize(
     "fps, width, height",
     [(30, 600, 400), (60, 1200, 1200), (10, 3000, 3000), (None, None, None)],
 )
 @pytest.mark.xdist_group(name="group2")
+
 def test_Harvester_init(fps, width, height, cti_path) -> None:
-    """Verifies Mock camera initialization under different conditions."""
+    """Verifies Harvesters camera initialization under different conditions."""
+
     camera = HarvestersCamera(name="Test Camera", camera_id=0, fps=fps, width=width, height=height, cti_path=cti_path)
     assert camera.width == width
     assert camera.height == height
@@ -289,7 +298,7 @@ def test_Harvester_init(fps, width, height, cti_path) -> None:
 # noinspection PyPep8Naming
 @pytest.mark.xdist_group(name="group2")
 def test_Harvester_disconnect(cti_path):
-    """Verifies that the Harvester camera is disconnected upon garbage collection"""
+    """Verifies Harvesters camera connection and disconnection behavior"""
 
     camera = HarvestersCamera(name="Test camera", cti_path=cti_path)
 
@@ -303,9 +312,10 @@ def test_Harvester_disconnect(cti_path):
 # noinspection PyPep8Naming
 @pytest.mark.xdist_group(name="group2")
 def test_Harvester_acquisition(cti_path):
+    """Verifies that a camera cannot be acquiring images if not connected"""
+
     camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
 
-    """Verifies that the program returns True if the camera is acquiring video frames"""
     assert not camera.is_acquiring
 
     camera.connect()
@@ -319,9 +329,10 @@ def test_Harvester_acquisition(cti_path):
 # noinspection PyPep8Naming
 @pytest.mark.xdist_group(name="group2")
 def test_Harvester_repr(cti_path):
+
     camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
 
-    """Verifies that a string representation of the OpenCVCamera object is returned """
+    """Verifies that a string representation of the Harvesters camera object is returned """
     representation_string = (
         f"HarvestersCamera(name={camera._name}, camera_id={camera._camera_id}, fps={camera.fps}, width={camera.width}, "
         f"height={camera.height}, connected={camera._camera is not None}, acquiring={camera.is_acquiring})"
