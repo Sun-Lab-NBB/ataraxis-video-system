@@ -451,7 +451,8 @@ class ImageSaver:
         """
 
         # Ensures that input IDs conform to the expected format.
-        if not frame_id.isdigit():
+
+        if not frame_id is None and not frame_id.isdigit():
             message = (
                 f"Unable to save the image with the ID {frame_id} as the ID is not valid. The ID must be a "
                 f"digit-convertible string, such as 0001."
@@ -466,9 +467,11 @@ class ImageSaver:
 
         This method has to be called to properly release class resources during shutdown.
         """
-        self._running = False
-        self._worker_thread.join()
-        self._executor.shutdown(wait=True)
+
+        if self._running:
+            self._running = False
+            self._worker_thread.join()
+            self._executor.shutdown(wait=True)
 
 
 class VideoSaver:
