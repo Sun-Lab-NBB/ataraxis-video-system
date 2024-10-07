@@ -26,6 +26,7 @@ from ataraxis_video_system.saver import (
     VideoCodecs,
     ImageFormats,
     VideoFormats,
+    GPUEncoderPresets,
     InputPixelFormats,
     OutputPixelFormats,
 )
@@ -87,7 +88,7 @@ def test_shutdown(tmp_path):
     assert not saver._running
 
 
-def test_save_frame(tmp_path):
+def test_image_save_frame(tmp_path):
     """Verifies that the connected camera has a valid id to initiate the frame saving process."""
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
@@ -182,8 +183,6 @@ def test_video_repr():
 
     saver._ffmpeg_process = None
     representation_string = f"VideoSaver({saver._repr_body}, live_encoder=False)"
-
-    representation_string = f"VideoSaver({saver._repr_body}, live_encoder=False)"
     assert repr(saver) == representation_string
 
     saver._ffmpeg_process = True
@@ -191,9 +190,82 @@ def test_video_repr():
     assert repr(saver) == representation_string
 
 
-def test_create_live_video_encoder():
-    pass
+def test_create_live_encoder(tmp_path):
+    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H264,
+        preset=GPUEncoderPresets.MEDIUM,
+        input_pixel_format=InputPixelFormats.BGR,
+        output_pixel_format=OutputPixelFormats.YUV444,
+    )
+
+    camera.connect()
+
+    frame_data = camera.grab_frame()
+
+    video_id = "2"
+
+    video_frames_per_second = "45"
+
+    frame_height, frame_width, _ = frame_data.shape
+
+    output_path = Path(saver._output_directory, f"{video_id}.{saver._video_format}")
+
+    ffmpeg_command = (
+        f"ffmpeg -y -f rawvideo -pix_fmt {saver._input_pixel_format} -s {frame_width}x{frame_height} "
+        f"-r {video_frames_per_second} -i pipe: {saver._ffmpeg_command} {output_path}"
+    )
 
 
-def test_saveframe(video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile):
+def test_error_live_encoder():
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        hardware_encoding=OutputPixelFormats.YUV444,
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H265,
+        input_pixel_format=InputPixelFormats.BGRA,
+    )
+
+    saver.create_live_video_encoder(video_id=2, frame_width=400, frame_height=400, video_frames_per_second=45)
+
+    message = (
+        f"Unable to create live video encoder for video {2}. FFMPEG process already exists and a "
+        f"video saver class can have at most one 'live' encoder at a time. Call the terminate_live_encoder() "
+        f"method to terminate the existing encoder before creating a new one."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = saver.create_live_video_encoder(video_id=2, frame_width=400, frame_height=400, video_frames_per_second=45)
+
+def test_video_save_frame():
+    camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
+
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        hardware_encoding=OutputPixelFormats.YUV444,
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H265,
+        input_pixel_format=InputPixelFormats.BGRA,
+    )
+
+    frame_id = "236"
+
+    camera.connect()
+
+    frame = camera.grab_frame()
+
+    saver._ffmpeg_process = None
+
+    message = (
+        f"Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
+        f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        _ = saver.save_frame(_frame_id=frame_id, frame=frame)
+
+
+def test_report_encoding_progress():
     pass
+
