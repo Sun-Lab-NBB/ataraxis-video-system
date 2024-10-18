@@ -295,28 +295,30 @@ def test_video_save_frame():
 def test_create_video_from_image_folder():
     """Verifies that all image files in the image directory are extracted and sorted based on their integer IDs"""
 
-    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+    test_directory = Path("/Users/natalieyeung/Desktop/Test")
+    # test_directory = Path("/home/cyberaxolotl/Desktop/Test")
+
+    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=400, height=400)
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
+        output_directory=test_directory.joinpath("Test"),
+        hardware_encoding=False,
         video_format=VideoFormats.MP4,
         video_codec=VideoCodecs.H265,
         input_pixel_format=InputPixelFormats.BGRA,
     )
     camera.connect()
 
-    image_saver = ImageSaver(output_directory=Path("/Users/natalieyeung/Desktop/TestImages"))
+    image_saver = ImageSaver(output_directory=test_directory.joinpath("TestImages"), image_format=ImageFormats.PNG)
     for frame_id in range(20):
         frame_data = camera.grab_frame()
         image_saver.save_frame(frame = frame_data, frame_id=str(frame_id))
 
     # Discover and sort images from the directory
-    image_directory = Path("/Users/natalieyeung/Desktop/TestImages")
     supported_image_formats = {".png", ".jpg", ".jpeg", ".tiff"}
 
     images = sorted(
         [
-            img for img in image_directory.iterdir()
+            img for img in test_directory.joinpath("TestImages").iterdir()
             if img.is_file() and img.suffix.lower() in supported_image_formats and img.stem.isdigit()
         ],
         key=lambda x: int(x.stem)
@@ -324,7 +326,7 @@ def test_create_video_from_image_folder():
     assert len(images) > 0
     assert all(int(images[i].stem) <= int(images[i + 1].stem) for i in range(len(images) - 1))
 
-    saver.create_video_from_image_folder(image_directory=image_directory, video_id=2, video_frames_per_second=5)
+    saver.create_video_from_image_folder(image_directory=test_directory.joinpath("TestImages"), video_id='2', video_frames_per_second=5)
 
     # Assert that the video file was created
     video_path = Path(saver._output_directory, f"output_video.{saver._video_format}")
