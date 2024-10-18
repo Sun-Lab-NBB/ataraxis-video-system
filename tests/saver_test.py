@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 import tempfile
 import textwrap
+import subprocess
 
 from PIL import Image
 import cv2
@@ -19,6 +20,7 @@ from harvesters.util.pfnc import (  # type: ignore
     rgba_formats,
     mono_location_formats,
 )
+from ataraxis_base_utilities import LogLevel, console
 
 from ataraxis_video_system.saver import (
     ImageSaver,
@@ -137,19 +139,37 @@ def test_save_image(format, tmp_path):
     assert np.allclose(frame_data, image, atol=3)
 
 
-# @pytest.mark.parametrize(
-#     "video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile",
-#     [
-#         (VideoCodecs.H264, True, "h264_nvenc", "yuv444p", "high444p"),
-#         (VideoCodecs.H265, True, "h264_nvenc", "yuv420p", "main"),
-#         (VideoCodecs.H265, True, "hevc_nvenc", "yuv444p", "rext"),
-#         (VideoCodecs.H265, True, "hevc_nvenc", "yuv420p", "main"),
-#         (VideoCodecs.H265, False, "libx265", "yuv444p", "main444-8"),
-#         (VideoCodecs.H265, False, "libx265", "yuv444p", "main"),
-#         (VideoCodecs.H264, False, "libx264", "yuv444p", "high444"),
-#         (VideoCodecs.H264, False, "libx264", "yuv420p", "high420"),
-#     ],
-# )
+@pytest.mark.parametrize(
+    "video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile",
+    [
+        (VideoCodecs.H264, True, "h264_nvenc", "yuv444p", "high444p"),
+        (VideoCodecs.H265, True, "h264_nvenc", "yuv420p", "main"),
+        (VideoCodecs.H265, True, "hevc_nvenc", "yuv444p", "rext"),
+        (VideoCodecs.H265, True, "hevc_nvenc", "yuv420p", "main"),
+        (VideoCodecs.H265, False, "libx265", "yuv444p", "main444-8"),
+        (VideoCodecs.H265, False, "libx265", "yuv444p", "main"),
+        (VideoCodecs.H264, False, "libx264", "yuv444p", "high444"),
+        (VideoCodecs.H264, False, "libx264", "yuv420p", "high420"),
+    ],
+)
+def test_input_pipe(video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile):
+    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H264,
+        preset=GPUEncoderPresets.MEDIUM,
+        input_pixel_format=InputPixelFormats.BGR,
+        output_pixel_format=OutputPixelFormats.YUV444,
+    )
+
+    camera.connect()
+    frame_data = camera.grab_frame()
+
+    saver.create_live_video_encoder(frame_width=400, frame_height=400, video_id=2, video_frames_per_second=45)
+    saver.save_frame(_frame_id=1, frame=frame_data)
+
+    assert saver._ffmpeg_process is not None
 
 
 def test_is_live():
@@ -221,6 +241,8 @@ def test_create_live_encoder(tmp_path):
 
 
 def test_error_live_encoder():
+    """Verifies that only 1 live encoder can be active at a time"""
+
     saver = VideoSaver(
         output_directory=Path("/Users/natalieyeung/Desktop/Test"),
         hardware_encoding=OutputPixelFormats.YUV444,
@@ -239,7 +261,10 @@ def test_error_live_encoder():
     with pytest.raises(RuntimeError, match=error_format(message)):
         _ = saver.create_live_video_encoder(video_id=2, frame_width=400, frame_height=400, video_frames_per_second=45)
 
+
 def test_video_save_frame():
+    """Verifies that frames are properly saved to the output path provided and are saved in order"""
+
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
 
     saver = VideoSaver(
@@ -266,6 +291,67 @@ def test_video_save_frame():
         _ = saver.save_frame(_frame_id=frame_id, frame=frame)
 
 
-def test_report_encoding_progress():
-    pass
+# Fix this
+def test_create_video_from_image_folder():
+    """Verifies that all image files in the image directory are extracted and sorted based on their integer IDs"""
 
+    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        hardware_encoding=OutputPixelFormats.YUV444,
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H265,
+        input_pixel_format=InputPixelFormats.BGRA,
+    )
+    camera.connect()
+
+    image_saver = ImageSaver(output_directory=Path("/Users/natalieyeung/Desktop/TestImages"))
+    for frame_id in range(20):
+        frame_data = camera.grab_frame()
+        image_saver.save_frame(frame = frame_data, frame_id=str(frame_id))
+
+    # Discover and sort images from the directory
+    image_directory = Path("/Users/natalieyeung/Desktop/TestImages")
+    supported_image_formats = {".png", ".jpg", ".jpeg", ".tiff"}
+
+    images = sorted(
+        [
+            img for img in image_directory.iterdir()
+            if img.is_file() and img.suffix.lower() in supported_image_formats and img.stem.isdigit()
+        ],
+        key=lambda x: int(x.stem)
+    )
+    assert len(images) > 0
+    assert all(int(images[i].stem) <= int(images[i + 1].stem) for i in range(len(images) - 1))
+
+    saver.create_video_from_image_folder(image_directory=image_directory, video_id=2, video_frames_per_second=5)
+
+    # Assert that the video file was created
+    video_path = Path(saver._output_directory, f"output_video.{saver._video_format}")
+    assert video_path.exists()
+
+def test_terminate_live_encoder():
+    saver = VideoSaver(
+        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        hardware_encoding=OutputPixelFormats.YUV444,
+        video_format=VideoFormats.MP4,
+        video_codec=VideoCodecs.H265,
+        input_pixel_format=InputPixelFormats.BGRA,
+    )
+
+    """Verifies that the function returns nothing when terminate_live_encoder() is called when an ffmpeg 
+    process does not exist"""
+    saver._ffmpeg_process = None
+
+    saver.terminate_live_encoder(timeout=1)
+
+    assert saver._ffmpeg_process is None
+
+    """Verifies that the video saver system can properly terminates a'live' FFMPEG encoder process"""
+    saver._ffmpeg_process = subprocess.Popen(["sleep", "30"])
+
+    assert saver._ffmpeg_process.poll() is None
+
+    saver.terminate_live_encoder(timeout=1)
+
+    assert saver._ffmpeg_process is None
