@@ -296,7 +296,6 @@ def test_create_video_from_image_folder():
     """Verifies that all image files in the image directory are extracted and sorted based on their integer IDs"""
 
     test_directory = Path("/Users/natalieyeung/Desktop/Test")
-    # test_directory = Path("/home/cyberaxolotl/Desktop/Test")
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=400, height=400)
     saver = VideoSaver(
@@ -311,26 +310,43 @@ def test_create_video_from_image_folder():
     image_saver = ImageSaver(output_directory=test_directory.joinpath("TestImages"), image_format=ImageFormats.PNG)
     for frame_id in range(20):
         frame_data = camera.grab_frame()
-        image_saver.save_frame(frame = frame_data, frame_id=str(frame_id))
+        image_saver.save_frame(frame=frame_data, frame_id=str(frame_id))
 
     # Discover and sort images from the directory
     supported_image_formats = {".png", ".jpg", ".jpeg", ".tiff"}
+    video_id = "2"
 
     images = sorted(
         [
-            img for img in test_directory.joinpath("TestImages").iterdir()
+            img
+            for img in test_directory.joinpath("TestImages").iterdir()
             if img.is_file() and img.suffix.lower() in supported_image_formats and img.stem.isdigit()
         ],
-        key=lambda x: int(x.stem)
+        key=lambda x: int(x.stem),
     )
     assert len(images) > 0
+
+    if len(images) == 0:
+        message = (
+            f"Unable to create video {video_id} from images. No valid image candidates discovered when crawling "
+            f"the image directory ({test_directory}). Valid candidates are images using one of the supported "
+            f"file-extensions ({sorted(camera._supported_image_formats)}) with "
+            f"digit-convertible names (e.g: 0001.jpg)."
+        )
+        with pytest.raises(RuntimeError, match=error_format(message)):
+            _ = saver.create_video_from_image_folder(output_directory=test_directory.joinpath("EmptyFolder"))
+
     assert all(int(images[i].stem) <= int(images[i + 1].stem) for i in range(len(images) - 1))
 
-    saver.create_video_from_image_folder(image_directory=test_directory.joinpath("TestImages"), video_id='2', video_frames_per_second=5)
+    saver.create_video_from_image_folder(
+        image_directory=test_directory.joinpath("TestImages"), video_id=video_id, video_frames_per_second=5
+    )
 
-    # Assert that the video file was created
-    video_path = Path(saver._output_directory, f"output_video.{saver._video_format}")
+    print("Images found:", images)
+    print("Image stems:", [img.stem for img in images])
+    video_path = Path(saver._output_directory, f"{video_id}.{saver._video_format}")
     assert video_path.exists()
+
 
 def test_terminate_live_encoder():
     saver = VideoSaver(
