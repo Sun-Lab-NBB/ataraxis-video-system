@@ -1,14 +1,13 @@
 """Contains tests for classes and methods stored inside the Image saver systems modules."""
 
-import os
 import re
 import time
+import random
 from pathlib import Path
 import tempfile
 import textwrap
 import subprocess
 
-from PIL import Image
 import cv2
 import numpy as np
 import pytest
@@ -20,7 +19,6 @@ from harvesters.util.pfnc import (  # type: ignore
     rgba_formats,
     mono_location_formats,
 )
-from ataraxis_base_utilities import LogLevel, console
 
 from ataraxis_video_system.saver import (
     ImageSaver,
@@ -28,11 +26,13 @@ from ataraxis_video_system.saver import (
     VideoCodecs,
     ImageFormats,
     VideoFormats,
+    CPUEncoderPresets,
     GPUEncoderPresets,
     InputPixelFormats,
     OutputPixelFormats,
 )
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera
+from ataraxis_video_system.camera import MockCamera
+from ataraxis_base_utilities import console
 
 
 @pytest.fixture()
@@ -78,9 +78,6 @@ def test_image_repr(tmp_path):
 def test_shutdown(tmp_path):
     """Verifies that the method releases class resources during shutdown. The method stops the worker
     thread and waits for all pending tasks to complete."""
-
-    camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
-
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
 
     assert saver._running
@@ -107,20 +104,21 @@ def test_image_save_frame(tmp_path):
         f"digit-convertible string, such as 0001."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        _ = saver.save_frame(frame_id=frame_id, frame=frame)
+        saver.save_frame(frame_id=frame_id, frame=frame)
 
 
+# noinspection PyRedundantParentheses
 @pytest.mark.parametrize(
-    "format",
+    "image_format",
     [(ImageFormats.TIFF), (ImageFormats.PNG), (ImageFormats.JPG)],
 )
-def test_save_image(format, tmp_path):
+def test_save_image(image_format, tmp_path):
     """Verifies that both monochrome and colored image frames are saved in sequence to the chosen output path. JPEG images
     are set to have a jpeg quality of 100 to replicate lossless compression. The difference between the image frames obtained
     from the mock camera and the saved images is set to have a tolerance of 3 pixels."""
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
-    saver = ImageSaver(output_directory=Path("/Users/natalieyeung/Desktop/Test"), image_format=format, jpeg_quality=100)
+    saver = ImageSaver(output_directory=tmp_path.joinpath("TestSaveImage"), image_format=image_format, jpeg_quality=100)
 
     camera.connect()
 
@@ -140,62 +138,56 @@ def test_save_image(format, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile",
+    "video_codec, hardware_encoding, output_pixel_format, preset",
     [
-        (VideoCodecs.H264, True, "h264_nvenc", "yuv444p", "high444p"),
-        (VideoCodecs.H265, True, "h264_nvenc", "yuv420p", "main"),
-        (VideoCodecs.H265, True, "hevc_nvenc", "yuv444p", "rext"),
-        (VideoCodecs.H265, True, "hevc_nvenc", "yuv420p", "main"),
-        (VideoCodecs.H265, False, "libx265", "yuv444p", "main444-8"),
-        (VideoCodecs.H265, False, "libx265", "yuv444p", "main"),
-        (VideoCodecs.H264, False, "libx264", "yuv444p", "high444"),
-        (VideoCodecs.H264, False, "libx264", "yuv420p", "high420"),
+        (VideoCodecs.H265, True, OutputPixelFormats.YUV444, GPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H265, True, OutputPixelFormats.YUV420, GPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H264, True, OutputPixelFormats.YUV444, GPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H264, True, OutputPixelFormats.YUV420, GPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H265, False, OutputPixelFormats.YUV444, CPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H265, False, OutputPixelFormats.YUV420, CPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H264, False, OutputPixelFormats.YUV444, CPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H264, False, OutputPixelFormats.YUV420, CPUEncoderPresets.MEDIUM),
     ],
 )
-def test_input_pipe(video_codec, hardware_encoding, expected_encoder, output_pixel_format, encoder_profile):
+def test_input_pipe(video_codec, hardware_encoding, output_pixel_format, preset, tmp_path):
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
+        output_directory=tmp_path.joinpath("TestInputPipe"),
+        hardware_encoding=hardware_encoding,
         video_format=VideoFormats.MP4,
-        video_codec=VideoCodecs.H264,
+        video_codec=video_codec,
         preset=GPUEncoderPresets.MEDIUM,
         input_pixel_format=InputPixelFormats.BGR,
-        output_pixel_format=OutputPixelFormats.YUV444,
+        output_pixel_format=output_pixel_format,
     )
 
     camera.connect()
-    frame_data = camera.grab_frame()
 
-    saver.create_live_video_encoder(frame_width=400, frame_height=400, video_id=2, video_frames_per_second=45)
-    saver.save_frame(_frame_id=1, frame=frame_data)
+    assert not saver.is_live
 
-    assert saver._ffmpeg_process is not None
+    saver.create_live_video_encoder(frame_width=400, frame_height=400, video_id="2", video_frames_per_second=45)
 
+    assert saver.is_live
 
-def test_is_live():
-    """Verifies that the method returns True if the class is running an active 'live' encoder and False otherwise."""
+    for _ in range(20):
+        frame_data = camera.grab_frame()
+        saver.save_frame(_frame_id=1, frame=frame_data)
 
-    saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
-        video_format=VideoFormats.MP4,
-        video_codec=VideoCodecs.H265,
-        input_pixel_format=InputPixelFormats.BGRA,
-    )
+    if random.randint(1, 2) == 1:
+        del saver
+    else:
+        saver.terminate_live_encoder()
 
-    saver._ffmpeg_process = None
-    assert saver.is_live == False
-
-    saver._ffmpeg_process = True
-    assert saver.is_live == True
+    assert tmp_path.joinpath("TestInputPipe/2.mp4").exists()
 
 
-def test_video_repr():
+def test_video_repr(tmp_path):
     """Verifies that a string representation of the VideoEncoder object is returned."""
 
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
+        output_directory=tmp_path.joinpath("TestVideoRepr"),
+        hardware_encoding=False,
         video_format=VideoFormats.MP4,
         video_codec=VideoCodecs.H265,
         input_pixel_format=InputPixelFormats.BGRA,
@@ -210,48 +202,18 @@ def test_video_repr():
     assert repr(saver) == representation_string
 
 
-def test_create_live_encoder(tmp_path):
-    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
-
-    saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        video_format=VideoFormats.MP4,
-        video_codec=VideoCodecs.H264,
-        preset=GPUEncoderPresets.MEDIUM,
-        input_pixel_format=InputPixelFormats.BGR,
-        output_pixel_format=OutputPixelFormats.YUV444,
-    )
-
-    camera.connect()
-
-    frame_data = camera.grab_frame()
-
-    video_id = "2"
-
-    video_frames_per_second = "45"
-
-    frame_height, frame_width, _ = frame_data.shape
-
-    output_path = Path(saver._output_directory, f"{video_id}.{saver._video_format}")
-
-    ffmpeg_command = (
-        f"ffmpeg -y -f rawvideo -pix_fmt {saver._input_pixel_format} -s {frame_width}x{frame_height} "
-        f"-r {video_frames_per_second} -i pipe: {saver._ffmpeg_command} {output_path}"
-    )
-
-
-def test_error_live_encoder():
+def test_error_live_encoder(tmp_path):
     """Verifies that only 1 live encoder can be active at a time"""
 
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
+        output_directory=tmp_path.joinpath("TestErrorLiveEncoder"),
+        hardware_encoding=False,
         video_format=VideoFormats.MP4,
         video_codec=VideoCodecs.H265,
         input_pixel_format=InputPixelFormats.BGRA,
     )
 
-    saver.create_live_video_encoder(video_id=2, frame_width=400, frame_height=400, video_frames_per_second=45)
+    saver.create_live_video_encoder(video_id="2", frame_width=400, frame_height=400, video_frames_per_second=45)
 
     message = (
         f"Unable to create live video encoder for video {2}. FFMPEG process already exists and a "
@@ -259,43 +221,38 @@ def test_error_live_encoder():
         f"method to terminate the existing encoder before creating a new one."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
-        _ = saver.create_live_video_encoder(video_id=2, frame_width=400, frame_height=400, video_frames_per_second=45)
+        saver.create_live_video_encoder(video_id="2", frame_width=400, frame_height=400, video_frames_per_second=45)
 
 
-def test_video_save_frame():
+def test_video_save_frame(tmp_path):
     """Verifies that frames are properly saved to the output path provided and are saved in order"""
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
 
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
+        output_directory=tmp_path.joinpath("TestVideoSaveFrame"),
+        hardware_encoding=False,
         video_format=VideoFormats.MP4,
         video_codec=VideoCodecs.H265,
         input_pixel_format=InputPixelFormats.BGRA,
     )
 
-    frame_id = "236"
-
     camera.connect()
 
     frame = camera.grab_frame()
-
-    saver._ffmpeg_process = None
 
     message = (
         f"Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
         f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
-        _ = saver.save_frame(_frame_id=frame_id, frame=frame)
+        saver.save_frame(_frame_id=123, frame=frame)
 
 
-# Fix this
-def test_create_video_from_image_folder():
+def test_create_video_from_image_folder(tmp_path):
     """Verifies that all image files in the image directory are extracted and sorted based on their integer IDs"""
 
-    test_directory = Path("/Users/natalieyeung/Desktop/Test")
+    test_directory = tmp_path.joinpath("TestCreateVideoFromImageFolder")
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=400, height=400)
     saver = VideoSaver(
@@ -313,7 +270,7 @@ def test_create_video_from_image_folder():
         image_saver.save_frame(frame=frame_data, frame_id=str(frame_id))
 
     # Discover and sort images from the directory
-    supported_image_formats = {".png", ".jpg", ".jpeg", ".tiff"}
+    supported_image_formats = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
     video_id = "2"
 
     images = sorted(
@@ -326,15 +283,19 @@ def test_create_video_from_image_folder():
     )
     assert len(images) > 0
 
-    if len(images) == 0:
-        message = (
-            f"Unable to create video {video_id} from images. No valid image candidates discovered when crawling "
-            f"the image directory ({test_directory}). Valid candidates are images using one of the supported "
-            f"file-extensions ({sorted(camera._supported_image_formats)}) with "
-            f"digit-convertible names (e.g: 0001.jpg)."
+
+    empty_folder = test_directory.joinpath("EmptyFolder")
+    console._ensure_directory_exists(empty_folder)
+    message = (
+        f"Unable to create video {video_id} from images. No valid image candidates discovered when crawling "
+        f"the image directory ({empty_folder}). Valid candidates are images using one of the supported "
+        f"file-extensions ({sorted(supported_image_formats)}) with "
+        f"digit-convertible names (e.g: 0001.jpg)."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        saver.create_video_from_image_folder(
+            video_frames_per_second=5, image_directory=empty_folder, video_id=video_id
         )
-        with pytest.raises(RuntimeError, match=error_format(message)):
-            _ = saver.create_video_from_image_folder(output_directory=test_directory.joinpath("EmptyFolder"))
 
     assert all(int(images[i].stem) <= int(images[i + 1].stem) for i in range(len(images) - 1))
 
@@ -342,16 +303,14 @@ def test_create_video_from_image_folder():
         image_directory=test_directory.joinpath("TestImages"), video_id=video_id, video_frames_per_second=5
     )
 
-    print("Images found:", images)
-    print("Image stems:", [img.stem for img in images])
     video_path = Path(saver._output_directory, f"{video_id}.{saver._video_format}")
     assert video_path.exists()
 
 
-def test_terminate_live_encoder():
+def test_terminate_live_encoder(tmp_path):
     saver = VideoSaver(
-        output_directory=Path("/Users/natalieyeung/Desktop/Test"),
-        hardware_encoding=OutputPixelFormats.YUV444,
+        output_directory=tmp_path.joinpath("TestTerminateLiveEncoder"),
+        hardware_encoding=False,
         video_format=VideoFormats.MP4,
         video_codec=VideoCodecs.H265,
         input_pixel_format=InputPixelFormats.BGRA,
@@ -365,7 +324,7 @@ def test_terminate_live_encoder():
 
     assert saver._ffmpeg_process is None
 
-    """Verifies that the video saver system can properly terminates a'live' FFMPEG encoder process"""
+    """Verifies that the video saver system can properly terminates alive' FFMPEG encoder process"""
     saver._ffmpeg_process = subprocess.Popen(["sleep", "30"])
 
     assert saver._ffmpeg_process.poll() is None

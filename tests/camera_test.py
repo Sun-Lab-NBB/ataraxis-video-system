@@ -84,7 +84,7 @@ def test_mock_acquisition():
 
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies that a RuntimeError is produced if grab_frame() is called before connection"""
-     
+
     camera = MockCamera(name="Test Camera", camera_id=1)
 
     message = (
@@ -148,6 +148,8 @@ def test_openCV_camera_init(color, fps, width, height) -> None:
     assert camera.height == height
 
     assert camera.name == "Test Camera"
+
+    camera.disconnect()
 
 
 # noinspection PyPep8Naming
@@ -258,11 +260,10 @@ def test_OpenCV_camera_grab_frame_errors() -> None:
 def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
     """Verifies the initialization of the camera VideoCapture object and that video acquisition parameters are set accordingly"""
 
-
     camera = OpenCVCamera(name="Test Camera", camera_id=0, color=color, fps=fps, width=width, height=height)
 
     camera.connect()
-    
+
     frame = camera.grab_frame()
     assert camera.name == "Test Camera"
     assert frame.shape[0] == height
@@ -283,7 +284,6 @@ def test_OpenCV_camera_grab_frame(color, fps, width, height) -> None:
     [(30, 600, 400), (60, 1200, 1200), (10, 3000, 3000), (None, None, None)],
 )
 @pytest.mark.xdist_group(name="group2")
-
 def test_Harvester_init(fps, width, height, cti_path) -> None:
     """Verifies Harvesters camera initialization under different conditions."""
 
@@ -329,7 +329,6 @@ def test_Harvester_acquisition(cti_path):
 # noinspection PyPep8Naming
 @pytest.mark.xdist_group(name="group2")
 def test_Harvester_repr(cti_path):
-
     camera = HarvestersCamera(name="Test camera", cti_path=cti_path, camera_id=0)
 
     """Verifies that a string representation of the Harvesters camera object is returned """
