@@ -1,5 +1,6 @@
 """Contains tests for classes and methods stored inside the Image saver systems modules."""
 
+import os
 import re
 import time
 import random
@@ -19,7 +20,9 @@ from harvesters.util.pfnc import (  # type: ignore
     rgba_formats,
     mono_location_formats,
 )
+from ataraxis_base_utilities import console
 
+from ataraxis_video_system import VideoSystem, camera
 from ataraxis_video_system.saver import (
     ImageSaver,
     VideoSaver,
@@ -32,7 +35,6 @@ from ataraxis_video_system.saver import (
     OutputPixelFormats,
 )
 from ataraxis_video_system.camera import MockCamera
-from ataraxis_base_utilities import console
 
 
 @pytest.fixture()
@@ -56,8 +58,44 @@ def error_format(message: str) -> str:
     return re.escape(textwrap.fill(message, width=120, break_long_words=False, break_on_hyphens=False))
 
 
+def test_check_nvidia():
+    """Checks if the user's computer has an in-built GPU"""
+    try:
+        subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
+
+    except subprocess.CalledProcessError:
+        return False
+
+
+def test_check_openCV():
+    """Checks if there is a valid openCV camera connection"""
+    try:
+        opencv_id = VideoSystem.get_opencv_ids()
+        assert len(opencv_id) > 0
+
+    except:
+        return False
+
+
+def test_check_harvesters(tmp_path):
+    """Checks if there is a valid Harvesters camera connection"""
+
+    if not os.path.exists(tmp_path):
+        return False
+
+    try:
+        harvesters_id = VideoSystem.get_harvesters_ids()
+        assert len(harvesters_id) > 0
+
+    except:
+        return False
+
+
 def test_image_repr(tmp_path):
     """Verifies that a string representation of the ImageSaver object is returned"""
+
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
 
@@ -90,6 +128,9 @@ def test_shutdown(tmp_path):
 def test_image_save_frame(tmp_path):
     """Verifies that the connected camera has a valid id to initiate the frame saving process."""
 
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
+
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
 
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
@@ -116,6 +157,9 @@ def test_save_image(image_format, tmp_path):
     """Verifies that both monochrome and colored image frames are saved in sequence to the chosen output path. JPEG images
     are set to have a jpeg quality of 100 to replicate lossless compression. The difference between the image frames obtained
     from the mock camera and the saved images is set to have a tolerance of 3 pixels."""
+
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
 
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
     saver = ImageSaver(output_directory=tmp_path.joinpath("TestSaveImage"), image_format=image_format, jpeg_quality=100)
@@ -151,6 +195,14 @@ def test_save_image(image_format, tmp_path):
     ],
 )
 def test_input_pipe(video_codec, hardware_encoding, output_pixel_format, preset, tmp_path):
+    """Verifies that only one live encoder can be created and the video is saved to the correct path"""
+
+    if hardware_encoding and not test_check_nvidia():
+        pytest.skip("GPU not found.")
+
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
+
     camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
     saver = VideoSaver(
         output_directory=tmp_path.joinpath("TestInputPipe"),
@@ -227,6 +279,9 @@ def test_error_live_encoder(tmp_path):
 def test_video_save_frame(tmp_path):
     """Verifies that frames are properly saved to the output path provided and are saved in order"""
 
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
+
     camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
 
     saver = VideoSaver(
@@ -251,6 +306,9 @@ def test_video_save_frame(tmp_path):
 
 def test_create_video_from_image_folder(tmp_path):
     """Verifies that all image files in the image directory are extracted and sorted based on their integer IDs"""
+
+    if (not test_check_openCV()) or (not test_check_harvesters):
+        pytest.skip("Supported camera not found.")
 
     test_directory = tmp_path.joinpath("TestCreateVideoFromImageFolder")
 
@@ -283,7 +341,6 @@ def test_create_video_from_image_folder(tmp_path):
     )
     assert len(images) > 0
 
-
     empty_folder = test_directory.joinpath("EmptyFolder")
     console._ensure_directory_exists(empty_folder)
     message = (
@@ -293,9 +350,7 @@ def test_create_video_from_image_folder(tmp_path):
         f"digit-convertible names (e.g: 0001.jpg)."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
-        saver.create_video_from_image_folder(
-            video_frames_per_second=5, image_directory=empty_folder, video_id=video_id
-        )
+        saver.create_video_from_image_folder(video_frames_per_second=5, image_directory=empty_folder, video_id=video_id)
 
     assert all(int(images[i].stem) <= int(images[i + 1].stem) for i in range(len(images) - 1))
 
