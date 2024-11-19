@@ -828,18 +828,19 @@ class VideoSystem:
 
         # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
         # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
-        try:
-            # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
-            subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError:
-            message = (
-                f"Unable to instantiate a VideoSaver class object. The object is configured to use the GPU "
-                f"video encoding backend, which currently only supports NVIDIA GPUs. Calling 'nvidia-smi' to "
-                f"verify the presence of NVIDIA GPUs did not run successfully, indicating that there are no "
-                f"available NVIDIA GPUs on the host system. Use a CPU encoder or make sure nvidia-smi is callable "
-                f"from Python shell."
-            )
-            console.error(error=RuntimeError, message=message)
+        if hardware_encoding == True:
+            try:
+                # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
+                subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
+            except subprocess.CalledProcessError:
+                message = (
+                    f"Unable to instantiate a VideoSaver class object. The object is configured to use the GPU "
+                    f"video encoding backend, which currently only supports NVIDIA GPUs. Calling 'nvidia-smi' to "
+                    f"verify the presence of NVIDIA GPUs did not run successfully, indicating that there are no "
+                    f"available NVIDIA GPUs on the host system. Use a CPU encoder or make sure nvidia-smi is callable "
+                    f"from Python shell."
+                )
+                console.error(error=RuntimeError, message=message)
 
         # Configures, initializes and returns a VideoSaver instance
         return VideoSaver(

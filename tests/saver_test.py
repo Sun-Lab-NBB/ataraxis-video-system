@@ -63,7 +63,7 @@ def test_check_nvidia():
     try:
         subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
 
-    except subprocess.CalledProcessError:
+    except Exception:
         return False
 
 

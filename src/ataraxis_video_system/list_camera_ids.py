@@ -30,7 +30,12 @@ def list_ids(backend: str, cti_path: str) -> None:
     This method is primarily intended to be used on systems where the exact camera layout is not known. This is
     especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
     """
-    console.enable()  # Enables console output
+
+    is_enabled = True
+
+    if not console.is_enabled:
+        is_enabled = False
+        console.enable()  # Enables console output
 
     # Depending on the backend, calls the appropriate ID-discovery command and lists discovered IDs.
     if backend == "opencv":
@@ -44,6 +49,9 @@ def list_ids(backend: str, cti_path: str) -> None:
         console.echo("Available Harvesters camera IDs:")
         for num, id_string in enumerate(harvester_ids, start=1):
             console.echo(f"{num}: {id_string}")
+
+    if not is_enabled:
+        console.disable()
 
 
 if __name__ == "__main__":  # pragma: no cover
