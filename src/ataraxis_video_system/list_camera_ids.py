@@ -32,7 +32,6 @@ def list_ids(backend: str, cti_path: str) -> None:
     """
 
     is_enabled = True
-
     if not console.is_enabled:
         is_enabled = False
         console.enable()  # Enables console output

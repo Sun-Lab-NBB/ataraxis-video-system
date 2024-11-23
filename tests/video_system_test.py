@@ -19,7 +19,7 @@ from harvesters.util.pfnc import (  # type: ignore
 )
 
 from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.saver import ImageFormats
+from ataraxis_video_system.saver import ImageFormats, VideoFormats, VideoCodecs
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
 
 
@@ -220,9 +220,14 @@ def test_invalid_backend():
 
 
 def test_create_image_saver():
+    """Verifies that all attributes of the image saver class are valid before creation."""
+
     output_directory = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
     image_format = ImageFormats.TIFF
     tiff_compression = cv2.IMWRITE_TIFF_COMPRESSION_LZW
+    jpeg_quality = 50
+    jpeg_sampling_factor = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_420
+    png_compression = 8
 
     invalid_output_directory = "/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti"
 
@@ -264,6 +269,54 @@ def test_create_image_saver():
             jpeg_quality=101,
         )
 
+    invalid_jpeg_sampling_factor = None
+
+    message = (
+        f"Unable to instantiate an ImageSaver class object. Expected one of the "
+        f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_' constants for jpeg_sampling_factor argument, but got "
+        f"{invalid_jpeg_sampling_factor} of type {type(invalid_jpeg_sampling_factor).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_image_saver(
+            output_directory=output_directory,
+            image_format=image_format,
+            tiff_compression=tiff_compression,
+            jpeg_quality=jpeg_quality,
+            jpeg_sampling_factor=invalid_jpeg_sampling_factor,
+        )
+
+    invalid_png_compression = 11
+    message = (
+        f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 9 for "
+        f"png_compression argument, but got {invalid_png_compression} of type "
+        f"{type(invalid_png_compression).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_image_saver(
+            output_directory=output_directory,
+            image_format=image_format,
+            tiff_compression=tiff_compression,
+            jpeg_quality=jpeg_quality,
+            jpeg_sampling_factor=jpeg_sampling_factor,
+            png_compression=invalid_png_compression,
+        )
+
+    invalid_thread_count = "str"
+    message = (
+        f"Unable to instantiate an ImageSaver class object. Expected an integer for thread_count "
+        f"argument, but got {invalid_thread_count} of type {type(invalid_thread_count).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_image_saver(
+            output_directory=output_directory,
+            image_format=image_format,
+            tiff_compression=tiff_compression,
+            jpeg_quality=jpeg_quality,
+            jpeg_sampling_factor=jpeg_sampling_factor,
+            png_compression=png_compression,
+            thread_count=invalid_thread_count,
+        )
+
 
 def test_repr(tmp_path):
     """Verifies that the correct string representation of the VideoSystem class instance is returned"""
@@ -281,3 +334,54 @@ def test_repr(tmp_path):
     )
 
     assert repr(videosystem) == representation_string
+
+
+def test_create_video_saver(tmp_path):
+    """Verifies that all attributes of the video saver class are valid before creation."""
+
+    output_directory = Path(tmp_path)
+    hardware_encoding = True
+    video_format = VideoFormats.MP4
+    video_codec = VideoCodecs.H265
+
+    video_invalid_output_directory = "/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti"
+
+    message = (
+        f"Unable to instantiate a Saver class object. Expected a Path instance for output_directory argument, "
+        f"but got {video_invalid_output_directory} of type {type(video_invalid_output_directory).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_video_saver(output_directory=video_invalid_output_directory)
+
+    message = (
+        f"Unable to instantiate a VideoSaver class object. Expected a boolean for hardware_encoding "
+        f"argument, but got {'str'} of type {type('str').__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_video_saver(output_directory=output_directory, hardware_encoding="str")
+
+    invalid_video_format = None
+
+    message = (
+        f"Unable to instantiate a VideoSaver class object. Expected a VideoFormats instance for "
+        f"video_format argument, but got {invalid_video_format} of type {type(invalid_video_format).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_video_saver(
+            output_directory=output_directory, hardware_encoding=hardware_encoding, video_format=invalid_video_format
+        )
+
+    invalid_video_codec = None
+
+    message = (
+        f"Unable to instantiate a VideoSaver class object. Expected a VideoCodecs instance for "
+        f"video_codec argument, but got {invalid_video_codec} of type {type(invalid_video_codec).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem.create_video_saver(
+            output_directory=output_directory, hardware_encoding=hardware_encoding, video_format=video_format, video_codec=invalid_video_codec
+        )
+
+
+    def test_start(self):
+        pass
