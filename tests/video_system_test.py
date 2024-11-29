@@ -19,7 +19,7 @@ from harvesters.util.pfnc import (  # type: ignore
 )
 
 from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.saver import ImageFormats, VideoFormats, VideoCodecs
+from ataraxis_video_system.saver import VideoCodecs, ImageFormats, VideoFormats
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
 
 
@@ -379,9 +379,11 @@ def test_create_video_saver(tmp_path):
     )
     with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem.create_video_saver(
-            output_directory=output_directory, hardware_encoding=hardware_encoding, video_format=video_format, video_codec=invalid_video_codec
+            output_directory=output_directory,
+            hardware_encoding=hardware_encoding,
+            video_format=video_format,
+            video_codec=invalid_video_codec,
         )
-
 
     def test_start(self):
         pass

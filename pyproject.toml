@@ -12,7 +12,7 @@ version = "1.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as images or videos."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11, <3.12"  # Limited to 3.11 until 3.12 is supported by genicam
+requires-python = ">=3.11, <3.12"  # Limited to 3.11 until 3.12+ support is added for genicam, a core harvesters package
 authors = [
     { name = "Jacob Groner", email = "jrg349@cornell.edu" },
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
@@ -44,8 +44,8 @@ dependencies = [
     "numpy>=2,<3",
     "opencv-python>=4,<5",
     "harvesters>=1,<2",
-    "ataraxis-time>=2,<3",
-    "ataraxis-base-utilities>=2,<3",
+    "ataraxis-time>=3,<4",
+    "ataraxis-base-utilities>=3,<4",
     "ataraxis-data-structures>=1,<2",
     "click>=8,<9",
 ]
