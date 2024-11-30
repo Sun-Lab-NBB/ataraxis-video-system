@@ -1,6 +1,5 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
-from time import sleep
 from pathlib import Path
 
 import numpy as np
@@ -172,19 +171,17 @@ def test_opencv_camera_connect_disconnect(color, fps, width, height) -> None:
 
     # Tests connect method. Note, this may change the fps, width and height class properties, as the camera may not
     # support the requested parameters and instead set them to the nearest supported values or to default values. The
-    # specific behavior depends on each camera.
+    # specific behavior depends on each camera. Since this code is tested across many different cameras, and it is hard
+    # to predict which cameras will support which settings, we do not formally verify whether parameter assignment has
+    # worked.
     assert not camera.is_connected
     camera.connect()
-    assert camera.fps == fps
-    assert camera.width == width
-    assert camera.height == height
     assert camera.is_connected
     assert not camera.is_acquiring
 
     # Tests disconnect method
     camera.disconnect()
     assert not camera.is_connected
-    sleep(1)  # Allows OpenCV to properly release camera resources to support further tests.
 
 
 @pytest.mark.xdist_group(name="group1")
@@ -224,7 +221,6 @@ def test_opencv_camera_grab_frame(color, fps, width, height) -> None:
 
     # Deletes the class to test the functioning of the __del__() method.
     del camera
-    sleep(1)  # Allows OpenCV to properly release camera resources to support further tests.
 
 
 @pytest.mark.xdist_group(name="group1")

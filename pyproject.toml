@@ -38,6 +38,7 @@ classifiers = [
     # Supported OS systems
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X"
 ]
 
 # Runtime project dependencies. This overlaps with 'condarun' optional list.
