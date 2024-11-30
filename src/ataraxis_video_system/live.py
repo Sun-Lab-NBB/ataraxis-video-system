@@ -169,7 +169,7 @@ def live_run(
     # Instantiates the requested camera
     camera_name = "Live Camera"
     if camera_backend == "mock":
-        camera = VideoSystem.create_camera(
+        camera = VideoSystem.add_camera(
             camera_name=camera_name,
             camera_backend=CameraBackends.MOCK,
             camera_id=camera_id,
@@ -179,7 +179,7 @@ def live_run(
             color=monochrome,
         )
     elif camera_backend == "harvesters":  # pragma: no cover
-        camera = VideoSystem.create_camera(
+        camera = VideoSystem.add_camera(
             camera_name=camera_name,
             camera_backend=CameraBackends.HARVESTERS,
             camera_id=camera_id,
@@ -189,7 +189,7 @@ def live_run(
             cti_path=Path(cti_path),
         )
     else:  # pragma: no cover
-        camera = VideoSystem.create_camera(
+        camera = VideoSystem.add_camera(
             camera_name=camera_name,
             camera_backend=CameraBackends.OPENCV,
             camera_id=camera_id,
@@ -207,21 +207,21 @@ def live_run(
 
     saver: ImageSaver | VideoSaver
     if saver_backend == "image":
-        saver = VideoSystem.create_image_saver(
+        saver = VideoSystem.add_image_saver(
             output_directory=Path(output_directory),
             image_format=ImageFormats.PNG,
             png_compression=1,
             thread_count=10,
         )
     elif saver_backend == "video_cpu":  # pragma: no cover
-        saver = VideoSystem.create_video_saver(
+        saver = VideoSystem.add_video_saver(
             output_directory=Path(output_directory),
             hardware_encoding=False,
             preset=CPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,
         )
     else:  # pragma: no cover
-        saver = VideoSystem.create_video_saver(
+        saver = VideoSystem.add_video_saver(
             output_directory=Path(output_directory),
             hardware_encoding=True,
             preset=GPUEncoderPresets.FAST,
@@ -245,7 +245,7 @@ def live_run(
     # Ensures that manual control instruction is only shown once
     once: bool = True
     # Ues terminal input to control the video system
-    while video_system.is_running:
+    while video_system.started:
         if once:
             message = (
                 f"VideoSystem {video_system.name} manual control: activated. Enter 'q' to terminate system runtime."

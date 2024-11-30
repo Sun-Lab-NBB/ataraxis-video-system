@@ -1,3 +1,5 @@
+"""This module contains a helper script that lists the IDs of cameras that can be accessed through OpenCV or
+Harvesters."""
 from pathlib import Path
 
 import click

@@ -75,18 +75,18 @@ class VideoSystem:
             the camera feed in real time, which is frequently desirable in scientific experiments.
 
     Attributes:
-        _camera: Stores the Camera class instance that provides camera interface.
-        _saver: Stores the Saver class instance that provides saving backend interface.
+        _cameras: Stores the Camera class instance that provides camera interface.
+        _savers: Stores the Saver class instance that provides saving backend interface.
         _shutdown_timeout: Stores the time in seconds after which to forcefully terminate processes
             during shutdown.
-        _running: Tracks whether the system is currently running (has active subprocesses).
+        _started: Tracks whether the system is currently running (has active subprocesses).
         _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
         _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from producer to
             consumer processes.
         _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
             manage runtime behavior of spawned processes.
         _producer_process: A process that acquires camera frames using the bound Camera class.
-        _consumer_processes: A tuple of processes that save camera frames using the bound Saver class. ImageSaver
+        _consumer_process: A tuple of processes that save camera frames using the bound Saver class. ImageSaver
             instance can use multiple processes, VideoSaver will use a single process.
 
     Raises:
@@ -94,17 +94,17 @@ class VideoSystem:
         ValueError: If any of the provided arguments has an invalid value.
     """
 
-    _camera: Incomplete
-    _saver: Incomplete
+    _cameras: Incomplete
+    _savers: Incomplete
     _name: Incomplete
     _shutdown_timeout: Incomplete
-    _running: bool
+    _started: bool
     _mp_manager: Incomplete
     _image_queue: Incomplete
     _expired: bool
     _terminator_array: Incomplete
     _producer_process: Incomplete
-    _consumer_processes: Incomplete
+    _consumer_process: Incomplete
     def __init__(
         self,
         camera: HarvestersCamera | OpenCVCamera | MockCamera,
@@ -121,7 +121,7 @@ class VideoSystem:
     def __repr__(self) -> str:
         """Returns a string representation of the VideoSystem class instance."""
     @property
-    def is_running(self) -> bool:
+    def started(self) -> bool:
         """Returns true oif the class has active subprocesses (is running) and false otherwise."""
     @property
     def name(self) -> str:
@@ -177,7 +177,7 @@ class VideoSystem:
             A tuple of strings. Each string contains camera ID, serial number, and model name.
         """
     @staticmethod
-    def create_camera(
+    def add_camera(
         camera_name: str,
         camera_backend: CameraBackends = ...,
         camera_id: int = 0,
@@ -234,7 +234,7 @@ class VideoSystem:
                 not point to a '.cti' file.
         """
     @staticmethod
-    def create_image_saver(
+    def add_image_saver(
         output_directory: Path,
         image_format: ImageFormats = ...,
         tiff_compression: int = ...,
@@ -281,7 +281,7 @@ class VideoSystem:
             TypeError: If the input arguments are not of the correct type.
         """
     @staticmethod
-    def create_video_saver(
+    def add_video_saver(
         output_directory: Path,
         hardware_encoding: bool = False,
         video_format: VideoFormats = ...,
