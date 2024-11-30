@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 from numpy.typing import NDArray
-from ataraxis_base_utilities import LogLevel, console
+from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
 
 
 class SaverBackends(Enum):
@@ -306,7 +306,7 @@ class ImageSaver:
             one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended to use code 1 (None) for
             lossless and fastest file saving or code 5 (LZW) for a good speed-to-compression balance.
         jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the JPEG compression. A higher
-            value means better quality, less data loss, bigger file size, and slower processing time.
+            value means better quality, less information loss, bigger file size, and slower processing time.
         jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image color-space. Has to be one
             of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended to use code 444 to preserve the
             full color-space of the image for scientific applications.
@@ -358,7 +358,7 @@ class ImageSaver:
 
         # Ensures that the input directory exists.
         # noinspection PyProtectedMember
-        console._ensure_directory_exists(output_directory)
+        ensure_directory_exists(output_directory)
 
         # Saves output directory and image format to class attributes
         self._output_directory: Path = output_directory
@@ -452,7 +452,7 @@ class ImageSaver:
 
         # Ensures that input IDs conform to the expected format.
 
-        if not frame_id is None and not frame_id.isdigit():
+        if frame_id is not None and not frame_id.isdigit():
             message = (
                 f"Unable to save the image with the ID {frame_id} as the ID is not valid. The ID must be a "
                 f"digit-convertible string, such as 0001."
@@ -565,8 +565,7 @@ class VideoSaver:
         gpu: int = 0,
     ):
         # Ensures that the output directory exists
-        # noinspection PyProtectedMember
-        console._ensure_directory_exists(output_directory)
+        ensure_directory_exists(output_directory)
 
         self._output_directory: Path = output_directory
         self._video_format: str = str(video_format.value)
@@ -654,7 +653,7 @@ class VideoSaver:
 
         return f"VideoSaver({self._repr_body}, live_encoder={live_encoder})"
 
-    def __delete__(self) -> None:
+    def __del__(self) -> None:
         """Ensures live encoder is terminated when the VideoEncoder object is deleted."""
         if self._ffmpeg_process is not None:
             self.terminate_live_encoder(timeout=600)
@@ -729,7 +728,7 @@ class VideoSaver:
             video_id: The ID or name of the generated video file. The videos will be saved as 'id.extension' format.
             cleanup: Determines whether to clean up (delete) source images after the video creation. The cleanup is
                 only carried out after the FFMPEG process terminates with a success code. Make sure to test your
-                pipeline prior to enabling this option, as this method does not verify the encoded video for corruption.
+                pipeline before enabling this option, as this method does not verify the encoded video for corruption.
 
         Raises:
             Exception: If there are no images with supported file-extensions in the specified directory.

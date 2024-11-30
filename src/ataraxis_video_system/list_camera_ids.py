@@ -31,8 +31,9 @@ def list_ids(backend: str, cti_path: str) -> None:
     especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
     """
 
+    # Records teh current console status and, if necessary, ensured console is enabled before running this command.
     is_enabled = True
-    if not console.is_enabled:
+    if not console.enabled:
         is_enabled = False
         console.enable()  # Enables console output
 
@@ -49,6 +50,7 @@ def list_ids(backend: str, cti_path: str) -> None:
         for num, id_string in enumerate(harvester_ids, start=1):
             console.echo(f"{num}: {id_string}")
 
+    # If the console was enabled by this runtime, ensures it is disabled before finishing the runtime.
     if not is_enabled:
         console.disable()
 

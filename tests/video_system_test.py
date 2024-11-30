@@ -1,51 +1,21 @@
-"""Contains tests for classes and methods stored inside the camera module."""
+"""Contains tests for classes and methods provided by the video_system.py module."""
 
-import re
-from enum import Enum
 from pathlib import Path
 import tempfile
-import textwrap
 
 import cv2
-import numpy as np
 import pytest
-from harvesters.core import Harvester, ImageAcquirer  # type: ignore
-from harvesters.util.pfnc import (  # type: ignore
-    bgr_formats,
-    rgb_formats,
-    bgra_formats,
-    rgba_formats,
-    mono_location_formats,
-)
+from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import VideoSystem
 from ataraxis_video_system.saver import VideoCodecs, ImageFormats, VideoFormats
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
-
-
-def error_format(message: str) -> str:
-    """Formats the input message to match the default Console format and escapes it using re, so that it can be used to
-    verify raised exceptions.
-
-    This method is used to set up pytest 'match' clauses to verify raised exceptions.
-
-    Args:
-        message: The message to format and escape, according to standard Ataraxis testing parameters.
-
-    Returns:
-        Formatted and escape message that can be used as the 'match' argument of pytest.raises() method.
-    """
-    return re.escape(textwrap.fill(message, width=120, break_long_words=False, break_on_hyphens=False))
+from ataraxis_video_system.camera import CameraBackends
 
 
 @pytest.fixture()
 def tmp_path() -> Path:
     tmp_path = Path(tempfile.gettempdir())
     return tmp_path
-
-
-def test_check_backend(backend):
-    return backend not in CameraBackends.__members__
 
 
 def test_create_camera_errors():
@@ -201,22 +171,21 @@ def test_invalid_backend():
     camera_name = "Test Camera"
     invalid_backend_value = "INVALID_BACKEND"
 
-    if test_check_backend(invalid_backend_value):
-        message = (
-            f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
-            f"camera_backend argument {invalid_backend_value} of type {type(invalid_backend_value).__name__}. "
-            f"camera_backend has to be one of the options available from the CameraBackends enumeration."
-        )
+    message = (
+        f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+        f"camera_backend argument {invalid_backend_value} of type {type(invalid_backend_value).__name__}. "
+        f"camera_backend has to be one of the options available from the CameraBackends enumeration."
+    )
 
-        with pytest.raises(ValueError, match=error_format(message)):
-            VideoSystem.create_camera(
-                camera_name=camera_name,
-                camera_id=2,
-                frames_per_second=30,
-                frame_width=600,
-                frame_height=400,
-                camera_backend=invalid_backend_value,
-            )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem.create_camera(
+            camera_name=camera_name,
+            camera_id=2,
+            frames_per_second=30,
+            frame_width=600,
+            frame_height=400,
+            camera_backend=invalid_backend_value,
+        )
 
 
 def test_create_image_saver():

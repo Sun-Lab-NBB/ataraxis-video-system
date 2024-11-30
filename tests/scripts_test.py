@@ -1,4 +1,4 @@
-"""Contains tests that verify standalone scripts can be run.
+"""Contains tests that verify standalone scripts can run on this system.
 
 Notes:
     This test suite is not meant to be exhaustive! All scripts are evaluated manually before production distribution,
