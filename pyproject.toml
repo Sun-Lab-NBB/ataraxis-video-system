@@ -57,7 +57,7 @@ Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
 Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/overview"
 
 # Specifies additional dependencies that can be installed alongside the main library. Also, this is the section that
-# stores conda, condarun and noconda lists that facilitate setting up dependencies via conda where possible.
+# stores conda, condarun, and noconda lists that facilitate setting up dependencies via conda where possible.
 [project.optional-dependencies]
 
 # Runtime dependencies known to be installable with conda for all development platforms

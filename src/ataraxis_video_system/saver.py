@@ -419,7 +419,7 @@ class ImageSaver:
             data: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
         """
 
-        # Uses output directory, image ID and image format to construct the image output path
+        # Uses output directory, image ID, and image format to construct the image output path
         output_path = Path(self._output_directory, f"{image_id}.{self._image_format.value}")
 
         # Tiff format
