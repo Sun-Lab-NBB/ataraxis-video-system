@@ -467,7 +467,6 @@ class ImageSaver:
 
         This method has to be called to properly release class resources during shutdown.
         """
-
         if self._running:
             self._running = False
             self._worker_thread.join()
