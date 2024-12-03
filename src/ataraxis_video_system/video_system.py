@@ -63,15 +63,25 @@ class _CameraSystem:
     not support real-time frame rate control."""
     fps_override: int | float
 
+    """Determines whether acquired frames need to be piped to other processes via the output queue, in addition to 
+    being sent to the saver process (if any). This is used to additionally process the frames in-parallel with 
+    saving them to disk, for example, to analyze the visual stream data for certain trigger events."""
+    output_frames: bool
+
+    """Allows adjusting the frame rate at which frames are sent to the output_queue. Frequently, real time processing
+    would impose constraints on the input frame rate that will not match the frame acquisition (and saving) frame 
+    rate. This setting allows sub-sampling the saved frames to a frame rate required by the output processing 
+    pipeline."""
+    output_frame_rate: int | float
+
     """Determines whether to display acquired camera frames to the user via a display UI. The frames are always 
     displayed at a 30 fps rate regardless of the actual frame rate of the camera. Note, this does not interfere with 
     frame acquisition (saving)."""
     display_frames: bool
 
-    """Determines whether acquired frames need to be piped to other processes via the output queue, in addition to 
-    being sent to the saver process (if any). This is used to additionally process the frames in-parallel with 
-    saving them to disk, for example, to analyze the visual stream data for certain trigger events."""
-    output_frames: bool
+    """Same as output_frame_rate, but allows limiting the framerate at which the frames are displayed to the user if 
+    displaying the frames is enabled. It is highly advise to not set this value above 30 fps."""
+    display_frame_rate: int | float
 
 
 @dataclass(frozen=True)
@@ -88,7 +98,7 @@ class _SaverSystem:
     """Stores the indices of camera objects whose frames will be saved by the included saver instance. The indices 
     have to match the camera object indices inside the _cameras attribute of the VideoSystem instance that manages 
     this SaverSystem."""
-    source_ids: list[int]
+    source_ids: tuple[int]
 
 
 class VideoSystem:
@@ -141,8 +151,10 @@ class VideoSystem:
         _savers: Stores managed SaverSystems.
         _started: Tracks whether the system is currently running (has active subprocesses).
         _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
-        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from producer to
-            consumer processes.
+        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
+            the consumer process.
+        _output_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
+            other concurrently active processes.
         _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
             manage runtime behavior of spawned processes.
         _producer_process: A process that acquires camera frames using managed CameraSystems.
@@ -214,12 +226,13 @@ class VideoSystem:
         # start() method runtime, most of them are initialized to placeholder values here.
         self._mp_manager: SyncManager = multiprocessing.Manager()
         self._image_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
+        self._output_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
         self._terminator_array: SharedMemoryArray | None = None
         self._producer_process: Process | None = None
         self._consumer_process: Process | None = None
         self._watchdog_thread: Thread | None = None
 
-        # If output directory path is provided, ensures the directory tree exists
+        # If the output directory path is provided, ensures the directory tree exists
         if output_directory is not None:
             ensure_directory_exists(output_directory)
 
@@ -240,11 +253,13 @@ class VideoSystem:
         camera_name: str,
         camera_id: int = 0,
         camera_backend: CameraBackends = CameraBackends.OPENCV,
-        display_frames: bool = False,
         output_frames: bool = False,
+        output_frame_rate: int | float = 25,
+        display_frames: bool = False,
+        display_frame_rate: int | float = 25,
         frame_width: Optional[int] = None,
         frame_height: Optional[int] = None,
-        frames_per_second: Optional[int | float] = None,
+        acquisition_frame_rate: Optional[int | float] = None,
         opencv_backend: Optional[int] = None,
         color: Optional[bool] = None,
     ) -> None:
@@ -264,16 +279,22 @@ class VideoSystem:
             camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
                 the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
                 non-GenTL-compatible cameras.
+            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This
+                allows real time processing of acquired frames by other concurrent processes.
+            output_frame_rate: Allows adjusting the frame rate at which acquired frames are sent to the output_queue.
+                Note, the output framerate cannot exceed the native frame rate of the camera, but it can be lower than
+                the native acquisition frame rate. The acquisition frame rate is set via the frames_per_second argument
+                below.
             display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
                 the camera feed in real time.
-            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This allows
-                real time processing of acquired frames by other concurrent processes.
+            display_frame_rate: Similar to output_frame_rate, determines the frame rate at which acquired frames are
+                displayed to the user.
             frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
                 camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
                 If not provided (set to None), this parameter will be obtained from the connected camera.
             frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
                 If not provided (set to None), this parameter will be obtained from the connected camera.
-            frames_per_second: How many frames to capture each second (capture speed). Note, this depends on the
+            acquisition_frame_rate: How many frames to capture each second (capture speed). Note, this depends on the
                 hardware capabilities of the camera and is affected by multiple related parameters, such as image
                 dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
                 parameter will be obtained from the connected camera. The VideoSystem always tries to set the camera
@@ -291,7 +312,8 @@ class VideoSystem:
         Raises:
             TypeError: If the input arguments are not of the correct type.
             ValueError: If the requested camera_backend is not one of the supported backends. If the chosen backend is
-                Harvesters and the .cti path is not provided.
+                Harvesters and the .cti path is not provided. If attempting to set camera framerate or frame dimensions
+                fails for any reason.
         """
         # Verifies that the input arguments are of the correct type. Note, checks backend-specific arguments in
         # backend-specific clause.
@@ -307,11 +329,11 @@ class VideoSystem:
                 f"for camera_id argument, but got {camera_id} of type {type(camera_id).__name__}."
             )
             raise console.error(error=TypeError, message=message)
-        if not isinstance(frames_per_second, (int, float, NoneType)):
+        if not isinstance(acquisition_frame_rate, (int, float, NoneType)):
             message = (
                 f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer, "
-                f"float or None for frames_per_second argument, but got {frames_per_second} of type "
-                f"{type(frames_per_second).__name__}."
+                f"float or None for acquisition_frame_rate argument, but got {acquisition_frame_rate} of type "
+                f"{type(acquisition_frame_rate).__name__}."
             )
             raise console.error(error=TypeError, message=message)
         if not isinstance(frame_width, (int, NoneType)):
@@ -336,8 +358,8 @@ class VideoSystem:
         fps_override: int | float = 0
 
         # Converts integer frames_per_second inputs to floats, since the Camera classes expect it to be a float.
-        if isinstance(frames_per_second, int):
-            frames_per_second = float(frames_per_second)
+        if isinstance(acquisition_frame_rate, int):
+            acquisition_frame_rate = float(acquisition_frame_rate)
 
         # OpenCVCamera
         if camera_backend == CameraBackends.OPENCV:
@@ -364,7 +386,7 @@ class VideoSystem:
                 camera_id=camera_id,
                 height=frame_height,
                 width=frame_width,
-                fps=frames_per_second,
+                fps=acquisition_frame_rate,
             )
 
             # Connects to the camera. This both verifies that the camera can be connected to and applies the
@@ -410,14 +432,14 @@ class VideoSystem:
             # If the camera failed to set the requested frame rate, but it is possible to correct the fps via software,
             # enables fps override. Software correction requires that the native fps is higher than the desired fps,
             # as it relies on discarding excessive frames.
-            if frames_per_second is not None and camera.fps > frames_per_second:
-                fps_override = frames_per_second
-            elif frames_per_second is not None and camera.fps < frames_per_second:
+            if acquisition_frame_rate is not None and camera.fps > acquisition_frame_rate:
+                fps_override = acquisition_frame_rate
+            elif acquisition_frame_rate is not None and camera.fps < acquisition_frame_rate:
                 message = (
                     f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire frames at the rate of {frames_per_second} frames per second, "
-                    f"but the camera automatically adjusted the framerate to {camera.fps}. This indicates that the "
-                    f"camera does not support the requested framerate."
+                    f"configuring the camera to acquire frames at the rate of {acquisition_frame_rate} frames per "
+                    f"second, but the camera automatically adjusted the framerate to {camera.fps}. This indicates that "
+                    f"the camera does not support the requested framerate."
                 )
                 raise console.error(error=ValueError, message=message)
 
@@ -446,7 +468,7 @@ class VideoSystem:
                 camera_id=camera_id,
                 height=frame_height,
                 width=frame_width,
-                fps=frames_per_second,
+                fps=acquisition_frame_rate,
             )
 
             # Connects to the camera. This both verifies that the camera can be connected to and applies the camera
@@ -472,8 +494,8 @@ class VideoSystem:
                 frame_height = 400
             if frame_width is None:
                 frame_width = 600
-            if frames_per_second is None:
-                frames_per_second = 30
+            if acquisition_frame_rate is None:
+                acquisition_frame_rate = 30
 
             # Instantiates the MockCamera class object
             camera = MockCamera(
@@ -481,7 +503,7 @@ class VideoSystem:
                 camera_id=camera_id,
                 height=frame_height,
                 width=frame_width,
-                fps=frames_per_second,
+                fps=acquisition_frame_rate,
                 color=mock_color,
             )
 
@@ -498,17 +520,43 @@ class VideoSystem:
             )
             raise console.error(error=ValueError, message=message)
 
+        # If the output_frame_rate argument is not an integer or floating value, defaults to using the same framerate
+        # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
+        if not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"output_frame_rate argument {output_frame_rate} of type {type(output_frame_rate).__name__}. "
+                f"Output framerate override has to be an integer or floating point number that does not exceed the "
+                f"camera acquisition framerate ({camera.fps})."
+            )
+            raise console.error(error=TypeError, message=message)
+
+        # Same as above, but for display frame_rate
+        if not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:
+            message = (
+                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"display_frame_rate argument {display_frame_rate} of type {type(display_frame_rate).__name__}. "
+                f"Display framerate override has to be an integer or floating point number that does not exceed the "
+                f"camera acquisition framerate ({camera.fps})."
+            )
+            raise console.error(error=TypeError, message=message)
+
         # If the camera class was successfully instantiated, packages the class alongside additional parameters into a
         # CameraSystem object and appends it to the camera list.
         self._cameras.append(
             _CameraSystem(
-                camera=camera, fps_override=fps_override, display_frames=display_frames, output_frames=output_frames
+                camera=camera,
+                fps_override=fps_override,
+                output_frames=output_frames,
+                output_frame_rate=output_frame_rate,
+                display_frames=display_frames,
+                display_frame_rate=display_frame_rate,
             )
         )
 
     def add_image_saver(
         self,
-        source_ids: list[int],
+        source_ids: tuple[int],
         image_format: ImageFormats = ImageFormats.TIFF,
         tiff_compression_strategy: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
         jpeg_quality: int = 95,
@@ -623,6 +671,13 @@ class VideoSystem:
             )
             console.error(error=TypeError, message=message)
 
+        if not isinstance(source_ids, tuple) or not all(isinstance(source_id, int) for source_id in source_ids):
+            message = (
+                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected a tuple of one or "
+                f"more integers as source_ids argument, but got {source_ids} of type {type(source_ids).__name__}."
+            )
+            console.error(error=TypeError, message=message)
+
         # Configures, initializes, and adds the ImageSaver object to the saver list.
         saver = ImageSaver(
             output_directory=self._output_directory,
@@ -637,7 +692,7 @@ class VideoSystem:
 
     def add_video_saver(
         self,
-        source_ids: list[int],
+        source_ids: tuple[int],
         hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
@@ -805,6 +860,13 @@ class VideoSystem:
                 f"information."
             )
             console.error(error=RuntimeError, message=message)
+
+        if not isinstance(source_ids, tuple) or not all(isinstance(source_id, int) for source_id in source_ids):
+            message = (
+                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a tuple of one or "
+                f"more integers as source_ids argument, but got {source_ids} of type {type(source_ids).__name__}."
+            )
+            console.error(error=TypeError, message=message)
 
         # Configures, initializes, and returns a VideoSaver instance
         saver = VideoSaver(
@@ -998,6 +1060,22 @@ class VideoSystem:
         """Returns the name of the VideoSystem class instance."""
         return self._name
 
+    @property
+    def description(self) -> str:
+        """Returns the description of the VideoSystem class instance."""
+        return self._description
+
+    @property
+    def id_code(self) -> np.uint8:
+        """Returns the unique identifier code assigned to the VideoSystem class instance."""
+        return self._id
+
+    @property
+    def output_queues(self) -> MPQueue:  # type: ignore
+        """Returns the multiprocessing Queue object used by the system's producer process to send frames to other
+        concurrently active processes."""
+        return self._output_queue
+
     @staticmethod
     def get_opencv_ids() -> tuple[str, ...]:
         """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
@@ -1150,7 +1228,7 @@ class VideoSystem:
     @staticmethod
     def _frame_production_loop(
         video_system_id: int,
-        cameras: list[_CameraSystem],
+        cameras: tuple[_CameraSystem, ...],
         image_queue: MPQueue,  # type: ignore
         output_queue: MPQueue,  # type: ignore
         logger_queue: MPQueue,  # type: ignore
@@ -1191,6 +1269,10 @@ class VideoSystem:
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
         """
+        # Connects to the terminator array. This has to be done before preparing camera systems in case connect()
+        # method fails for any camera objects.
+        terminator_array.connect()
+
         # Creates a timer that time-stamps acquired frames. This information is crucial for later alignment of multiple
         # data sources. This timer is shared between all managed cameras.
         stamp_timer: PrecisionTimer = PrecisionTimer("us")
@@ -1205,10 +1287,6 @@ class VideoSystem:
         package = LogPackage(source_id=video_system_id, time_stamp=0, serialized_data=onset)
         logger_queue.put(package)
 
-        # Connects to the terminator array. This has to be done before preparing camera systems in case connect()
-        # method fails for any camera objects.
-        terminator_array.connect()
-
         # Loops over cameras and precreates the necessary objects to control the flow of acquired frames between
         # various VideoSystem components
         camera_dict = {}
@@ -1217,27 +1295,49 @@ class VideoSystem:
             camera_name = camera.camera.name
 
             # For each camera configured to display frames, creates a worker thread and queue object that handles
-            # displaying the frames. Stores both in a dictionary using camera names as keys.
+            # displaying the frames.
             if camera.display_frames:
                 # Creates queue and thread for this camera
                 display_queue = Queue()
                 display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, camera_name))
                 display_thread.start()
-            else:
-                display_queue = None
-                display_thread = None
 
-            if camera.fps_override:
-                # Translates the fps to use the timer-units of the timer. In this case, converts from frames per
-                # second to frames per microsecond.
-                frame_time = convert_time(
-                    time=camera.camera.fps,  # type: ignore
+                # Converts the timeout between showing two consecutive frames from frames_per_second to
+                # microseconds_per_frame. For this, first divides one second by the number of frames (to get seconds per
+                # frame) and then translates that into microseconds. This gives the timeout between two consecutive
+                # frame acquisitions.
+                show_time = convert_time(
+                    time=float(1 / camera.display_frame_rate),  # type: ignore
                     from_units="s",
                     to_units="us",
                     convert_output=True,
                 )
             else:
-                frame_time = -1.0  # Due to the timer comparison below, this is equivalent to setting frame_time to None
+                display_queue = None
+                display_thread = None
+                show_time = None
+
+            if camera.fps_override:
+                # Calculates the microseconds per frame for the acquisition framerate control.
+                frame_time = convert_time(
+                    time=float(1 / camera.camera.fps),  # type: ignore
+                    from_units="s",
+                    to_units="us",
+                    convert_output=True,
+                )
+            else:
+                frame_time = -1.0  # This is essentially similar to None
+
+            # Calculates the timeout in microseconds per frame, for outputting the frames to other processes.
+            if camera.output_frames:
+                output_time = convert_time(
+                    time=camera.output_frame_rate,  # type: ignore
+                    from_units="s",
+                    to_units="us",
+                    convert_output=True,
+                )
+            else:
+                output_time = None
 
             # Initializes the high-precision timer used to override managed camera frame rate. This is used to adjust
             # the framerate for cameras that do not support hardware frame rate control.
@@ -1247,72 +1347,87 @@ class VideoSystem:
             # resources, as displayed framerate does not need to be as high as acquisition framerate. This becomes very
             # relevant for displaying large frames at high speeds, as the imshow backend sometimes gets overwhelmed,
             # leading to queue backlogging and displayed data lagging behind the real stream.
-            show_timer: PrecisionTimer = PrecisionTimer("ms")
+            show_timer: PrecisionTimer = PrecisionTimer("us")
 
-            # Fills the camera dictionary with the necessary data for each camera.
+            # Also initializes the timer used to limit the framerate at which frames are added to the output queue.
+            output_timer: PrecisionTimer = PrecisionTimer("us")
+
+            # Fills the camera dictionary with the necessary data for each camera:
+            # Display
             camera_dict[camera_name]["display_queue"] = display_queue
             camera_dict[camera_name]["display_thread"] = display_thread
-            camera_dict[camera_name]["frame_time"] = frame_time
-            camera_dict[camera_name]["output_frames"] = camera.output_frames
-            camera_dict[camera_name]["frame_count"] = 1  # Starts counting the frames from the first frame
+            camera_dict[camera_name]["show_time"] = show_time
+            camera_dict[camera_name]["show_timer"] = show_timer
+
+            # Acquisition
             camera_dict[camera_name]["acquisition_timer"] = acquisition_timer
-            camera_dict[camera_name]["frame_count"] = show_timer
+            camera_dict[camera_name]["frame_time"] = frame_time
+
+            # Output
+            camera_dict[camera_name]["output_timer"] = output_timer
+            camera_dict[camera_name]["output_time"] = output_time
 
             camera.camera.connect()  # Connects to the hardware of each camera.
+
+        # Sets the 3d index value of the terminator_array to 1 to indicate that all CameraSystems have been started.
+        terminator_array.write_data(index=3, data=np.uint8(1))
 
         # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 1
         while not self._terminator_array.read_data(index=0):  # type: ignore
             # Loops over each camera during each acquisition cycle:
-            for camera_system in cameras:
+            for camera_index, camera_system in enumerate(cameras):
                 # Extracts the camera class and acquisition runtime parameters from the camera_dictionary
                 camera = camera_system.camera
                 camera_name = camera.name
-                frame_time = camera_dict[camera_name]["frame_time"]
-                acquisition_timer = camera_dict[camera_name]["acquisition_timer"]
+
+                # Display
+                show_time = camera_dict[camera_name]["show_time"]
                 show_timer = camera_dict[camera_name]["show_timer"]
-                frame_count = camera_dict[camera_name]["frame_count"]
-                output_frames = camera_dict[camera_name]["output_frames"]
                 display_queue = camera_dict[camera_name]["display_queue"]
 
-                # If the fps override is enabled, this loop is further limited to acquire frames at the specified rate,
-                # which is helpful for some cameras that do not have a built-in acquisition control functionality.
-                if frame_time > 0 and frame_time > acquisition_timer.elapsed:
-                    continue
+                # Acquisition
+                frame_time = camera_dict[camera_name]["frame_time"]
+                acquisition_timer = camera_dict[camera_name]["acquisition_timer"]
+
+                # Output
+                output_timer = camera_dict[camera_name]["output_timer"]
+                output_time = camera_dict[camera_name]["output_time"]
 
                 # Grabs the first available frame as a numpy ndarray
                 frame = camera.grab_frame()
                 frame_stamp = stamp_timer.elapsed  # Generates the time-stamp for the acquired frame
 
-                # If manual frame rate control is enabled, resets the timer after acquiring each frame. This results
-                # in the time spent on further processing below to be 'absorbed' into the between-frame wait time.
-                if frame_time > 0:
-                    acquisition_timer.reset()
-
-                # Only buffers the frame for saving if this behavior is enabled through the terminator array
-                if not terminator_array.read_data(index=1):
+                # If the software framerate override is enabled, this loop is further limited to acquire frames at the
+                # specified rate, which is helpful for some cameras that do not have a built-in acquisition control
+                # functionality. If the acquisition timeout has not passed and is enabled, skips the rest of the
+                # processing runtime
+                if acquisition_timer.elapsed < frame_time:
                     continue
 
-                # Bundles frame data, frame ID, and acquisition timestamp relative to onset and passes them to the
-                # multiprocessing Queue that delivers the data to the consumer process that saves it to disk. This is
-                # likely the 'slowest' of all processing steps done by this loop.
-                image_queue.put((frame, frame_count, frame_time))
+                # Bundles frame data, camera index, and acquisition timestamp relative to the onset and passes them to
+                # the multiprocessing Queue that delivers the data to the consumer process that saves it to disk. This
+                # is only executed if frame saving is enabled via the terminator_array variable using index 1.
+                if terminator_array.read_data(index=1):
+                    image_queue.put((frame, camera_index, frame_stamp))
+                    acquisition_timer.reset()  # Resets the acquisition timer after saving each frame
 
-                # Also sends the frame to the output queue if this behavior is enabled.
-                if output_frames:
-                    output_queue.put((frame, frame_count, camera_name))
-
-                # Increments the frame number to continuously update IDs for newly acquired frames
-                camera_dict[camera_name]["frame_count"] += 1
+                # If ths currently processed camera is configured to output frame data via the output_queue, the output
+                # timeout has expired, and frame output is enabled via the terminator_array index 2 value, sends the
+                # data to the queue. Does not include frame acquisition timestamp, as this data is usually not
+                # necessary for real time processing.
+                if terminator_array.read_data(index=2) and output_timer.elapsed >= output_time:
+                    output_queue.put((frame, camera_index))  # type: ignore
+                    output_timer.reset()  # Resets the output timer
 
                 # If the process is configured to display acquired frames, queues each frame to be displayed. Note, this
                 # does not depend on whether the frame is buffered for saving. The display frame limiting is
                 # critically important, as it prevents the display thread from being overwhelmed, causing displayed
                 # stream to lag behind the saved stream.
-                if display_queue is not None and show_timer.elapsed > 30:  # Displays frames at 30 fps
+                if display_queue is not None and show_timer.elapsed >= show_time:
                     display_queue.put(frame)  # type: ignore
                     show_timer.reset()  # Resets the display timer
 
-        # Once the loop above is escaped releases all resources and terminates the Process.
+        # Once the loop above is escaped, releases all resources and terminates the Process.
         for camera in cameras:
             # Extracts the camera name. This is used to generate dictionary entries for each camera.
             camera_name = camera.camera.name
@@ -1333,14 +1448,14 @@ class VideoSystem:
 
     @staticmethod
     def _frame_saving_loop(
-        saver: VideoSaver | ImageSaver,
+        video_system_id: int,
+        savers: tuple[_SaverSystem, ...],
         image_queue: MPQueue,  # type: ignore
+        logger_queue: MPQueue,  # type: ignore
         terminator_array: SharedMemoryArray,
-        log_path: Path,
-        frame_width: Optional[int] = None,
-        frame_height: Optional[int] = None,
-        video_frames_per_second: Optional[float] = None,
-        video_id: Optional[str] = None,
+        frame_width: int,
+        frame_height: int,
+        video_frames_per_second: float,
     ) -> None:
         """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
         on the saver class backend.
@@ -1369,80 +1484,80 @@ class VideoSystem:
             frame acquisition time relative to the onset point in microseconds.
 
         Args:
-            saver: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
+            savers: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
                 the OpenCV or FFMPEG libraries.
             image_queue: A multiprocessing queue that buffers and pipes frames acquired by the producer process.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
-            log_path: The path to be used for logging frame acquisition times as .txt entries. To minimize the latency
-                between grabbing frames, timestamps are logged by consumers, rather than the producer. This method
-                creates an entry that bundles each frame ID with its acquisition timestamp and appends it to the log
-                file.
             frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
                 This has to match the width reported by the Camera class that produces the frames.
             frame_height: Same as above, but specifies the height of the frames to be saved, in pixels.
             video_frames_per_second: Only for VideoSaver classes. Specifies the desired frames-per-second of the
                 encoded video file.
-            video_id: Only for VideoSaver classes. Specifies the unique identifier used as the name of the
-                encoded video file.
         """
-
-        # Video savers require additional setup before they can save 'live' frames. Image savers are ready to save
-        # frames with no additional setup
-        if isinstance(saver, VideoSaver):
-            # Initializes the video encoding by instantiating the FFMPEG process that does the encoding. For this, it
-            # needs some additional information. Subsequently, Video and Image savers can be accessed via the same
-            # frame-saving API.
-            saver.create_live_video_encoder(
-                frame_width=frame_width,  # type: ignore
-                frame_height=frame_height,  # type: ignore
-                video_id=video_id,  # type: ignore
-                video_frames_per_second=video_frames_per_second,  # type: ignore
-            )
-
         # Connects to the terminator array to manage loop runtime
         terminator_array.connect()
 
-        # byte_index = np.uint8(camera_index)
-        # byte_count = np.uint64(frame_count)
-        #
-        # # Packages and sends the data to Logger.
-        # package = LogPackage(
-        #     video_system_id,
-        #     time_stamp=frame_stamp,
-        #     serialized_data=np.array(object=[byte_index, byte_count], dtype=np.uint8),
-        # )
-        # logger_queue.put(package)
+        frame_counters = []
+        for saver in savers:
+            # Video savers require additional setup before they can save 'live' frames. Image savers are ready to save
+            # frames with no additional setup
+            if isinstance(saver.saver, VideoSaver):
+                video_id = ""
+                for num, source_id in enumerate(saver.source_ids):
+                    if num != len(saver.source_ids) - 1:
+                        video_id += str(source_id) + "_"
+                    else:
+                        video_id += str(source_id)
 
-        # Minimizes IO delay by opening the file once and streaming to the file afterward. Uses line buffering
-        with open(log_path, mode="at", buffering=1) as log:
-            # The loop runs continuously until the first (index 0) element of the array is set to 0. Note, the loop is
-            # kept alive until all frames in the queue are processed!
-            while terminator_array.read_data(index=0, convert_output=True) or not image_queue.empty():
+                # Initializes the video encoding by instantiating the FFMPEG process that does the encoding. For this, it
+                # needs some additional information. Subsequently, Video and Image savers can be accessed via the same
+                # frame-saving API.
+                saver.saver.create_live_video_encoder(
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    video_id=video_id,
+                    video_frames_per_second=video_frames_per_second,
+                )
+
+                frame_counters.append(1)
+
+        # The loop runs continuously until the first (index 0) element of the array is set to 0. Note, the loop is
+        # kept alive until all frames in the queue are processed!
+        while terminator_array.read_data(index=0, convert_output=True) or not image_queue.empty():
+            for saver_index, saver_system in enumerate(savers):
+                saver = saver_system.saver
+
                 # Grabs the image bundled with its ID and acquisition time from the queue and passes it to Saver class.
                 # This relies on both Image and Video savers having the same 'live' frame saving API. Uses a
                 # non-blocking binding to prevent deadlocking the loop, as it does not use the queue-based termination
                 # method for reliability reasons.
                 try:
-                    frame, frame_id, frame_time = image_queue.get(block=False)
+                    frame, camera_id, frame_time = image_queue.get_nowait()
                 except Exception:
+
                     # The only expected exception here is when queue is empty. This block overall makes the code
                     # repeatedly cycle through the loop, allowing flow control statements to properly terminate the
                     # 'while' loop if necessary and the queue is empty.
                     continue
 
+                frame_id = f"{frame_counters[saver_index]:020d}"
+
                 # This is only executed if the get() above yielded data
                 saver.save_frame(frame_id, frame)
 
-                # Bundles frame ID with acquisition time and writes it to the log file. Uses locks to prevent race
-                # conditions when multiple ImageSavers are used at the same time. This should not majorly degrade
-                # performance, as writing a short text string to file is still much faster than saving an image. For
-                # Video savers, this is even less of a concern as there is always one saver at any given time.
-                log.write(f"{str(frame_id)}-{str(frame_time)}\n")  # This produces entries like: '0001-18528'
+                # Packages and sends the data to Logger.
+                package = LogPackage(
+                    video_system_id,
+                    time_stamp=frame_time,
+                    serialized_data=np.array(object=[camera_id], dtype=np.uint8),
+                )
+                logger_queue.put(package)
 
         # Terminates the video encoder as part of the shutdown procedure
-        if isinstance(saver, VideoSaver):
-            saver.terminate_live_encoder()
+        for saver in savers:
+            if isinstance(saver.saver, VideoSaver):
+                saver.saver.terminate_live_encoder()
 
         # Once the loop above is escaped, releases all resources and terminates the Process.
         terminator_array.disconnect()
