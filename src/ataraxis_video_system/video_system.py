@@ -1071,7 +1071,7 @@ class VideoSystem:
         return self._id
 
     @property
-    def output_queues(self) -> MPQueue:  # type: ignore
+    def output_queue(self) -> MPQueue:  # type: ignore
         """Returns the multiprocessing Queue object used by the system's producer process to send frames to other
         concurrently active processes."""
         return self._output_queue
@@ -1543,16 +1543,17 @@ class VideoSystem:
                     # 'while' loop if necessary and the queue is empty.
                     continue
 
+                # Casts the frame_id to string using enough padding to represent a 64-bit integer
                 frame_id = f"{frame_counters[saver_index]:020d}"
-
-                # This is only executed if the get() above yielded data
                 saver.save_frame(frame_id, frame)
 
                 # Packages and sends the data to Logger.
                 package = LogPackage(
                     video_system_id,
                     time_stamp=frame_time,
-                    serialized_data=np.array(object=[camera_id], dtype=np.uint8),
+                    serialized_data=np.array(
+                        object=[np.uint8(camera_id), np.uint64(frame_counters[saver_index])], dtype=np.uint8
+                    ),
                 )
                 logger_queue.put(package)
 
@@ -1560,6 +1561,8 @@ class VideoSystem:
         for saver in savers:
             if isinstance(saver.saver, VideoSaver):
                 saver.saver.terminate_live_encoder()
+            else:
+                saver.saver.shutdown()
 
         # Once the loop above is escaped, releases all resources and terminates the Process.
         terminator_array.disconnect()
