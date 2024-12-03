@@ -262,7 +262,9 @@ def test_create_video_from_image_folder(tmp_path):
 
     # Converts the images to a video file and verifies that the video file exists
     video_id = "TestID"
-    saver.create_video_from_image_folder(image_directory=images_directory, video_id=video_id, video_frames_per_second=5)
+    saver.create_video_from_image_folder(
+        image_directory=images_directory, video_id=video_id, video_frames_per_second=5, cleanup=True
+    )
     video_path = video_directory.joinpath(f"{video_id}.{saver._video_format}")
     assert video_path.exists()
 

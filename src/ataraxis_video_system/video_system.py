@@ -322,32 +322,32 @@ class VideoSystem:
                 f"Unable to add the Camera object to the {self._name} VideoSystem. Expected a string for camera_name "
                 f"argument, but got {camera_name} of type {type(camera_name).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(camera_id, int):
             message = (
                 f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
                 f"for camera_id argument, but got {camera_id} of type {type(camera_id).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(acquisition_frame_rate, (int, float, NoneType)):
             message = (
                 f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer, "
                 f"float or None for acquisition_frame_rate argument, but got {acquisition_frame_rate} of type "
                 f"{type(acquisition_frame_rate).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(frame_width, (int, NoneType)):
             message = (
                 f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
                 f"or None for frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(frame_height, (int, NoneType)):
             message = (
                 f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
                 f"or None for frame_height argument, but got {frame_height} of type {type(frame_height).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
 
         # Ensures that display_frames is boolean. Does the same for output_frames
         display_frames = False if not isinstance(display_frames, bool) else display_frames
@@ -373,7 +373,7 @@ class VideoSystem:
                     f"an integer or None for opencv_backend argument, but got {opencv_backend} of type "
                     f"{type(opencv_backend).__name__}."
                 )
-                raise console.error(error=TypeError, message=message)
+                console.error(error=TypeError, message=message)
 
             # Ensures that color is either True or False.
             image_color = False if not isinstance(color, bool) else color
@@ -404,7 +404,7 @@ class VideoSystem:
                     f"camera returned a test frame with height {frame.shape[0]}. This indicates that the camera "
                     f"does not support the requested frame height and width combination."
                 )
-                raise console.error(error=ValueError, message=message)
+                console.error(error=ValueError, message=message)
             if frame_width is not None and frame.shape[1] != frame_width:
                 message = (
                     f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
@@ -412,14 +412,14 @@ class VideoSystem:
                     f"camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
                     f"does not support the requested frame height and width combination."
                 )
-                raise console.error(error=ValueError, message=message)
+                console.error(error=ValueError, message=message)
             if color and frame.shape[2] <= 1:
                 message = (
                     f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
                     f"configuring the camera to acquire colored frames, but the camera returned a test frame with "
                     f"monochrome colorspace. This indicates that the camera does not support acquiring colored frames."
                 )
-                raise console.error(error=ValueError, message=message)
+                console.error(error=ValueError, message=message)
             elif len(frame.shape) != 2:
                 message = (
                     f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
@@ -427,7 +427,7 @@ class VideoSystem:
                     f"BGR colorspace. This likely indicates an OpenCV backend error, since it is unlikely that the "
                     f"camera does not support monochrome colorspace."
                 )
-                raise console.error(error=ValueError, message=message)
+                console.error(error=ValueError, message=message)
 
             # If the camera failed to set the requested frame rate, but it is possible to correct the fps via software,
             # enables fps override. Software correction requires that the native fps is higher than the desired fps,
@@ -441,7 +441,7 @@ class VideoSystem:
                     f"second, but the camera automatically adjusted the framerate to {camera.fps}. This indicates that "
                     f"the camera does not support the requested framerate."
                 )
-                raise console.error(error=ValueError, message=message)
+                console.error(error=ValueError, message=message)
 
             # Disconnects from the camera to free the resources to be used by the remote producer process, once it is
             # instantiated.
@@ -518,7 +518,7 @@ class VideoSystem:
                 f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
                 f"camera_backend has to be one of the options available from the CameraBackends enumeration."
             )
-            raise console.error(error=ValueError, message=message)
+            console.error(error=ValueError, message=message)
 
         # If the output_frame_rate argument is not an integer or floating value, defaults to using the same framerate
         # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
@@ -529,7 +529,7 @@ class VideoSystem:
                 f"Output framerate override has to be an integer or floating point number that does not exceed the "
                 f"camera acquisition framerate ({camera.fps})."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
 
         # Same as above, but for display frame_rate
         if not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:
@@ -539,7 +539,7 @@ class VideoSystem:
                 f"Display framerate override has to be an integer or floating point number that does not exceed the "
                 f"camera acquisition framerate ({camera.fps})."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
 
         # If the camera class was successfully instantiated, packages the class alongside additional parameters into a
         # CameraSystem object and appends it to the camera list.
@@ -776,19 +776,19 @@ class VideoSystem:
                 f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a boolean for "
                 f"hardware_encoding argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(video_format, VideoFormats):
             message = (
                 f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a VideoFormats "
                 f"instance for video_format argument, but got {video_format} of type {type(video_format).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
         if not isinstance(video_codec, VideoCodecs):
             message = (
                 f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a VideoCodecs instance "
                 f"for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
             )
-            raise console.error(error=TypeError, message=message)
+            console.error(error=TypeError, message=message)
 
         # The encoding preset depends on whether the saver is configured to use hardware (GPU) video encoding.
         if hardware_encoding:
@@ -1171,6 +1171,9 @@ class VideoSystem:
             )
             working_ids.append(descriptive_string)
 
+        harvester.remove_file(file_path=str(cti_path))
+        harvester.reset()
+
         return tuple(working_ids)  # Converts to tuple before returning to caller.
 
     @staticmethod
@@ -1535,7 +1538,6 @@ class VideoSystem:
                 try:
                     frame, camera_id, frame_time = image_queue.get_nowait()
                 except Exception:
-
                     # The only expected exception here is when queue is empty. This block overall makes the code
                     # repeatedly cycle through the loop, allowing flow control statements to properly terminate the
                     # 'while' loop if necessary and the queue is empty.

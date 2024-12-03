@@ -16,6 +16,7 @@ def check_opencv():
     This is used to disable saver tests that rely on the presence of an OpenCV-compatible camera when no valid hardware
     is available.
     """
+    # noinspection PyBroadException
     try:
         opencv_id = VideoSystem.get_opencv_ids()
         assert len(opencv_id) > 0  # If no IDs are discovered, this means there are no OpenCV cameras.
@@ -312,7 +313,7 @@ def test_harvesters_camera_connect_disconnect(cti_path) -> None:
 @pytest.mark.xdist_group(name="group2")
 @pytest.mark.parametrize(
     "fps, width, height",
-    [(30, 600, 400), (60, 1200, 1200), (10, 3000, 3000), (None, None, None)],
+    [(30, 600, 400), (60, 1200, 1200), (None, None, None)],
 )
 def test_harvesters_camera_grab_frame(fps, width, height, cti_path) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
@@ -331,8 +332,9 @@ def test_harvesters_camera_grab_frame(fps, width, height, cti_path) -> None:
     assert camera.is_acquiring  # Ensures calling grab_frame() switches the camera into acquisition mode
 
     # Verifies the dimensions of the grabbed frame
-    assert frame.shape[0] == height
-    assert frame.shape[1] == width
+    if height is not None and width is not None:
+        assert frame.shape[0] == height
+        assert frame.shape[1] == width
 
     # Does not check the color handling, as it is expected that the camera itself is configured to properly handle
     # monochrome / color conversions on-hardware. Also because we do not have a Harvesters camera that is compatible

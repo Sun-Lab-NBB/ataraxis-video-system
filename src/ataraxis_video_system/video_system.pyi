@@ -38,8 +38,10 @@ class _CameraSystem:
 
     camera: OpenCVCamera | HarvestersCamera | MockCamera
     fps_override: int | float
-    display_frames: bool
     output_frames: bool
+    output_frame_rate: int | float
+    display_frames: bool
+    display_frame_rate: int | float
 
 @dataclass(frozen=True)
 class _SaverSystem:
@@ -50,7 +52,7 @@ class _SaverSystem:
     """
 
     saver: ImageSaver | VideoSaver
-    source_ids: list[int]
+    source_ids: tuple[int]
 
 class VideoSystem:
     """Efficiently combines Camera and Saver instances to acquire, display, and save camera frames in real time.
@@ -102,8 +104,10 @@ class VideoSystem:
         _savers: Stores managed SaverSystems.
         _started: Tracks whether the system is currently running (has active subprocesses).
         _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
-        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from producer to
-            consumer processes.
+        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
+            the consumer process.
+        _output_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
+            other concurrently active processes.
         _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
             manage runtime behavior of spawned processes.
         _producer_process: A process that acquires camera frames using managed CameraSystems.
@@ -125,6 +129,7 @@ class VideoSystem:
     _started: bool
     _mp_manager: Incomplete
     _image_queue: Incomplete
+    _output_queue: Incomplete
     _terminator_array: Incomplete
     _producer_process: Incomplete
     _consumer_process: Incomplete
@@ -147,11 +152,13 @@ class VideoSystem:
         camera_name: str,
         camera_id: int = 0,
         camera_backend: CameraBackends = ...,
-        display_frames: bool = False,
         output_frames: bool = False,
+        output_frame_rate: int | float = 25,
+        display_frames: bool = False,
+        display_frame_rate: int | float = 25,
         frame_width: int | None = None,
         frame_height: int | None = None,
-        frames_per_second: int | float | None = None,
+        acquisition_frame_rate: int | float | None = None,
         opencv_backend: int | None = None,
         color: bool | None = None,
     ) -> None:
@@ -171,16 +178,22 @@ class VideoSystem:
             camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
                 the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
                 non-GenTL-compatible cameras.
+            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This
+                allows real time processing of acquired frames by other concurrent processes.
+            output_frame_rate: Allows adjusting the frame rate at which acquired frames are sent to the output_queue.
+                Note, the output framerate cannot exceed the native frame rate of the camera, but it can be lower than
+                the native acquisition frame rate. The acquisition frame rate is set via the frames_per_second argument
+                below.
             display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
                 the camera feed in real time.
-            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This allows
-                real time processing of acquired frames by other concurrent processes.
+            display_frame_rate: Similar to output_frame_rate, determines the frame rate at which acquired frames are
+                displayed to the user.
             frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
                 camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
                 If not provided (set to None), this parameter will be obtained from the connected camera.
             frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
                 If not provided (set to None), this parameter will be obtained from the connected camera.
-            frames_per_second: How many frames to capture each second (capture speed). Note, this depends on the
+            acquisition_frame_rate: How many frames to capture each second (capture speed). Note, this depends on the
                 hardware capabilities of the camera and is affected by multiple related parameters, such as image
                 dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
                 parameter will be obtained from the connected camera. The VideoSystem always tries to set the camera
@@ -198,11 +211,12 @@ class VideoSystem:
         Raises:
             TypeError: If the input arguments are not of the correct type.
             ValueError: If the requested camera_backend is not one of the supported backends. If the chosen backend is
-                Harvesters and the .cti path is not provided.
+                Harvesters and the .cti path is not provided. If attempting to set camera framerate or frame dimensions
+                fails for any reason.
         """
     def add_image_saver(
         self,
-        source_ids: list[int],
+        source_ids: tuple[int],
         image_format: ImageFormats = ...,
         tiff_compression_strategy: int = ...,
         jpeg_quality: int = 95,
@@ -255,7 +269,7 @@ class VideoSystem:
         """
     def add_video_saver(
         self,
-        source_ids: list[int],
+        source_ids: tuple[int],
         hardware_encoding: bool = False,
         video_format: VideoFormats = ...,
         video_codec: VideoCodecs = ...,
@@ -360,6 +374,16 @@ class VideoSystem:
     @property
     def name(self) -> str:
         """Returns the name of the VideoSystem class instance."""
+    @property
+    def description(self) -> str:
+        """Returns the description of the VideoSystem class instance."""
+    @property
+    def id_code(self) -> np.uint8:
+        """Returns the unique identifier code assigned to the VideoSystem class instance."""
+    @property
+    def output_queues(self) -> MPQueue:
+        """Returns the multiprocessing Queue object used by the system's producer process to send frames to other
+        concurrently active processes."""
     @staticmethod
     def get_opencv_ids() -> tuple[str, ...]:
         """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
@@ -434,7 +458,7 @@ class VideoSystem:
     @staticmethod
     def _frame_production_loop(
         video_system_id: int,
-        cameras: list[_CameraSystem],
+        cameras: tuple[_CameraSystem, ...],
         image_queue: MPQueue,
         output_queue: MPQueue,
         logger_queue: MPQueue,
@@ -477,14 +501,14 @@ class VideoSystem:
         """
     @staticmethod
     def _frame_saving_loop(
-        saver: VideoSaver | ImageSaver,
+        video_system_id: int,
+        savers: tuple[_SaverSystem, ...],
         image_queue: MPQueue,
+        logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
-        log_path: Path,
-        frame_width: int | None = None,
-        frame_height: int | None = None,
-        video_frames_per_second: float | None = None,
-        video_id: str | None = None,
+        frame_width: int,
+        frame_height: int,
+        video_frames_per_second: float,
     ) -> None:
         """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
         on the saver class backend.
@@ -513,21 +537,15 @@ class VideoSystem:
             frame acquisition time relative to the onset point in microseconds.
 
         Args:
-            saver: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
+            savers: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
                 the OpenCV or FFMPEG libraries.
             image_queue: A multiprocessing queue that buffers and pipes frames acquired by the producer process.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
-            log_path: The path to be used for logging frame acquisition times as .txt entries. To minimize the latency
-                between grabbing frames, timestamps are logged by consumers, rather than the producer. This method
-                creates an entry that bundles each frame ID with its acquisition timestamp and appends it to the log
-                file.
             frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
                 This has to match the width reported by the Camera class that produces the frames.
             frame_height: Same as above, but specifies the height of the frames to be saved, in pixels.
             video_frames_per_second: Only for VideoSaver classes. Specifies the desired frames-per-second of the
-                encoded video file.
-            video_id: Only for VideoSaver classes. Specifies the unique identifier used as the name of the
                 encoded video file.
         """
     def _watchdog(self) -> None:

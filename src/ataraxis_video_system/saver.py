@@ -801,7 +801,7 @@ class VideoSaver:
         file_list_path.unlink(missing_ok=True)
 
         # Checks for encoding errors. If there were no errors, reports successful encoding to user
-        if ffmpeg_process.returncode != 0:
+        if ffmpeg_process.returncode != 0:  # pragma: no cover
             error_output = stderr.decode("utf-8")
             message = f"FFmpeg process failed to encode video {video_id} with error: {error_output}"
             console.error(error=RuntimeError, message=message)
@@ -900,7 +900,7 @@ class VideoSaver:
         # Writes the input frame to the ffmpeg process's standard input pipe.
         try:
             self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             message = f"FFMPEG process failed to process the input frame with error: {e}"
             console.error(message=message, error=RuntimeError)
 
@@ -924,7 +924,7 @@ class VideoSaver:
         # forcefully to prevent deadlocks.
         try:
             _ = self._ffmpeg_process.communicate(timeout=timeout)
-        except TimeoutExpired:
+        except TimeoutExpired:  # pragma: no cover
             self._ffmpeg_process.kill()
 
         # Sets the process variable to None placeholder. This causes the underlying Popen object to be garbage

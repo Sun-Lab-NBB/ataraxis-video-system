@@ -496,7 +496,7 @@ class HarvestersCamera:
 
             # Discards any unconsumed buffers to ensure proper memory release
             while self._camera.num_holding_filled_buffers != 0:
-                _ = self._camera.fetch()
+                _ = self._camera.fetch()  # pragma: no cover
 
             self._camera.destroy()  # Releases the camera object
             self._camera = None  # Sets the camera object to None
@@ -621,12 +621,13 @@ class HarvestersCamera:
                 return out_array
 
             # For color data, evaluates the input format and reshapes the data as necessary
+            # This is excluded from coverage as we do not have a color-capable camera to test this right now
             elif (
                 data_format in rgb_formats
                 or data_format in rgba_formats
                 or data_format in bgr_formats
                 or data_format in bgra_formats
-            ):
+            ):  # pragma: no cover
                 # Reshapes the data into RGB + A format as the first processing step.
                 content.data.reshape(
                     height,
