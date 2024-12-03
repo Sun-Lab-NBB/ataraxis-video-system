@@ -1,7 +1,12 @@
 from queue import Queue
 from pathlib import Path
-from multiprocessing import Queue as MPQueue
+from dataclasses import dataclass
+from multiprocessing import (
+    Queue as MPQueue,
+    ProcessError as ProcessError,
+)
 
+import numpy as np
 from _typeshed import Incomplete
 from ataraxis_data_structures import SharedMemoryArray
 
@@ -23,106 +28,335 @@ from .camera import (
     HarvestersCamera as HarvestersCamera,
 )
 
-class VideoSystem:
-    """Efficiently combines Camera and Saver classes to acquire and save camera frames in real time.
+@dataclass(frozen=True)
+class _CameraSystem:
+    """Stores a Camera class instance managed by the VideoSystem class, alongside additional runtime parameters.
 
-    This class exposes methods for instantiating Camera and Saver classes, which, in turn, can be used to instantiate
-    a VideoSystem class. The class achieves two main objectives: It efficiently moves frames acquired by the Camera
-    class to be saved by the Saver class and manages runtime behavior of the bound classes. To do so, the class
+    This class is used as a container that aggregates all objects and parameters required by the VideoSystem to
+    interface with a camera during runtime.
+    """
+
+    camera: OpenCVCamera | HarvestersCamera | MockCamera
+    fps_override: int | float
+    display_frames: bool
+    output_frames: bool
+
+@dataclass(frozen=True)
+class _SaverSystem:
+    """Stores a Saver class instance managed by the VideoSystem class, alongside additional runtime parameters.
+
+    This class is used as a container that aggregates all objects and parameters required by the VideoSystem to
+    interface with a saver during runtime.
+    """
+
+    saver: ImageSaver | VideoSaver
+    source_ids: list[int]
+
+class VideoSystem:
+    """Efficiently combines Camera and Saver instances to acquire, display, and save camera frames in real time.
+
+    This class controls the runtime of Camera and Saver instances running on independent cores (processes) to maximize
+    the frame throughout. The class achieves two main objectives: It efficiently moves frames acquired by camera(s)
+    to the saver(s) that write them to disk and manages runtime behavior of the managed classes. To do so, the class
     initializes and controls multiple subprocesses to ensure frame producer and consumer classes have sufficient
     computational resources. The class abstracts away all necessary steps to set up, execute, and tear down the
     processes through an easy-to-use API.
 
     Notes:
-        Due to using multiprocessing to improve efficiency, this class needs a minimum of 2 logical cores per class
-        instance to operate efficiently. Additionally, due to a time-lag of moving frames from a producer process to a
+        Due to using multiprocessing to improve efficiency, this class would typically reserve 1 or 2 logical cores at
+        a minimum to run efficiently. Additionally, due to a time-lag of moving frames from a producer process to a
         consumer process, the class will reserve a variable portion of the RAM to buffer the frame images. The reserved
-        memory depends on many factors and can only be known during runtime.
+        memory depends on many factors and can only be established empirically.
 
-        This class requires Camera and Saver class instances during instantiation. To initialize
-        these classes, use create_camera(), create_image_saver(), and create_video_saver() static methods available
-        from the VideoSystem class.
-
-        This class is written using a 'one-shot' design: start() and stop() methods can only be called one time. The
-        class ahs to be re-initialized to be able to cycle these methods again. This is a conscious design decision that
-        ensures proper resource release and cleanup, which was deemed important for our use pattern of this class.
+        The class does not initialize cameras or savers at instantiation. Instead, you have to manually use the
+        add_camera and add_image_saver or add_video_saver methods to add cameras and savers to the system. All cameras
+        and all savers added to a single VideoSystem will run on the same logical core (one for savers,
+        one for cameras). To use more than two logical cores, create additional VideoSystem instances as necessary.
 
     Args:
-        camera: An initialized Camera class instance that interfaces with one of the supported cameras and allows
-            acquiring camera frames. Use create_camera() method to instantiate this class.
-        saver: An initialized Saver class instance that interfaces with OpenCV or FFMPEG and allows saving camera
-            frames as images or videos. Use create_image_saver() or create_video_saver() methods to instantiate this
-            class.
-        system_name: A unique identifier for the VideoSystem instance. This is used to identify the system in messages,
-            logs, and generated video files.
-        image_saver_process_count: The number of ImageSaver processes to use. This parameter is only used when the
-            saver class is an instance of ImageSaver. Since each saved image is independent of all other images, the
-            performance of ImageSvers can be improved by using multiple processes with multiple threads to increase the
-            saving throughput. For most use cases, a single saver process will be enough.
-        fps_override: The number of frames to grab from the camera per second. This argument allows optionally
-            overriding the frames per second (fps) parameter of the Camera class. When provided, the frame acquisition
-            process will only trigger the frame grab procedure at the specified interval. Generally, this override
-            should only be used for cameras with a fixed framerate or cameras that do not have framerate control
-            capability at all. For cameras that support onboard framerate control, setting the fps through the Camera
-            class will almost always be better. The override will not be able to exceed the acquisition speed enforced
-            by the camera hardware.
-        shutdown_timeout: The number of seconds after which non-terminated processes will be forcibly terminated during
-            class shutdown. When class shutdown is triggered by calling stop() method, it first attempts to shut the
-            processes gracefully, which may require some time. Primarily, this is because the consumer process tries
-            to save all buffered images before it is allowed to shut down. If this process exceeds the specified
-            timeout, the class will discard all unsaved data by forcing the processes to terminate.
-        display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
-            the camera feed in real time, which is frequently desirable in scientific experiments.
+        system_id: A unique byte-code identifier for the VideoSystem instance. This is used to identify the system in
+            log files and generated video files. Therefore, this ID has to be unique across all concurrently
+            active Ataraxis systems that use DataLogger to log data (such as AtaraxisMicroControllerInterface class).
+        system_name: A human-readable name used to identify the VideoSystem instance in error messages.
+        system_description: A brief description of the VideoSystem instance. This is used when creating the log file
+            that stores class runtime parameters and maps id-codes to meaningful names and descriptions to support
+            future data processing.
+        logger_queue: The multiprocessing Queue object exposed by the DataLogger class via its 'input_queue' property.
+            This queue is used to buffer and pipe data to be logged to the logger cores.
+        output_directory: The path to the output directory which will be used by all Saver class instances to save
+            acquired camera frames as images or videos. This argument is required if you intend to add Saver instances
+            to this VideoSystem and optional if you do not intend to save frames grabbed by this VideoSystem.
+        harvesters_cti_path: The path to the '.cti' file that provides the GenTL Producer interface. This argument is
+            required if you intend to interface with cameras using 'Harvesters' backend! It is recommended to use the
+            file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire, would work
+            as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
 
     Attributes:
-        _cameras: Stores the Camera class instance that provides camera interface.
-        _savers: Stores the Saver class instance that provides saving backend interface.
-        _shutdown_timeout: Stores the time in seconds after which to forcefully terminate processes
-            during shutdown.
+        _id: Stores the ID code of the VideoSystem instance.
+        _name: Stores the human-readable name of the VideoSystem instance.
+        _description: Stores the description of the VideoSystem instance.
+        _logger_queue: Stores the multiprocessing Queue object used to buffer and pipe data to be logged.
+        _output_directory: Stores the path to the output directory.
+        _cti_path: Stores the path to the '.cti' file that provides the GenTL Producer interface.
+        _cameras: Stores managed CameraSystems.
+        _savers: Stores managed SaverSystems.
         _started: Tracks whether the system is currently running (has active subprocesses).
         _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
         _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from producer to
             consumer processes.
         _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
             manage runtime behavior of spawned processes.
-        _producer_process: A process that acquires camera frames using the bound Camera class.
-        _consumer_process: A tuple of processes that save camera frames using the bound Saver class. ImageSaver
-            instance can use multiple processes, VideoSaver will use a single process.
+        _producer_process: A process that acquires camera frames using managed CameraSystems.
+        _consumer_process: A process that saves the acquired frames using managed SaverSystems.
+        _watchdog_thread: A thread used to monitor the runtime status of the remote consumer and producer processes.
 
     Raises:
         TypeError: If any of the provided arguments has an invalid type.
-        ValueError: If any of the provided arguments has an invalid value.
     """
 
+    _id: Incomplete
+    _name: Incomplete
+    _description: Incomplete
+    _logger_queue: Incomplete
+    _output_directory: Incomplete
+    _cti_path: Incomplete
     _cameras: Incomplete
     _savers: Incomplete
-    _name: Incomplete
-    _shutdown_timeout: Incomplete
     _started: bool
     _mp_manager: Incomplete
     _image_queue: Incomplete
-    _expired: bool
     _terminator_array: Incomplete
     _producer_process: Incomplete
     _consumer_process: Incomplete
+    _watchdog_thread: Incomplete
     def __init__(
         self,
-        camera: HarvestersCamera | OpenCVCamera | MockCamera,
-        saver: VideoSaver | ImageSaver,
+        system_id: np.uint8,
         system_name: str,
-        image_saver_process_count: int = 1,
-        fps_override: int | float | None = None,
-        shutdown_timeout: int | None = 600,
-        *,
-        display_frames: bool = True,
+        system_description: str,
+        logger_queue: MPQueue,
+        output_directory: Path | None = None,
+        harvesters_cti_path: Path | None = None,
     ) -> None: ...
     def __del__(self) -> None:
-        """Ensures that all resources are released upon garbage collection."""
+        """Ensures that all resources are released when the instance is garbage-collected."""
     def __repr__(self) -> str:
         """Returns a string representation of the VideoSystem class instance."""
+    def add_camera(
+        self,
+        camera_name: str,
+        camera_id: int = 0,
+        camera_backend: CameraBackends = ...,
+        display_frames: bool = False,
+        output_frames: bool = False,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+        frames_per_second: int | float | None = None,
+        opencv_backend: int | None = None,
+        color: bool | None = None,
+    ) -> None:
+        """Creates a Camera class instance and adds it to the list of cameras managed by the VideoSystem instance.
+
+        This method allows adding Cameras to an initialized VideoSystem instance. Currently, this is the only intended
+        way of using Camera classes available through this library. Unlike Saver class instances, which are not
+        required for the VideoSystem to function, at least one valid Camera class must be added to the system before
+        its start() method is called.
+
+        Args:
+            camera_name: The human-readable of the camera. This is used to help identify the camera to the user in
+                messages and during real-time frame display.
+            camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
+                available camera, 1 for the second, etc. Usually, the camera IDs are assigned by the host-system based
+                on the order of their connection.
+            camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
+                the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
+                non-GenTL-compatible cameras.
+            display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
+                the camera feed in real time.
+            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This allows
+                real time processing of acquired frames by other concurrent processes.
+            frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
+                camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
+                If not provided (set to None), this parameter will be obtained from the connected camera.
+            frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
+                If not provided (set to None), this parameter will be obtained from the connected camera.
+            frames_per_second: How many frames to capture each second (capture speed). Note, this depends on the
+                hardware capabilities of the camera and is affected by multiple related parameters, such as image
+                dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
+                parameter will be obtained from the connected camera. The VideoSystem always tries to set the camera
+                hardware to record frames at the requested rate, but contains a fallback that allows down-sampling the
+                acquisition rate in software. This fallback is only used when the camera uses a higher framerate than
+                the requested value.
+            opencv_backend: Optional. The integer-code for the specific acquisition backend (library) OpenCV should
+                use to interface with the camera. Generally, it is advised not to change the default value of this
+                argument unless you know what you are doing.
+            color: A boolean indicating whether the camera acquires colored or monochrome images. This is
+                used by OpenCVCamera to optimize acquired images depending on the source (camera) color space. It is
+                also used by the MockCamera to enable simulating monochrome and colored images. This option is ignored
+                for HarvesterCamera instances as it expects the colorspace to be configured via the camera's API.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+            ValueError: If the requested camera_backend is not one of the supported backends. If the chosen backend is
+                Harvesters and the .cti path is not provided.
+        """
+    def add_image_saver(
+        self,
+        source_ids: list[int],
+        image_format: ImageFormats = ...,
+        tiff_compression_strategy: int = ...,
+        jpeg_quality: int = 95,
+        jpeg_sampling_factor: int = ...,
+        png_compression: int = 1,
+        thread_count: int = 5,
+    ) -> None:
+        """Creates an ImageSaver class instance and adds it to the list of savers managed by the VideoSystem instance.
+
+        This method allows adding ImageSavers to an initialized VideoSystem instance. Currently, this is the only
+        intended way of using ImageSaver classes available through this library. ImageSavers are not required for the
+        VideoSystem to function properly and, therefore, this method does not need to be called unless you need to save
+        the camera frames acquired during the runtime of this VideoSystem as images.
+
+        Notes:
+            This method is specifically designed to add ImageSavers. If you need to add a VideoSaver (to save frames as
+            a video), use the add_video_saver() method instead.
+
+            ImageSavers can reach the highest image saving speed at the cost of using considerably more disk space than
+            efficient VideoSavers. Overall, it is highly recommended to use VideoSavers with hardware_encoding where
+            possible to optimize the disk space usage and still benefit from a decent frame saving speed.
+
+        Args:
+            source_ids: The list of Camera object indices whose frames will be saved by this ImageSaver. The indices
+                are based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
+                the first added camera. This argument is very important as it directly determines what frames are saved
+                and by what savers. If you do not need to save any frames, do not add ImageSaver or VideoSaver instances
+                at all.
+            image_format: The format to use for the output images. Use ImageFormats enumeration
+                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
+            tiff_compression_strategy: The integer-code that specifies the compression strategy used for .tiff image
+                files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended to use
+                code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good speed-to-compression
+                balance.
+            jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the JPEG compression. A higher
+                value means better quality, less data loss, bigger file size, and slower processing time.
+            jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image color-space. Has to be
+                one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended to use code 444 to
+                preserve the full color-space of the image if your application requires this. Another popular option is
+                422, which results in better compression at the cost of color coding precision.
+            png_compression: An integer value between 0 and 9 that specifies the compression used for .png image files.
+                Unlike JPEG, PNG files are always lossless. This value controls the trade-off between the compression
+                ratio and the processing time.
+            thread_count: The number of writer threads to be used by the saver class. Since ImageSaver uses the
+                C-backed OpenCV library, it can safely process multiple frames at the same time via multithreading.
+                This controls the number of simultaneously saved images the class instance will support.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+        """
+    def add_video_saver(
+        self,
+        source_ids: list[int],
+        hardware_encoding: bool = False,
+        video_format: VideoFormats = ...,
+        video_codec: VideoCodecs = ...,
+        preset: GPUEncoderPresets | CPUEncoderPresets = ...,
+        input_pixel_format: InputPixelFormats = ...,
+        output_pixel_format: OutputPixelFormats = ...,
+        quantization_parameter: int = 15,
+        gpu: int = 0,
+    ) -> None:
+        """Creates a VideoSaver class instance and adds it to the list of savers managed by the VideoSystem instance.
+
+        This method allows adding VideoSavers to an initialized VideoSystem instance. Currently, this is the only
+        intended way of using VideoSaver classes available through this library. VideoSavers are not required for the
+        VideoSystem to function properly and, therefore, this method does not need to be called unless you need to save
+        the camera frames acquired during the runtime of this VideoSystem as a video.
+
+        Notes:
+            VideoSavers rely on third-party software FFMPEG to encode the video frames using GPUs or CPUs. Make sure
+            it is installed on the host system and available from Python shell. See https://www.ffmpeg.org/download.html
+            for more information.
+
+            This method is specifically designed to add VideoSavers. If you need to add an Image Saver (to save frames
+            as standalone images), use the add_image_saver() method instead.
+
+            VideoSavers are the generally recommended saver type to use for most applications. It is also highly advised
+            to use hardware encoding if it is available on the host system (requires Nvidia GPU).
+
+        Args:
+            source_ids: The list of Camera object indices whose frames will be saved by this VideoSaver. The indices
+                are based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
+                the first added camera. This argument is very important as it directly determines what frames are saved
+                and by what savers. If you do not need to save any frames, do not add ImageSaver or VideoSaver instances
+                at all.l
+            hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is
+                almost always recommended to use the GPU encoding for considerably faster encoding with almost no
+                quality loss. However, GPU encoding is only supported by modern Nvidia GPUs.
+            video_format: The container format to use for the output video file. Use VideoFormats enumeration to
+                specify the desired container format. Currently, only 'MP4', 'MKV', and 'AVI' are supported.
+            video_codec: The codec (encoder) to use for generating the video file. Use VideoCodecs enumeration to
+                specify the desired codec. Currently, only 'H264' and 'H265' are supported.
+            preset: The encoding preset to use for the video file. Use GPUEncoderPresets or CPUEncoderPresets
+                enumerations to specify the preset. Note, you have to select the correct preset enumeration based on
+                whether hardware encoding is enabled (GPU) or not (CPU)!
+            input_pixel_format: The pixel format used by input data. Use InputPixelFormats enumeration to specify the
+                pixel format of the frame data that will be passed to this saver. Currently, only 'MONOCHROME', 'BGR',
+                and 'BGRA' options are supported. The correct option to choose depends on the configuration of the
+                Camera class(es) that acquire frames for this saver.
+            output_pixel_format: The pixel format to be used by the output video file. Use OutputPixelFormats
+                enumeration to specify the desired pixel format. Currently, only 'YUV420' and 'YUV444' options are
+                supported.
+            quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. The
+                encoder uses 'constant quantization' to discard the same amount of information from each macro-block of
+                the encoded frame, instead of varying the discarded information amount with the complexity of
+                macro-blocks. This allows precisely controlling output video size and distortions introduced by the
+                encoding process, as the changes are uniform across the whole video. Lower values mean better quality
+                (0 is best, 51 is worst). Note, the default value assumes H265 encoder and is likely too low for H264
+                encoder. H264 encoder should default to ~25.
+            gpu: The index of the GPU to use for hardware encoding. Valid GPU indices can be obtained from 'nvidia-smi'
+                command and start with 0 for the first available GPU. This is only used when hardware_encoding is True
+                and is ignored otherwise.
+
+        Raises:
+            TypeError: If the input arguments are not of the correct type.
+            RuntimeError: If the instantiated saver is configured to use GPU video encoding, but the method does not
+                detect any available NVIDIA GPUs. If FFMPEG is not accessible from the Python shell.
+        """
+    def start(self) -> None:
+        """Starts the consumer and producer processes of the video system class and begins acquiring camera frames.
+
+        This process begins frame acquisition, but not frame saving. To enable saving acquired frames, call
+        start_frame_saving() method. A call to this method is required to make the system operation and should only be
+        carried out from the main scope of the runtime context. A call to this method should always be paired with a
+        call to the stop() method to properly release the resources allocated to the class.
+
+        Notes:
+            By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
+            in some cases the user may want to see the camera feed, but only record the frames after some initial
+            setup. To enable saving camera frames, call the start_frame_saving() method.
+
+        Raises:
+            ProcessError: If the method is called outside the '__main__' scope. Also, if this method is called after
+                calling the stop() method without first re-initializing the class.
+        """
+    def stop(self) -> None:
+        """Stops all producer and consumer processes and terminates class runtime by releasing all resources.
+
+        While this does not delete the class instance itself, only call this method once, during the general
+        termination of the runtime that instantiated the class. This method destroys the shared memory array buffer,
+        so it is impossible to call start() after stop() has been called without re-initializing the class.
+
+        Notes:
+            The class will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
+            security feature that prevents information loss. If you want to override that behavior, you can initialize
+            the class with a 'shutdown_timeout' argument to specify a delay after which all consumers will be forcibly
+            terminated. Generally, it is highly advised not to tamper with this feature. The class uses the default
+            timeout of 10 minutes (600 seconds), unless this is overridden at instantiation.
+        """
     @property
     def started(self) -> bool:
-        """Returns true oif the class has active subprocesses (is running) and false otherwise."""
+        """Returns true if the system has been started and has active daemon processes connected to cameras and
+        saver."""
     @property
     def name(self) -> str:
         """Returns the name of the VideoSystem class instance."""
@@ -130,15 +364,13 @@ class VideoSystem:
     def get_opencv_ids() -> tuple[str, ...]:
         """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
 
-        This method can be used to discover camera IDs accessible through the OpenCV Backend. Subsequently,
-        each of the IDs can be passed to the create_camera() method to create an OpenCVCamera class instance to
-        interface with the camera. For each working camera, the method produces a string that includes camera ID, image
-        width, height, and the fps value to help identifying the cameras.
+        This method can be used to discover camera IDs accessible through the OpenCV backend. Next, each of the IDs can
+        be used via the add_camera() method to add the specific camera to a VideoSystem instance.
 
         Notes:
             Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this method
             tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
-            advised to use test each of the IDs with interactive-run CLI command to manually map IDs to cameras based
+            advised to test each of the IDs with 'interactive-run' CLI command to manually map IDs to cameras based
             on the produced visual stream.
 
             This method works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The method
@@ -159,9 +391,9 @@ class VideoSystem:
         library.
 
         Since Harvesters already supports listing valid IDs available through a given .cti interface, this method
-        uses built-in Harvesters functionality to discover and return camera ID and descriptive information.
-        The discovered IDs can later be used with the create_camera() method to create HarvestersCamera class to
-        interface with the desired cameras.
+        uses built-in Harvesters methods to discover and return camera ID and descriptive information.
+        The discovered IDs can later be used via the add_camera() method to add the specific camera to a VideoSystem
+        instance.
 
         Notes:
             This method bundles discovered ID (list index) information with the serial number and the camera model to
@@ -177,177 +409,12 @@ class VideoSystem:
             A tuple of strings. Each string contains camera ID, serial number, and model name.
         """
     @staticmethod
-    def add_camera(
-        camera_name: str,
-        camera_backend: CameraBackends = ...,
-        camera_id: int = 0,
-        frame_width: int | None = None,
-        frame_height: int | None = None,
-        frames_per_second: int | float | None = None,
-        opencv_backend: int | None = None,
-        cti_path: Path | None = None,
-        color: bool | None = None,
-    ) -> OpenCVCamera | HarvestersCamera | MockCamera:
-        """Creates and returns a Camera class instance that uses the specified camera backend.
-
-        This method centralizes Camera class instantiation. It contains methods for verifying the input information
-        and instantiating the specialized Camera class based on the requested camera backend. All Camera classes from
-        this library have to be initialized using this method.
-
-        Notes:
-            While the method contains many arguments that allow to flexibly configure the instantiated camera, the only
-            crucial ones are camera name, backend, and the numeric ID of the camera. Everything else is automatically
-            queried from the camera, unless provided.
-
-        Args:
-            camera_name: The string-name of the camera. This is used to help identify the camera and to mark all
-                frames acquired from this camera.
-            camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
-                available camera, 1 for the second, etc. Generally, the cameras are ordered based on the order they
-                were connected to the host system.
-            camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
-                the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
-                non-GenTL-compatible cameras.
-            frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
-                camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
-                If not provided (set to None), this parameter will be obtained from the connected camera.
-            frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
-                If not provided (set to None), this parameter will be obtained from the connected camera.
-            frames_per_second: The desired Frames Per Second to capture the frames at. Note, this depends on the
-                hardware capabilities OF the camera and is affected by multiple related parameters, such as image
-                dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
-                parameter will be obtained from the connected camera.
-            opencv_backend: Optional. The integer-code for the specific acquisition backend (library) OpenCV should
-                use to interface with the camera. Generally, it is advised not to change the default value of this
-                argument unless you know what you are doing.
-            cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use
-                the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
-                would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
-                details. Note, cti_path is only necessary for Harvesters backend, but it is REQUIRED for that backend.
-            color: A boolean indicating whether the camera acquires colored or monochrome images. This is
-                used by OpenCVCamera to optimize acquired images depending on the source (camera) color space. It is
-                also used by the MockCamera to enable simulating monochrome and colored images.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-            ValueError: If the requested camera_backend is not one of the supported backends. If the input cti_path does
-                not point to a '.cti' file.
-        """
-    @staticmethod
-    def add_image_saver(
-        output_directory: Path,
-        image_format: ImageFormats = ...,
-        tiff_compression: int = ...,
-        jpeg_quality: int = 95,
-        jpeg_sampling_factor: int = ...,
-        png_compression: int = 1,
-        thread_count: int = 5,
-    ) -> ImageSaver:
-        """Creates and returns a Saver class instance configured to save camera frame as independent images.
-
-        This method centralizes Saver class instantiation. It contains methods for verifying the input information
-        and instantiating the specialized Saver class to output images. All Saver classes from this library have to be
-        initialized using this method or a companion create_video_saver() method.
-
-        Notes:
-            While the method contains many arguments that allow to flexibly configure the instantiated saver, the only
-            crucial one is the output directory. That said, it is advised to optimize all parameters
-            relevant for your chosen backend as needed, as it directly controls the quality, file size and encoding
-            speed of the generated file(s).
-
-        Args:
-            output_directory: The path to the output directory where the image or video files will be saved after
-                encoding.
-            image_format: The format to use for the output images. Use ImageFormats enumeration
-                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
-            tiff_compression: The integer-code that specifies the compression strategy used for
-                Tiff image files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended
-                to use code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good
-                speed-to-compression balance.
-            jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the
-                JPEG compression. A higher value means better quality, less data loss, bigger file size, and slower
-                processing time.
-            jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image
-                color-space. Has to be one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended
-                to use code 444 to preserve the full color-space of the image for scientific applications.
-            png_compression: An integer value between 0 and 9 that specifies the compression of
-                the PNG file. Unlike JPEG, PNG files are always lossless. This value controls the trade-off between
-                the compression ratio and the processing time.
-            thread_count: The number of writer threads to be used by the saver class. Since
-                ImageSaver uses the c-backed OpenCV library, it can safely process multiple frames at the same time
-                via multithreading. This controls the number of simultaneously saved images the class will support.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-        """
-    @staticmethod
-    def add_video_saver(
-        output_directory: Path,
-        hardware_encoding: bool = False,
-        video_format: VideoFormats = ...,
-        video_codec: VideoCodecs = ...,
-        preset: GPUEncoderPresets | CPUEncoderPresets = ...,
-        input_pixel_format: InputPixelFormats = ...,
-        output_pixel_format: OutputPixelFormats = ...,
-        quantization_parameter: int = 15,
-        gpu: int = 0,
-    ) -> VideoSaver:
-        """Creates and returns a Saver class instance configured to save camera frame as video files.
-
-        This method centralizes Saver class instantiation. It contains methods for verifying the input information
-        and instantiating the specialized Saver class to output video files. All Saver classes from this library have
-        to be initialized using this method or a companion create_image_saver() method.
-
-        Notes:
-            While the method contains many arguments that allow to flexibly configure the instantiated saver, the only
-            crucial one is the output directory. That said, it is advised to optimize all parameters
-            relevant for your chosen backend as needed, as it directly controls the quality, file size and encoding
-            speed of the generated file(s).
-
-        Args:
-            output_directory: The path to the output directory where the image or video files will be saved after
-                encoding.
-            hardware_encoding: Only for Video savers. Determines whether to use GPU (hardware) encoding or CPU
-                (software) encoding. It is almost always recommended to use the GPU encoding for considerably faster
-                encoding with almost no quality loss. GPU encoding is only supported by modern Nvidia GPUs, however.
-            video_format: Only for Video savers. The container format to use for the output video. Use VideoFormats
-                enumeration to specify the desired container format. Currently, only 'MP4', 'MKV', and 'AVI' are
-                supported.
-            video_codec: Only for Video savers. The codec (encoder) to use for generating the video file. Use
-                VideoCodecs enumeration to specify the desired codec. Currently, only 'H264' and 'H265' are supported.
-            preset: Only for Video savers. The encoding preset to use for generating the video file. Use
-                GPUEncoderPresets or CPUEncoderPresets enumerations to specify the preset. Note, you have to select the
-                correct preset enumeration based on whether hardware encoding is enabled!
-            input_pixel_format: Only for Video savers. The pixel format used by input data. This only applies when
-                encoding simultaneously acquired frames. When encoding pre-acquire images, FFMPEG will resolve color
-                formats automatically. Use InputPixelFormats enumeration to specify the desired pixel format.
-                Currently, only 'MONOCHROME' and 'BGR' and 'BGRA' options are supported. The option to choose depends
-                on the configuration of the Camera class that was used for frame acquisition.
-            output_pixel_format: Only for Video savers. The pixel format to be used by the output video. Use
-                OutputPixelFormats enumeration to specify the desired pixel format. Currently, only 'YUV420' and
-                'YUV444' options are supported.
-            quantization_parameter: Only for Video savers. The integer value to use for the 'quantization parameter'
-                of the encoder. The encoder uses 'constant quantization' to discard the same amount of information from
-                each macro-block of the frame, instead of varying the discarded information amount with the complexity
-                of macro-blocks. This allows precisely controlling output video size and distortions introduced by the
-                encoding process, as the changes are uniform across the whole video. Lower values mean better quality
-                (0 is best, 51 is worst). Note, the default assumes H265 encoder and is likely too low for H264 encoder.
-                H264 encoder should default to ~25.
-            gpu: Only for Video savers. The index of the GPU to use for encoding. Valid GPU indices can be obtained
-                from 'nvidia-smi' command. This is only used when hardware_encoding is True.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-            RuntimeError: If the instantiated saver is configured to use GPU video encoding, but the method does not
-                detect any available NVIDIA GPUs.
-        """
-    @staticmethod
     def _frame_display_loop(display_queue: Queue, camera_name: str) -> None:
         """Continuously fetches frame images from display_queue and displays them via OpenCV imshow() method.
 
-        This method is used as a thread target as part of the _produce_images_loop() runtime. It is used to display
+        This method runs in a thread as part of the _produce_images_loop() runtime. It is used to display
         frames as they are grabbed from the camera and passed to the multiprocessing queue. This allows visually
-        inspecting the frames as they are processed, which is often desired during scientific experiments.
+        inspecting the frames as they are processed.
 
         Notes:
             Since the method uses OpenCV under-the-hood, it repeatedly releases GIL as it runs. This makes it
@@ -361,48 +428,52 @@ class VideoSystem:
             display_queue: A multithreading Queue object that is used to buffer grabbed frames to de-couple display from
                 acquisition. It is expected that the queue yields frames as NumPy ndarray objects. If the queue yields a
                 non-array object, the thread terminates.
-            camera_name: The name of the camera which produces displayed images. This is used to generate a
-                descriptive window name for the display GUI.
+            camera_name: The name of the camera which produces displayed images. This is used to generate a descriptive
+                window name for the display GUI.
         """
     @staticmethod
     def _frame_production_loop(
-        camera: OpenCVCamera | HarvestersCamera | MockCamera,
+        video_system_id: int,
+        cameras: list[_CameraSystem],
         image_queue: MPQueue,
+        output_queue: MPQueue,
+        logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
-        log_path: Path,
-        display_video: bool = False,
-        fps: float | None = None,
     ) -> None:
-        """Continuously grabs frames from the camera and queues them up to be saved by the consumer processes and
-        displayed via the display thread.
+        """Continuously grabs frames from each managed camera and queues them up to be saved by the consumer process.
 
-        This method loops while the first element in terminator_array (index 0) is nonzero. It continuously grabs
-        frames from the camera, but only queues them up to be saved by the consumer processes as long as the second
-        element in terminator_array (index 1) is nonzero. This method is meant to be run as a process and will create
-        an infinite loop if run on its own.
+        This method loops while the first element in terminator_array (index 0) is zero. It continuously grabs
+        frames from each managed camera but only queues them up to be saved by the consumer process if the second
+        element in terminator_array (index 1) is not zero.
+
+        This method also displays the acquired frames for the cameras that requested this functionality in a separate
+        display thread (one per each camera).
 
         Notes:
-            The method can be configured with an fps override to manually control the acquisition frame rate. Generally,
-            this functionality should be avoided for most scientific and industrial cameras, as they all have a
-            built-in frame rate limiter that will be considerably more efficient than the local implementation. For
-            cameras without a built-in frame-limiter however, this functionality can be used to enforce a certain
-            frame rate via software.
+            This method should be executed by the producer Process. It is not intended to be executed by the main
+            process where VideoSystem is instantiated.
 
-            When enabled, the method writes each frame data, ID, and acquisition timestamp relative to onset time to the
-            image_queue as a 3-element tuple.
+            In addition to sending data to the consumer process, this method also outputs the frame data to other
+            concurrent processes via the output_queue. This is only done for cameras that explicitly request this
+            feature.
+
+            This method also generates and logs the acquisition onset date and time, which is used to align different
+            log data sources to each other when post-processing acquired data.
 
         Args:
-            camera: A supported Camera class instance that is used to interface with the camera that produces frames.
-            image_queue: A multiprocessing queue that buffers and pipes acquired frames to consumer processes.
+            video_system_id: The unique byte-code identifier of the VideoSystem instance. This is used to identify the
+                VideoSystem when logging data.
+            cameras: The list of CameraSystem instances managed by this VideoSystem instance.
+            image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
+            output_queue: A multiprocessing queue that buffers and pipes acquired frames to other concurrently active
+                processes (not managed by this VideoSystem instance).
+            logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
+                This queue is used to buffer and pipe data to be logged to the logger cores. This method only logs the
+                onset of frame data acquisition, which is used to align different log sources to each other during
+                post-processing. The saver loop is used to log frame acquisition times, only preserving the frames that
+                are saved to disk.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
-            log_path: The path to be used for logging frame acquisition times as .txt entries. This method establishes
-                and writes the 'onset' point in UTC time to the file. Subsequently, all frame acquisition stamps are
-                given in microseconds elapsed since the onset point.
-            display_video: Determines whether to display acquired frames to the user through an OpenCV backend.
-            fps: Manually overrides camera acquisition frame rate by triggering frame grabbing method at the specified
-                interval. The override should be avoided for most higher-end cameras, and their built-in frame limiter
-                module should be used instead (fps can be specified when instantiating Camera classes).
         """
     @staticmethod
     def _frame_saving_loop(
@@ -459,43 +530,12 @@ class VideoSystem:
             video_id: Only for VideoSaver classes. Specifies the unique identifier used as the name of the
                 encoded video file.
         """
-    @staticmethod
-    def _empty_function() -> None:
-        """A placeholder function used to verify the class is only instantiated inside the main scope of each runtime.
+    def _watchdog(self) -> None:
+        """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
+        during runtime.
 
-        The function itself does nothing. It is used to enforce that the start() method of the class only triggers
-        inside the main scope, to avoid uncontrolled spawning of daemon processes.
-        """
-    def start(self) -> None:
-        """Starts the consumer and producer processes of the video system class and begins acquiring camera frames.
-
-        This process begins frame acquisition, but not frame saving. To enable saving acquired frames, call
-        start_frame_saving() method. A call to this method is required to make the system operation and should only be
-        carried out from the main scope of the runtime context. A call to this method should always be paired with a
-        call to the stop() method to properly release the resources allocated to the class.
-
-        Notes:
-            By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
-            in some cases the user may want to see the camera feed, but only record the frames after some initial
-            setup. To enable saving camera frames, call the start_frame_saving() method.
-
-        Raises:
-            ProcessError: If the method is called outside the '__main__' scope. Also, if this method is called after
-                calling the stop() method without first re-initializing the class.
-        """
-    def stop(self) -> None:
-        """Stops all producer and consumer processes and terminates class runtime by releasing all resources.
-
-        While this does not delete the class instance itself, only call this method once, during the general
-        termination of the runtime that instantiated the class. This method destroys the shared memory array buffer,
-        so it is impossible to call start() after stop() has been called without re-initializing the class.
-
-        Notes:
-            The class will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
-            security feature that prevents information loss. If you want to override that behavior, you can initialize
-            the class with a 'shutdown_timeout' argument to specify a delay after which all consumers will be forcibly
-            terminated. Generally, it is highly advised not to tamper with this feature. The class uses the default
-            timeout of 10 minutes (600 seconds), unless this is overridden at instantiation.
+        This function will raise a RuntimeError if it detects that a monitored process has prematurely shut down. It
+        will verify process states every ~20 ms and will release the GIL between checking the states.
         """
     def stop_frame_saving(self) -> None:
         """Disables saving acquired camera frames.

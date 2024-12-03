@@ -15,6 +15,7 @@ from typing import Optional
 from pathlib import Path
 from threading import Thread
 import subprocess
+from dataclasses import dataclass
 import multiprocessing
 from multiprocessing import (
     Queue as MPQueue,
@@ -22,7 +23,6 @@ from multiprocessing import (
     ProcessError,
 )
 from multiprocessing.managers import SyncManager
-from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -30,7 +30,7 @@ from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
 from harvesters.core import Harvester  # type: ignore
 from ataraxis_base_utilities import console, ensure_directory_exists
-from ataraxis_data_structures import SharedMemoryArray, LogPackage
+from ataraxis_data_structures import LogPackage, SharedMemoryArray
 from ataraxis_time.time_helpers import convert_time, get_timestamp
 
 from .saver import (
@@ -1219,7 +1219,6 @@ class VideoSystem:
             # For each camera configured to display frames, creates a worker thread and queue object that handles
             # displaying the frames. Stores both in a dictionary using camera names as keys.
             if camera.display_frames:
-
                 # Creates queue and thread for this camera
                 display_queue = Queue()
                 display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, camera_name))
@@ -1263,7 +1262,6 @@ class VideoSystem:
 
         # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 1
         while not self._terminator_array.read_data(index=0):  # type: ignore
-
             # Loops over each camera during each acquisition cycle:
             for camera_system in cameras:
                 # Extracts the camera class and acquisition runtime parameters from the camera_dictionary
@@ -1460,7 +1458,6 @@ class VideoSystem:
 
         # The watchdog function will run until the global shutdown command is issued.
         while not self._terminator_array.read_data(index=0):  # type: ignore
-
             # Checks process state every 20 ms. Releases the GIL while waiting.
             timer.delay_noblock(delay=20, allow_sleep=True)
 
