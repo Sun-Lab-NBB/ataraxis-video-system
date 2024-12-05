@@ -1,10 +1,7 @@
 from queue import Queue
 from pathlib import Path
 from dataclasses import dataclass
-from multiprocessing import (
-    Queue as MPQueue,
-    ProcessError as ProcessError,
-)
+from multiprocessing import Queue as MPQueue
 
 import numpy as np
 from _typeshed import Incomplete
@@ -37,6 +34,7 @@ class _CameraSystem:
     """
 
     camera: OpenCVCamera | HarvestersCamera | MockCamera
+    save_frames: bool
     fps_override: int | float
     output_frames: bool
     output_frame_rate: int | float
@@ -52,7 +50,7 @@ class _SaverSystem:
     """
 
     saver: ImageSaver | VideoSaver
-    source_ids: tuple[int]
+    source_id: int
 
 class VideoSystem:
     """Efficiently combines Camera and Saver instances to acquire, display, and save camera frames in real time.
@@ -95,13 +93,14 @@ class VideoSystem:
 
     Attributes:
         _id: Stores the ID code of the VideoSystem instance.
-        _name: Stores the human-readable name of the VideoSystem instance.
+        _name: Stores the human-readable name of the VideoSystem instance.c
         _description: Stores the description of the VideoSystem instance.
         _logger_queue: Stores the multiprocessing Queue object used to buffer and pipe data to be logged.
         _output_directory: Stores the path to the output directory.
         _cti_path: Stores the path to the '.cti' file that provides the GenTL Producer interface.
         _cameras: Stores managed CameraSystems.
         _savers: Stores managed SaverSystems.
+        _reserved_sources: Tracks which cameras have been matched to saver instances.
         _started: Tracks whether the system is currently running (has active subprocesses).
         _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
         _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
@@ -126,6 +125,7 @@ class VideoSystem:
     _cti_path: Incomplete
     _cameras: Incomplete
     _savers: Incomplete
+    _reserved_sources: Incomplete
     _started: bool
     _mp_manager: Incomplete
     _image_queue: Incomplete
@@ -150,6 +150,7 @@ class VideoSystem:
     def add_camera(
         self,
         camera_name: str,
+        save_frames: bool,
         camera_id: int = 0,
         camera_backend: CameraBackends = ...,
         output_frames: bool = False,
@@ -172,6 +173,9 @@ class VideoSystem:
         Args:
             camera_name: The human-readable of the camera. This is used to help identify the camera to the user in
                 messages and during real-time frame display.
+            save_frames: Determines whether frames acquired by this camera should be saved to disk as images or video.
+                If this is enabled, there has to be a valid Saver class instance configured to save frames from this
+                Camera.
             camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
                 available camera, 1 for the second, etc. Usually, the camera IDs are assigned by the host-system based
                 on the order of their connection.
@@ -216,7 +220,7 @@ class VideoSystem:
         """
     def add_image_saver(
         self,
-        source_ids: tuple[int],
+        source_id: int,
         image_format: ImageFormats = ...,
         tiff_compression_strategy: int = ...,
         jpeg_quality: int = 95,
@@ -240,11 +244,10 @@ class VideoSystem:
             possible to optimize the disk space usage and still benefit from a decent frame saving speed.
 
         Args:
-            source_ids: The list of Camera object indices whose frames will be saved by this ImageSaver. The indices
-                are based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
-                the first added camera. This argument is very important as it directly determines what frames are saved
-                and by what savers. If you do not need to save any frames, do not add ImageSaver or VideoSaver instances
-                at all.
+            source_id: The index of the Camera instance whose frames will be saved by this ImageSaver. The index
+                is based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
+                the first added camera. This argument is very important as it is used to determine which savers are used
+                for each camera source. Each saver has to be matched with a camera not used by any other saver.
             image_format: The format to use for the output images. Use ImageFormats enumeration
                 to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
             tiff_compression_strategy: The integer-code that specifies the compression strategy used for .tiff image
@@ -259,7 +262,8 @@ class VideoSystem:
                 422, which results in better compression at the cost of color coding precision.
             png_compression: An integer value between 0 and 9 that specifies the compression used for .png image files.
                 Unlike JPEG, PNG files are always lossless. This value controls the trade-off between the compression
-                ratio and the processing time.
+                ratio and the processing time. Compression level of 0 means uncompressed and 9 means maximum
+                compression.
             thread_count: The number of writer threads to be used by the saver class. Since ImageSaver uses the
                 C-backed OpenCV library, it can safely process multiple frames at the same time via multithreading.
                 This controls the number of simultaneously saved images the class instance will support.
@@ -269,7 +273,7 @@ class VideoSystem:
         """
     def add_video_saver(
         self,
-        source_ids: tuple[int],
+        source_id: int,
         hardware_encoding: bool = False,
         video_format: VideoFormats = ...,
         video_codec: VideoCodecs = ...,
@@ -298,11 +302,10 @@ class VideoSystem:
             to use hardware encoding if it is available on the host system (requires Nvidia GPU).
 
         Args:
-            source_ids: The list of Camera object indices whose frames will be saved by this VideoSaver. The indices
-                are based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
-                the first added camera. This argument is very important as it directly determines what frames are saved
-                and by what savers. If you do not need to save any frames, do not add ImageSaver or VideoSaver instances
-                at all.l
+            source_id: The index of the Camera instance whose frames will be saved by this VideoSaver. The index
+                is based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
+                the first added camera. This argument is very important as it is used to determine which savers are used
+                for each camera source. Each saver has to be matched with a camera not used by any other saver.
             hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is
                 almost always recommended to use the GPU encoding for considerably faster encoding with almost no
                 quality loss. However, GPU encoding is only supported by modern Nvidia GPUs.
@@ -337,12 +340,11 @@ class VideoSystem:
                 detect any available NVIDIA GPUs. If FFMPEG is not accessible from the Python shell.
         """
     def start(self) -> None:
-        """Starts the consumer and producer processes of the video system class and begins acquiring camera frames.
+        """Starts the consumer and producer processes of the VideoSystem instance and begins acquiring camera frames.
 
-        This process begins frame acquisition, but not frame saving. To enable saving acquired frames, call
-        start_frame_saving() method. A call to this method is required to make the system operation and should only be
-        carried out from the main scope of the runtime context. A call to this method should always be paired with a
-        call to the stop() method to properly release the resources allocated to the class.
+        This process begins frame acquisition, but not frame saving! To enable saving acquired frames, call
+        start_frame_saving() method. A call to this method should always be paired with a call to the stop() method to
+        properly release the resources allocated to the class.
 
         Notes:
             By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
@@ -350,22 +352,20 @@ class VideoSystem:
             setup. To enable saving camera frames, call the start_frame_saving() method.
 
         Raises:
-            ProcessError: If the method is called outside the '__main__' scope. Also, if this method is called after
-                calling the stop() method without first re-initializing the class.
+            RuntimeError: If starting the consumer or producer processes stalls or fails. If there are Saver instances
+                configured to save frames from non-existing cameras or cameras that are not configured to save frames.
+                If there are cameras configured to save frames that are not matched with a unique saver instance.
         """
     def stop(self) -> None:
-        """Stops all producer and consumer processes and terminates class runtime by releasing all resources.
+        """Stops the producer and consumer processes and releases all resources.
 
-        While this does not delete the class instance itself, only call this method once, during the general
-        termination of the runtime that instantiated the class. This method destroys the shared memory array buffer,
-        so it is impossible to call start() after stop() has been called without re-initializing the class.
+        The instance will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
+        security feature that prevents information loss.
 
         Notes:
-            The class will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
-            security feature that prevents information loss. If you want to override that behavior, you can initialize
-            the class with a 'shutdown_timeout' argument to specify a delay after which all consumers will be forcibly
-            terminated. Generally, it is highly advised not to tamper with this feature. The class uses the default
-            timeout of 10 minutes (600 seconds), unless this is overridden at instantiation.
+            This method waits for at most 10 minutes for the output_queue and the image_queue to become empty. If the
+            queues are not empty by that time, the method forcibly terminates the instance and discards any unprocessed
+            data.
         """
     @property
     def started(self) -> bool:
@@ -381,7 +381,7 @@ class VideoSystem:
     def id_code(self) -> np.uint8:
         """Returns the unique identifier code assigned to the VideoSystem class instance."""
     @property
-    def output_queues(self) -> MPQueue:
+    def output_queue(self) -> MPQueue:
         """Returns the multiprocessing Queue object used by the system's producer process to send frames to other
         concurrently active processes."""
     @staticmethod
@@ -492,10 +492,7 @@ class VideoSystem:
             output_queue: A multiprocessing queue that buffers and pipes acquired frames to other concurrently active
                 processes (not managed by this VideoSystem instance).
             logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
-                This queue is used to buffer and pipe data to be logged to the logger cores. This method only logs the
-                onset of frame data acquisition, which is used to align different log sources to each other during
-                post-processing. The saver loop is used to log frame acquisition times, only preserving the frames that
-                are saved to disk.
+                This queue is used to buffer and pipe data to be logged to the logger cores.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
         """
@@ -503,50 +500,40 @@ class VideoSystem:
     def _frame_saving_loop(
         video_system_id: int,
         savers: tuple[_SaverSystem, ...],
+        cameras: tuple[_CameraSystem, ...],
         image_queue: MPQueue,
         logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
-        frame_width: int,
-        frame_height: int,
-        video_frames_per_second: float,
     ) -> None:
         """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
-        on the saver class backend.
+        on the saver instance associated with the producer camera.
 
         This method loops while the first element in terminator_array (index 0) is nonzero. It continuously grabs
-        and saves frames buffered through image_queue. The method also logs frame acquisition timestamps, which are
-        buffered with each frame data and ID. This method is meant to be run as a process, and it will create an
-        infinite loop if run on its own.
+        teh frames from image_queue and, depending on the index of the camera that produced them, uses the appropriate
+        saver instance to write them to disk.
+
+        This method also logs the acquisition time for each saved frame via the logger_queue instance.
 
         Notes:
-            If Saver class is configured to use Image backend and multiple saver processes were requested during
-            VideoSystem instantiation, this loop will be used by multiple processes at the same time. This increases
-            saving throughput at the expense of using more resources. This may also affect the order of entries in the
-            frame acquisition log.
-
-            For Video encoder, the class requires additional information about the encoded data, including the
-            identifier to use for the video file. Otherwise, all additional setup / teardown steps are resolved
-            automatically as part of this method's runtime.
-
             This method's main loop will be kept alive until the image_queue is empty. This is an intentional security
             feature that ensures all buffered images are processed before the saver is terminated. To override this
             behavior, you will need to use the process kill command, but it is strongly advised not to tamper
             with this feature.
 
-            This method expects that image_queue buffers 3-element tuples that include frame data, frame id and
-            frame acquisition time relative to the onset point in microseconds.
+            This method expects that image_queue buffers 3-element tuples that include frame data, the index of the
+            camera that produced the frame (relative to _cameras tuple) and frame acquisition time relative to the
+            onset point in microseconds.
 
         Args:
-            savers: One of the supported Saver classes that is used to save buffered camera frames by interfacing with
-                the OpenCV or FFMPEG libraries.
-            image_queue: A multiprocessing queue that buffers and pipes frames acquired by the producer process.
+            video_system_id: The unique byte-code identifier of the VideoSystem instance. This is used to identify the
+                VideoSystem when logging data.
+            savers: The tuple of SaverSystem instances managed by this VideoSystem instance.
+            cameras: The tuple of CameraSystem instances managed by this VideoSystem instance.
+            image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
+            logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
+                This queue is used to buffer and pipe data to be logged to the logger cores.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during global shutdown.
-            frame_width: Only for VideoSaver classes. Specifies the width of the frames to be saved, in pixels.
-                This has to match the width reported by the Camera class that produces the frames.
-            frame_height: Same as above, but specifies the height of the frames to be saved, in pixels.
-            video_frames_per_second: Only for VideoSaver classes. Specifies the desired frames-per-second of the
-                encoded video file.
         """
     def _watchdog(self) -> None:
         """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
@@ -565,6 +552,14 @@ class VideoSystem:
         """Enables saving acquired camera frames.
 
         The frames are grabbed and (optionally) displayed to user after the main start() method is called, but they
-        are not initially written to non-volatile memory. The call to this method additionally enables saving the
-        frames to non-volatile memory.
+        are not initially saved to disk. The call to this method additionally enables saving the frames to disk
+        """
+    def stop_frame_output(self) -> None:
+        """Disables outputting frame data via the instance output_queue."""
+    def start_frame_output(self) -> None:
+        """Enables outputting frame data via the instance output_queue.
+
+        Some cameras can be configured to additionally share acquired frame data with other concurrently active
+        processes. When the VideoSystem starts, this functionality is nto enabled by default and has to be enabled
+        separately via this method.
         """

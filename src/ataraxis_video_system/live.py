@@ -14,7 +14,9 @@ from typing import Any
 from pathlib import Path
 
 import click
+import numpy as np
 from ataraxis_base_utilities import LogLevel, console
+from ataraxis_data_structures import DataLogger
 
 from .saver import (
     ImageSaver,
@@ -109,6 +111,7 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     "-cti",
     "--cti_path",
     required=False,
+    default=None,
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     help="The path to the .cti file, which is sued by the 'harvesters' camera backend. This is required for "
     "'harvesters' backend to work as expected.",
@@ -147,12 +150,12 @@ def live_run(
     output_directory: str,
     display_frames: bool,
     monochrome: bool,
-    cti_path: str,
+    cti_path: str | None,
     width: int,
     height: int,
     fps: float,
 ) -> None:
-    """Instantiates Camera, Saver and VideoSystem classes using the input parameters and runs the VideoSystem with
+    """Instantiates Camera, Saver, and VideoSystem classes using the input parameters and runs the VideoSystem with
     manual control from the user.
 
     This method uses input() command to allow interfacing with the running system through a terminal window. The user
@@ -166,36 +169,55 @@ def live_run(
 
     console.enable()  # Enables console output
 
-    # Instantiates the requested camera
+    # Initializes and starts the DataLogger instance
+    logger = DataLogger(output_directory=Path(output_directory).joinpath("Log"))
+    logger.start()
+
+    # Initializes the system
+    video_system = VideoSystem(
+        system_id=np.uint(111),
+        system_name="LiveSystem",
+        system_description="A VideoSystem coupled to a live CLI designed for VideoSystem testing.",
+        logger_queue=logger.input_queue,
+        output_directory=Path(output_directory),
+        harvesters_cti_path=Path(cti_path) if cti_path is not None else None,
+    )
+
+    # Adds the requested camera to the VideoSystem
     camera_name = "Live Camera"
     if camera_backend == "mock":
-        camera = VideoSystem.add_camera(
+        video_system.add_camera(
             camera_name=camera_name,
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.MOCK,
             camera_id=camera_id,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
+            acquisition_frame_rate=fps,
             color=monochrome,
         )
     elif camera_backend == "harvesters":  # pragma: no cover
-        camera = VideoSystem.add_camera(
+        video_system.add_camera(
             camera_name=camera_name,
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.HARVESTERS,
             camera_id=camera_id,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
-            cti_path=Path(cti_path),
+            acquisition_frame_rate=fps,
         )
     else:  # pragma: no cover
-        camera = VideoSystem.add_camera(
+        video_system.add_camera(
             camera_name=camera_name,
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.OPENCV,
             camera_id=camera_id,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
+            acquisition_frame_rate=fps,
             color=monochrome,
         )
 
@@ -207,35 +229,19 @@ def live_run(
 
     saver: ImageSaver | VideoSaver
     if saver_backend == "image":
-        saver = VideoSystem.add_image_saver(
-            output_directory=Path(output_directory),
+        video_system.add_image_saver(
+            source_id=0,
             image_format=ImageFormats.PNG,
             png_compression=1,
             thread_count=10,
         )
-    elif saver_backend == "video_cpu":  # pragma: no cover
-        saver = VideoSystem.add_video_saver(
-            output_directory=Path(output_directory),
-            hardware_encoding=False,
-            preset=CPUEncoderPresets.FAST,
-            input_pixel_format=pixel_color,
-        )
     else:  # pragma: no cover
-        saver = VideoSystem.add_video_saver(
-            output_directory=Path(output_directory),
-            hardware_encoding=True,
-            preset=GPUEncoderPresets.FAST,
+        video_system.add_video_saver(
+            source_id=0,
+            hardware_encoding=False if saver_backend == "video_cpu" else True,
+            preset=CPUEncoderPresets.FAST if saver_backend == "video_cpu" else GPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,
         )
-
-    # Initializes the system
-    video_system = VideoSystem(
-        camera=camera,
-        saver=saver,
-        shutdown_timeout=60,  # Intentionally kept low, unlike the API default
-        system_name="Live",
-        display_frames=display_frames,
-    )
 
     # Starts the system by spawning child processes
     video_system.start()

@@ -24,12 +24,12 @@ def live_run(
     output_directory: str,
     display_frames: bool,
     monochrome: bool,
-    cti_path: str,
+    cti_path: str | None,
     width: int,
     height: int,
     fps: float,
 ) -> None:
-    """Instantiates Camera, Saver and VideoSystem classes using the input parameters and runs the VideoSystem with
+    """Instantiates Camera, Saver, and VideoSystem classes using the input parameters and runs the VideoSystem with
     manual control from the user.
 
     This method uses input() command to allow interfacing with the running system through a terminal window. The user
