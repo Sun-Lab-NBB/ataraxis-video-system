@@ -1685,3 +1685,25 @@ class VideoSystem:
         if self._started and self._terminator_array is not None:
             # noinspection PyTypeChecker
             self._terminator_array.write_data(index=2, data=np.uint8(1))
+
+    def get_video_saver(self, saver_index: int) -> VideoSaver:
+        """Returns the VideoSaver class instance stored under the given saver_index inside the VideoSystem _savers
+        list.
+
+        This method allows accessing the initialized VideoSaver class instances. The only condition under which this
+        method is helpful is if you need a VideoSaver instance to encode a folder of ImageSaver-produced images as a
+        video. This can be done by calling the create_video_from_image_folder() method of the returned VideoSaver
+        instance.
+
+        Args:
+            saver_index: The index at which teh saver was added to the VideoSystem. This directly depends on the order
+                the add_saver methods were called in, with the first added saver having the index of 0, the 2nd an index
+                of 1, etc.
+        """
+        saver_system = self._savers[saver_index]
+        if not isinstance(saver_system.saver, VideoSaver):
+            message = (f"Unable to retrieve the saver found under index {saver_index}. The saver instance found under "
+                       f"this index is not a VideoSaver.")
+            console.error(message=message, error=TypeError)
+
+        return saver_system.saver
