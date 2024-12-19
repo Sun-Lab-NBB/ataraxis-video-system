@@ -14,6 +14,7 @@ from ataraxis_data_structures import DataLogger
 from ataraxis_video_system import VideoSystem
 from ataraxis_video_system.saver import VideoCodecs, ImageFormats, VideoFormats
 from ataraxis_video_system.camera import OpenCVCamera, CameraBackends, HarvestersCamera
+import sys
 
 """
 1) init
@@ -56,20 +57,31 @@ def video_system_fixture(logger_queue_fixture):
     )
 
 
-def test_init_errors(video_system_fixture):
+def test_init_errors(logger_queue_fixture):
     invalid_system_name = 12
 
     message = (
         f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
         f"{invalid_system_name} of type {type(invalid_system_name).__name__}."
     )
+
+    # You cant do this circular raise design, this is mega evil
+    # with pytest.raises(TypeError, match=message):
+    #     video_system_fixture(
+    #         system_id=video_system_fixture._id,
+    #         system_name=invalid_system_name,
+    #         system_description=video_system_fixture._description,
+    #         logger_queue=video_system_fixture._logger_queue,
+    #         output_directory=video_system_fixture._output_directory,
+    #     )
+
+    # This is good
     with pytest.raises(TypeError, match=message):
-        video_system = VideoSystem(
-            system_id=video_system_fixture._id,
+        VideoSystem(
+            system_id=np.uint8(1),
             system_name=invalid_system_name,
-            system_description=video_system_fixture._description,
-            logger_queue=video_system_fixture._logger_queue,
-            output_directory=video_system_fixture._output_directory,
+            system_description='Will be deprecated',
+            logger_queue=logger_queue_fixture,
         )
 
 
@@ -179,20 +191,31 @@ def test_opencv_backend_assignment(video_system_fixture):
     # I'm not sure how to do this because addcamera does not have opencv_backend. Like for each backend how do
     # do I create a valid camera? Do I create a an OpenCVCamera or HarvestsersCamera then add it in?
 
+    # Camera does have a backend, you just did not understand how it works. _cameras is a tuple of CameraSystem objects.
+    # CameraSystem contains 'camera' field, which is the OpenCVCamera object and some other information.
+
+    # Add a guard here to prevent running the test if no OpenCVCameras are available. I have that code in the
+    # camera_test file, just copy it into this file.
+
     camera_backend = CameraBackends.OPENCV
     opencv_backend = None
 
     video_system_fixture.add_camera(
         camera_name="Test Camera",
         camera_id=0,
+        save_frames=False,
         camera_backend=camera_backend,
         opencv_backend=opencv_backend,
         save_frames=True,
     )
-    camera = video_system_fixture._cameras[-1]
-    expected_backend_value = int(cv2.CAP_ANY)
 
-    assert camera.opencv_backend == expected_backend_value
+    # This is how you access a camera
+    camera_system = video_system_fixture._cameras[-1]
+    camera = camera_system.camera
+
+    # And this is how you check the backend. The Backend property returns a string-representation of the backend code.
+    # for the default backend, this will be this string-representation of 'Any' backend.
+    assert camera.backend == "VFW / V4L (Platform Dependent)"
 
 
 #     harvester_ctipath = None
