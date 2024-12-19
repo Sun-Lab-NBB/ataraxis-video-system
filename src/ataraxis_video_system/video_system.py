@@ -1702,8 +1702,10 @@ class VideoSystem:
         """
         saver_system = self._savers[saver_index]
         if not isinstance(saver_system.saver, VideoSaver):
-            message = (f"Unable to retrieve the saver found under index {saver_index}. The saver instance found under "
-                       f"this index is not a VideoSaver.")
+            message = (
+                f"Unable to retrieve the saver found under index {saver_index}. The saver instance found under "
+                f"this index is not a VideoSaver."
+            )
             console.error(message=message, error=TypeError)
 
         return saver_system.saver

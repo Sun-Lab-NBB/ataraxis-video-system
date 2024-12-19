@@ -24,6 +24,7 @@ from ataraxis_video_system.camera import OpenCVCamera, CameraBackends, Harvester
 -
 """
 
+
 @pytest.fixture()
 def logger_queue_fixture(tmp_path):
     """
@@ -63,12 +64,12 @@ def test_init_errors(video_system_fixture):
         f"{invalid_system_name} of type {type(invalid_system_name).__name__}."
     )
     with pytest.raises(TypeError, match=message):
-        video_system_fixture(
-            system_id=video_system_fixture.system_id,
+        video_system = VideoSystem(
+            system_id=video_system_fixture._id,
             system_name=invalid_system_name,
-            system_description=video_system_fixture.system_description,
-            logger_queue=video_system_fixture.logger_queue,
-            output_directory=video_system_fixture.output_directory,
+            system_description=video_system_fixture._description,
+            logger_queue=video_system_fixture._logger_queue,
+            output_directory=video_system_fixture._output_directory,
         )
 
 
@@ -176,7 +177,7 @@ def test_opencv_backend_assignment(video_system_fixture):
     """Test that opencv_backend is correctly assigned when None is provided and camera_backend is OPENCV."""
 
     # I'm not sure how to do this because addcamera does not have opencv_backend. Like for each backend how do
-    # do I create a valid camera? Do I create a an OpenCVCamera or HarvestsersCamera then add it in? 
+    # do I create a valid camera? Do I create a an OpenCVCamera or HarvestsersCamera then add it in?
 
     camera_backend = CameraBackends.OPENCV
     opencv_backend = None
@@ -186,6 +187,7 @@ def test_opencv_backend_assignment(video_system_fixture):
         camera_id=0,
         camera_backend=camera_backend,
         opencv_backend=opencv_backend,
+        save_frames=True,
     )
     camera = video_system_fixture._cameras[-1]
     expected_backend_value = int(cv2.CAP_ANY)
