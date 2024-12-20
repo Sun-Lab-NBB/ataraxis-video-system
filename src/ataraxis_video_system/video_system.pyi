@@ -117,6 +117,7 @@ class VideoSystem:
         TypeError: If any of the provided arguments has an invalid type.
     """
 
+    _started: bool
     _id: Incomplete
     _name: Incomplete
     _description: Incomplete
@@ -126,7 +127,6 @@ class VideoSystem:
     _cameras: Incomplete
     _savers: Incomplete
     _reserved_sources: Incomplete
-    _started: bool
     _mp_manager: Incomplete
     _image_queue: Incomplete
     _output_queue: Incomplete

@@ -247,41 +247,49 @@ def test_opencv_backend_assignment(video_system_fixture):
 
     # And this is how you check the backend. The Backend property returns a string-representation of the backend code.
     # # for the default backend, this will be this string-representation of 'Any' backend.
-    # assert camera.backend == "AVFoundation framework iOS"
-    assert camera.backend == "VFW / V4L (Platform Dependent)"
+    if "Darwin" in sys.platform:
+        assert camera.backend == "AVFoundation framework iOS"
+
+    elif "Linux" in sys.platform:
+        assert camera.backend == "VFW / V4L (Platform Dependent)"
+
+    elif "win" in sys.platform:
+        assert camera.backend == "Microsoft Media Foundation"
+
+    else:
+        assert camera.backend == "Any"
 
 
 def test_grab_frame_errors(video_system_fixture):
-
     # Presets parameters that will be used by all errors
     camera_backend = CameraBackends.OPENCV
     camera_name = "Test Camera"
     save_frames = True
     camera_id = 0
 
-    # What does this even do? Seems like it is not needed
-    # video_system_fixture.add_camera(
-    #     camera_name=camera_name,
-    #     camera_id=camera_id,
-    #     camera_backend=camera_backend,
-    #     opencv_backend=opencv_backend,
-    #     save_frames=save_frames,
-    #     frame_width=frame_width,
-    # )
-    #
-    # camera_system = video_system_fixture._cameras[-1]
-    # camera = camera_system.camera
-    #
-    # camera.connect()
-    # frame = camera.grab_frame()
-
     # Connects to the camera manually to get the 'default' frame dimensions and framerate
-    camera = OpenCVCamera(name='Test')
+    camera = OpenCVCamera(name="Test OpenCV")
     camera.connect()
     actual_width = camera.width
     actual_height = camera.height
-    actual_fps = camera.fps
+    actual_fps = camera.fps  # 30.0
     camera.disconnect()
+
+    frame_height = 3000
+    message = (
+        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
+        f"configuring the camera to acquire frames using the provided frame_height {frame_height}, but the "
+        f"camera returned a test frame with height {actual_height}. This indicates that the camera "
+        f"does not support the requested frame height and width combination."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system_fixture.add_camera(
+            camera_name=camera_name,
+            camera_id=camera_id,
+            save_frames=save_frames,
+            frame_height=frame_height,
+            camera_backend=camera_backend,
+        )
 
     # Test one invalid parameter at a time. This is width.
     frame_width = 3000
@@ -300,24 +308,48 @@ def test_grab_frame_errors(video_system_fixture):
             camera_backend=camera_backend,
         )
 
+    monochrome = cv2.COLOR_BGR2GRAY
+    message = (
+        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
+        f"configuring the camera to acquire colored frames, but the camera returned a test frame with "
+        f"monochrome colorspace. This indicates that the camera does not support acquiring colored frames."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system_fixture.add_camera(
+            camera_name=camera_name,
+            camera_id=camera_id,
+            save_frames=save_frames,
+            frame_width=actual_width,
+            frame_height=actual_height,
+            camera_backend=camera_backend,
+            color=monochrome,
+        )
 
-#     harvester_ctipath = None
+    camera_backend = CameraBackends.HARVESTERS
+    camera_name = "Test Camera"
+    save_frames = True
+    camera_id = 0
 
-#     message = (
-#         f"Unable to instantiate a {camera_name} HarvestersCamera class object. Expected a Path object "
-#         f"pointing to the '.cti' file for cti_path argument, but got {harvester_ctipath} of "
-#         f"type {type(harvester_ctipath).__name__}."
-#     )
-#     with pytest.raises(ValueError, match=error_format(message)):
-#         VideoSystem.create_camera(
-#             camera_name=camera_name,
-#             camera_id=camera_id,
-#             cti_path=harvester_ctipath,
-#             frames_per_second=frames_per_second,
-#             frame_width=frame_width,
-#             frame_height=frame_height,
-#             camera_backend=CameraBackends.HARVESTERS,
-#         )
+    invalid_cti_path = None
+    camera = HarvestersCamera(name="Teset Harvesters", cti_path=invalid_cti_path)
+
+    camera.connect()
+
+    message = (
+        f"Unable to add a {camera_name} HarvestersCamera to the {video_system_fixture._name} VideoSystem. Expected the "
+        f"VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, but got None "
+        f"instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument when "
+        f"initializing the VideoSystem instance."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system_fixture.add_camera(
+            camera_name=camera_name,
+            camera_id=camera_id,
+            cti_path=invalid_cti_path,
+        )
+
+    camera.disconnect()
+
 
 #     harvester_invalid_suffix = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.zip")
 
