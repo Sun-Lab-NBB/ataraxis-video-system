@@ -1,5 +1,7 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
+import re
+import sys
 import copy
 import queue
 from pathlib import Path
@@ -13,8 +15,7 @@ from ataraxis_data_structures import DataLogger
 
 from ataraxis_video_system import VideoSystem
 from ataraxis_video_system.saver import VideoCodecs, ImageFormats, VideoFormats
-from ataraxis_video_system.camera import OpenCVCamera, CameraBackends, HarvestersCamera
-import sys
+from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
 
 """
 1) init
@@ -24,6 +25,21 @@ import sys
 5) add_saver + errors
 -
 """
+
+
+def check_opencv():
+    """Returns True if the system has access to an OpenCV-compatible camera.
+
+    This is used to disable saver tests that rely on the presence of an OpenCV-compatible camera when no valid hardware
+    is available.
+    """
+    # noinspection PyBroadException
+    try:
+        opencv_id = VideoSystem.get_opencv_ids()
+        assert len(opencv_id) > 0  # If no IDs are discovered, this means there are no OpenCV cameras.
+        return True
+    except:
+        return False
 
 
 @pytest.fixture()
@@ -58,30 +74,50 @@ def video_system_fixture(logger_queue_fixture):
 
 
 def test_init_errors(logger_queue_fixture):
+    system_name = "Test system"
     invalid_system_name = 12
 
     message = (
         f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
         f"{invalid_system_name} of type {type(invalid_system_name).__name__}."
     )
-
-    # You cant do this circular raise design, this is mega evil
-    # with pytest.raises(TypeError, match=message):
-    #     video_system_fixture(
-    #         system_id=video_system_fixture._id,
-    #         system_name=invalid_system_name,
-    #         system_description=video_system_fixture._description,
-    #         logger_queue=video_system_fixture._logger_queue,
-    #         output_directory=video_system_fixture._output_directory,
-    #     )
-
-    # This is good
     with pytest.raises(TypeError, match=message):
         VideoSystem(
             system_id=np.uint8(1),
             system_name=invalid_system_name,
-            system_description='Will be deprecated',
+            system_description="Will be deprecated",
             logger_queue=logger_queue_fixture,
+        )
+
+    invalid_system_id = "str"
+    message = (
+        f"Unable to initialize the {system_name} VideoSystem class instance. Expected a uint8 system_id, but "
+        f"encountered {invalid_system_id} of type {type(invalid_system_id).__name__}."
+    )
+    with pytest.raises(TypeError, match=message):
+        VideoSystem(
+            system_id=invalid_system_id,
+            system_name=system_name,
+            system_description="Will be deprecated",
+            logger_queue=logger_queue_fixture,
+        )
+
+    invalid_cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.zip")
+
+    message = (
+        f"Unable to initialize the {system_name} VideoSystem class instance. Expected the path to an existing "
+        f"file with a '.cti' suffix or None for harvesters_cti_path, but encountered {invalid_cti_path} of "
+        f"type {type(invalid_cti_path).__name__}. If a valid path was provided, this error is likely due to "
+        f"the file not existing or not being accessible."
+    )
+
+    with pytest.raises(TypeError, match=message):
+        VideoSystem(
+            system_id=np.uint8(1),
+            system_name=system_name,
+            system_description="Will be deprecated",
+            logger_queue=logger_queue_fixture,
+            harvesters_cti_path=invalid_cti_path,
         )
 
 
@@ -188,14 +224,11 @@ def test_add_camera(video_system_fixture):
 def test_opencv_backend_assignment(video_system_fixture):
     """Test that opencv_backend is correctly assigned when None is provided and camera_backend is OPENCV."""
 
-    # I'm not sure how to do this because addcamera does not have opencv_backend. Like for each backend how do
-    # do I create a valid camera? Do I create a an OpenCVCamera or HarvestsersCamera then add it in?
-
     # Camera does have a backend, you just did not understand how it works. _cameras is a tuple of CameraSystem objects.
     # CameraSystem contains 'camera' field, which is the OpenCVCamera object and some other information.
 
-    # Add a guard here to prevent running the test if no OpenCVCameras are available. I have that code in the
-    # camera_test file, just copy it into this file.
+    if not check_opencv():
+        pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
     camera_backend = CameraBackends.OPENCV
     opencv_backend = None
@@ -206,7 +239,6 @@ def test_opencv_backend_assignment(video_system_fixture):
         save_frames=False,
         camera_backend=camera_backend,
         opencv_backend=opencv_backend,
-        save_frames=True,
     )
 
     # This is how you access a camera
@@ -214,8 +246,57 @@ def test_opencv_backend_assignment(video_system_fixture):
     camera = camera_system.camera
 
     # And this is how you check the backend. The Backend property returns a string-representation of the backend code.
-    # for the default backend, this will be this string-representation of 'Any' backend.
+    # # for the default backend, this will be this string-representation of 'Any' backend.
+    # assert camera.backend == "AVFoundation framework iOS"
     assert camera.backend == "VFW / V4L (Platform Dependent)"
+
+
+def test_grab_frame_errors(video_system_fixture):
+    
+    camera_backend = CameraBackends.OPENCV
+    opencv_backend = cv2.CAP_ANY
+    camera_name = "Test Camera"
+    frame_width = 600
+    frame_height = 400
+    save_frames = True
+    camera_id = 0
+    acquisition_frame_rate = 30
+
+    video_system_fixture.add_camera(
+        camera_name=camera_name,
+        camera_id=camera_id,
+        camera_backend=camera_backend,
+        opencv_backend=opencv_backend,
+        save_frames=save_frames,
+        frame_width=frame_width,
+    )
+
+    camera_system = video_system_fixture._cameras[-1]
+    camera = camera_system.camera
+
+    camera.connect()
+    frame = camera.grab_frame()
+
+    message = (
+        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
+        f"configuring the camera to acquire frames using the provided frame_width {frame_width}, but the "
+        f"camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
+        f"does not support the requested frame width."
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system_fixture.add_camera(
+            camera_name=camera_name,
+            camera_id=camera_id,
+            acquisition_frame_rate=acquisition_frame_rate,
+            save_frames=save_frames,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            opencv_backend=opencv_backend,
+            output_frames=True,
+        )
+
+    camera.disconnect()
 
 
 #     harvester_ctipath = None
@@ -253,22 +334,6 @@ def test_opencv_backend_assignment(video_system_fixture):
 #             frame_height=frame_height,
 #             camera_backend=CameraBackends.HARVESTERS,
 #         )
-
-
-# def test_openCV_default_parameters():
-#     """Verifies that the default openCV backend is used if the openCV backend is not specified"""
-
-#     camera = VideoSystem.create_camera(
-#         camera_name="Test Camera",
-#         camera_id=2,
-#         frames_per_second=30,
-#         frame_width=600,
-#         frame_height=400,
-#         opencv_backend=None,
-#     )
-
-#     opencv_backend = int(cv2.CAP_ANY)
-#     assert opencv_backend == int(cv2.CAP_ANY)
 
 
 # def test_mock_default_parameters():
