@@ -81,7 +81,7 @@ def test_init_errors(logger_queue_fixture):
         f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
         f"{invalid_system_name} of type {type(invalid_system_name).__name__}."
     )
-    with pytest.raises(TypeError, match=message):
+    with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
             system_name=invalid_system_name,
@@ -94,7 +94,7 @@ def test_init_errors(logger_queue_fixture):
         f"Unable to initialize the {system_name} VideoSystem class instance. Expected a uint8 system_id, but "
         f"encountered {invalid_system_id} of type {type(invalid_system_id).__name__}."
     )
-    with pytest.raises(TypeError, match=message):
+    with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
             system_id=invalid_system_id,
             system_name=system_name,
@@ -111,7 +111,7 @@ def test_init_errors(logger_queue_fixture):
         f"the file not existing or not being accessible."
     )
 
-    with pytest.raises(TypeError, match=message):
+    with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
             system_name=system_name,
@@ -252,51 +252,53 @@ def test_opencv_backend_assignment(video_system_fixture):
 
 
 def test_grab_frame_errors(video_system_fixture):
-    
+
+    # Presets parameters that will be used by all errors
     camera_backend = CameraBackends.OPENCV
-    opencv_backend = cv2.CAP_ANY
     camera_name = "Test Camera"
-    frame_width = 600
-    frame_height = 400
     save_frames = True
     camera_id = 0
-    acquisition_frame_rate = 30
 
-    video_system_fixture.add_camera(
-        camera_name=camera_name,
-        camera_id=camera_id,
-        camera_backend=camera_backend,
-        opencv_backend=opencv_backend,
-        save_frames=save_frames,
-        frame_width=frame_width,
-    )
+    # What does this even do? Seems like it is not needed
+    # video_system_fixture.add_camera(
+    #     camera_name=camera_name,
+    #     camera_id=camera_id,
+    #     camera_backend=camera_backend,
+    #     opencv_backend=opencv_backend,
+    #     save_frames=save_frames,
+    #     frame_width=frame_width,
+    # )
+    #
+    # camera_system = video_system_fixture._cameras[-1]
+    # camera = camera_system.camera
+    #
+    # camera.connect()
+    # frame = camera.grab_frame()
 
-    camera_system = video_system_fixture._cameras[-1]
-    camera = camera_system.camera
-
+    # Connects to the camera manually to get the 'default' frame dimensions and framerate
+    camera = OpenCVCamera(name='Test')
     camera.connect()
-    frame = camera.grab_frame()
+    actual_width = camera.width
+    actual_height = camera.height
+    actual_fps = camera.fps
+    camera.disconnect()
 
+    # Test one invalid parameter at a time. This is width.
+    frame_width = 3000
     message = (
-        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
-        f"configuring the camera to acquire frames using the provided frame_width {frame_width}, but the "
-        f"camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
-        f"does not support the requested frame width."
+        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture.name} VideoSystem. "
+        f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, but the "
+        f"camera returned a test frame with width {actual_width}. This indicates that the camera "
+        f"does not support the requested frame height and width combination."
     )
-
     with pytest.raises(ValueError, match=error_format(message)):
         video_system_fixture.add_camera(
             camera_name=camera_name,
             camera_id=camera_id,
-            acquisition_frame_rate=acquisition_frame_rate,
             save_frames=save_frames,
             frame_width=frame_width,
-            frame_height=frame_height,
-            opencv_backend=opencv_backend,
-            output_frames=True,
+            camera_backend=camera_backend,
         )
-
-    camera.disconnect()
 
 
 #     harvester_ctipath = None

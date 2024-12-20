@@ -179,6 +179,9 @@ class VideoSystem:
         output_directory: Optional[Path] = None,
         harvesters_cti_path: Optional[Path] = None,
     ):
+        # Has to be set first to avoid stop method errors
+        self._started: bool = False  # Tracks whether the system has active processes
+
         # Resolves the system-name first, to use it in further error messages
         if not isinstance(system_name, str):
             message = (
@@ -225,8 +228,6 @@ class VideoSystem:
         self._cameras: list[_CameraSystem] = []
         self._savers: list[_SaverSystem] = []
         self._reserved_sources: set[int] = set()  # This is used to ensure that each saver has a unique camera source.
-
-        self._started: bool = False  # Tracks whether the system has active processes
 
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
