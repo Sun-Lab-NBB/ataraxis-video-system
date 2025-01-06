@@ -40,7 +40,7 @@ def test_image_saver_repr(tmp_path):
     """Verifies the functioning of the ImageSaver class __repr__ method."""
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
     camera.connect()
 
@@ -70,7 +70,7 @@ def test_image_saver_save_frame_errors(tmp_path):
     """Verifies the error handling of the ImageSaver save_frame() method."""
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
 
     # Generates a test frame
@@ -102,7 +102,7 @@ def test_save_image(image_format, tmp_path):
     """
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)
     saver = ImageSaver(output_directory=tmp_path, image_format=image_format, jpeg_quality=100)
 
     # Connects to the camera and grabs the test frame
@@ -164,7 +164,7 @@ def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_for
         pytest.skip(f"Skipping this test as it requires an NVIDIA GPU.")
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=2, height=2)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)
     output_path = tmp_path
     saver = VideoSaver(
         output_directory=output_path,
@@ -202,7 +202,7 @@ def test_video_saver_save_frame_errors(tmp_path):
     """Verifies the error handling of the VideoSaver save_frame() and create_live_video_encoder() methods."""
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=False, fps=1000, width=400, height=400)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = VideoSaver(
         output_directory=tmp_path,
         hardware_encoding=False,
@@ -244,7 +244,7 @@ def test_create_video_from_image_folder(tmp_path):
     images_directory = tmp_path.joinpath("TestImages")
 
     # Setup
-    camera = MockCamera(name="Test Camera", camera_id=1, color=True, fps=1000, width=400, height=400)
+    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=400, height=400)
     saver = VideoSaver(
         output_directory=video_directory,
         hardware_encoding=False,

@@ -1,33 +1,28 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
-import re
-import sys
-import copy
-import queue
+from copy import copy
 from pathlib import Path
-import tempfile
+import subprocess
 
-import cv2
 import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import DataLogger
 
 from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.saver import VideoCodecs, ImageFormats, VideoFormats
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
+from ataraxis_video_system.saver import (
+    VideoCodecs,
+    ImageFormats,
+    VideoFormats,
+    CPUEncoderPresets,
+    GPUEncoderPresets,
+    InputPixelFormats,
+    OutputPixelFormats,
+)
+from ataraxis_video_system.camera import OpenCVCamera, CameraBackends
 
-"""
-1) init
-2) init_error
-3) repr+ property
-4) add_saver 
-5) add_saver + errors
--
-"""
 
-
-def check_opencv():
+def check_opencv() -> bool:
     """Returns True if the system has access to an OpenCV-compatible camera.
 
     This is used to disable saver tests that rely on the presence of an OpenCV-compatible camera when no valid hardware
@@ -42,519 +37,660 @@ def check_opencv():
         return False
 
 
+def check_harvesters(cti_path: Path) -> bool:
+    """Returns True if the system has access to a Harvesters (GeniCam-compatible) camera.
+
+    Args:
+        cti_path: The path to the CTI file to use for GeniCam camera connection.
+
+    This is used to disable saver tests that rely on the presence of a Harvesters-compatible camera when no valid
+    hardware is available.
+    """
+
+    # If the CTI file does not exist, it is impossible to interface with Harvesters cameras, even if they exist.
+    if not cti_path.exists():
+        return False
+
+    try:
+        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
+        assert len(harvesters_id) > 0  # If no IDs are discovered, this means there are no Harvesters cameras.
+        return True
+    except:
+        return False
+
+
+def check_nvidia():
+    """Returns True if the system has access to an NVIDIA GPU.
+
+    This is used to disable saver tests that rely on the presence of an NVIDIA GPU to use hardware encoding.
+    """
+    try:
+        subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
+        return True
+    # If the process fails, this likely means nvidia-smi is not available and, therefore, the system does not have
+    # access to an NVIDIA GPU.
+    except Exception:
+        return False
+
+
 @pytest.fixture()
-def logger_queue_fixture(tmp_path):
-    """
-    Fixture for DataLogger's input queue.
-    """
+def data_logger(tmp_path) -> DataLogger:
+    """Generates a DataLogger class instance and returns it to caller."""
     data_logger = DataLogger(output_directory=tmp_path)
-    return DataLogger.input_queue
+    return data_logger
 
 
 @pytest.fixture
-def video_system_fixture(logger_queue_fixture):
-    """
-    Fixture for creating an instance of VideoSystem.
-    """
+def video_system(tmp_path, data_logger) -> VideoSystem:
+    """Creates a VideoSystem instance and returns it to caller."""
+
     system_id = np.uint8(1)
-    system_name = "Test System"
-    system_description = "Video system initialization test"
-    logger_queue = logger_queue_fixture
-    output_directory = Path("")
+    output_directory = tmp_path.joinpath("test_output_directory")
+
+    # If the local harvesters CTI file does not exist, sets the path to None to prevent initialization errors due to
+    # a missing CTI path
     harvesters_cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
+    if not check_harvesters(harvesters_cti_path):
+        harvesters_cti_path = None
 
     return VideoSystem(
         system_id=system_id,
-        system_name=system_name,
-        system_description=system_description,
-        logger_queue=logger_queue,
+        data_logger=data_logger,
         output_directory=output_directory,
         harvesters_cti_path=harvesters_cti_path,
     )
 
 
-def test_init_errors(logger_queue_fixture):
-    system_name = "Test system"
-    invalid_system_name = 12
-
-    message = (
-        f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
-        f"{invalid_system_name} of type {type(invalid_system_name).__name__}."
+def test_init_repr(tmp_path, data_logger):
+    """Verifies the functioning of the VideoSystem __init__() and __repr__() methods."""
+    vs_instance = VideoSystem(
+        system_id=np.uint8(1),
+        data_logger=data_logger,
+        output_directory=tmp_path.joinpath("test_output_directory"),
+        harvesters_cti_path=None,
     )
-    with pytest.raises(TypeError, match=error_format(message)):
-        VideoSystem(
-            system_id=np.uint8(1),
-            system_name=invalid_system_name,
-            system_description="Will be deprecated",
-            logger_queue=logger_queue_fixture,
-        )
 
+    # Verifies class properties
+    assert vs_instance.system_id == np.uint8(1)
+    assert not vs_instance.started
+
+    # Verifies the __repr()__ method
+    representation_string: str = f"VideoSystem(id={np.uint8(1)}, started={False}, camera_count={0}, saver_count={0})"
+    assert repr(vs_instance) == representation_string
+
+
+def test_init_errors(data_logger):
+    """Verifies the error handling behavior of the VideoSystem initialization method."""
+
+    # Invalid ID input
     invalid_system_id = "str"
     message = (
-        f"Unable to initialize the {system_name} VideoSystem class instance. Expected a uint8 system_id, but "
-        f"encountered {invalid_system_id} of type {type(invalid_system_id).__name__}."
+        f"Unable to initialize the VideoSystem class instance. Expected a uint8 integer as system_id argument, "
+        f"but encountered {invalid_system_id} of type {type(invalid_system_id).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
         VideoSystem(
             system_id=invalid_system_id,
-            system_name=system_name,
-            system_description="Will be deprecated",
-            logger_queue=logger_queue_fixture,
+            data_logger=data_logger,
         )
 
+    # Invalid CTI extension
     invalid_cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.zip")
-
     message = (
-        f"Unable to initialize the {system_name} VideoSystem class instance. Expected the path to an existing "
+        f"Unable to initialize the VideoSystem instance with id {np.uint8(1)}. Expected the path to an existing "
         f"file with a '.cti' suffix or None for harvesters_cti_path, but encountered {invalid_cti_path} of "
         f"type {type(invalid_cti_path).__name__}. If a valid path was provided, this error is likely due to "
         f"the file not existing or not being accessible."
     )
-
     with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
-            system_name=system_name,
-            system_description="Will be deprecated",
-            logger_queue=logger_queue_fixture,
+            data_logger=data_logger,
             harvesters_cti_path=invalid_cti_path,
         )
 
-
-def test_repr(video_system_fixture):
-    """Verifies that the correct string representation of the VideoSystem class instance is returned"""
-
-    representation_string: str = (
-        f"VideoSystem(name={video_system_fixture._name}, running={video_system_fixture._started}, "
-        f"camera_count={len(video_system_fixture._cameras)}, saver_count={len(video_system_fixture._savers)})"
+    # Non-existent CTI file
+    invalid_cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducerNoExist")
+    message = (
+        f"Unable to initialize the VideoSystem instance with id {np.uint8(1)}. Expected the path to an existing "
+        f"file with a '.cti' suffix or None for harvesters_cti_path, but encountered {invalid_cti_path} of "
+        f"type {type(invalid_cti_path).__name__}. If a valid path was provided, this error is likely due to "
+        f"the file not existing or not being accessible."
     )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            harvesters_cti_path=invalid_cti_path,
+        )
 
-    assert repr(video_system_fixture) == representation_string
+    # Invalid data_logger input
+    invalid_data_logger = None
+    message = (
+        f"Unable to initialize the VideoSystem instance with id {np.uint8(1)}. Expected an initialized DataLogger "
+        f"instance for 'data_logger' argument, but encountered {invalid_data_logger} of type "
+        f"{type(invalid_data_logger).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=invalid_data_logger,
+        )
+
+    # Invalid output_directory input
+    invalid_output_directory = str("Not a Path")
+    message = (
+        f"Unable to initialize the VideoSystem instance with id {np.uint8(1)}. Expected a Path instance or None "
+        f"for 'output_directory' argument, but encountered {invalid_output_directory} of type "
+        f"{type(invalid_output_directory).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        VideoSystem(system_id=np.uint8(1), data_logger=data_logger, output_directory=invalid_output_directory)
 
 
-def test_add_camera(video_system_fixture):
-    """Verifies that a camera cannot be created if the input arguments do not correspond to criteria of a given backend"""
+@pytest.mark.xdist_group(name="group2")
+@pytest.mark.parametrize(
+    "backend",
+    [
+        CameraBackends.MOCK,
+        CameraBackends.OPENCV,
+        CameraBackends.HARVESTERS,
+    ],
+)
+def test_add_camera(backend, video_system):
+    """Verifies the functioning of the VideoSystem add_camera() method for all supported camera backends."""
+    if backend == CameraBackends.OPENCV and not check_opencv():
+        pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
-    camera_name = "Test Camera"
-    camera_id = 2
-    acquisition_frame_rate = 30
-    frame_width = 600
-    frame_height = 400
+    if backend == CameraBackends.HARVESTERS and video_system._cti_path is None:
+        pytest.skip(f"Skipping this test as it requires a harvesters-compatible camera.")
+
+    # Adds the tested camera to the VideoSystem instance
+    video_system.add_camera(camera_id=np.uint8(222), save_frames=True, color=False, camera_backend=backend)
+
+    # Regardless of the first camera type, adds the second camera to simulate multi-camera setup
+    video_system.add_camera(camera_id=np.uint8(111), save_frames=False, color=True, camera_backend=CameraBackends.MOCK)
+
+    # Verifies that the cameras have been added to the VideoSystem instance
+    assert len(video_system._cameras) == 2
+
+
+def test_add_camera_errors(video_system):
+    """Verifies the error handling behavior of the VideoSystem add_camera() method.
+
+    Note, this function does not verify invalid OpenCV camera configuration. These errors are tested via a separate
+    function
+    """
+
+    # Defines arguments that are reused by all test calls
+    camera_id = np.uint8(1)
     save_frames = True
 
-    invalid_name = 1
+    # Verifies general function arguments. They are used for all camera backends
+    # Invalid Camera ID
+    invalid_id = 1  # Not an uint8
     message = (
-        f"Unable to add the Camera object to the {video_system_fixture._name} VideoSystem. Expected a string for camera_name "
-        f"argument, but got {invalid_name} of type {type(invalid_name).__name__}."
+        f"Unable to add the Camera object to the VideoSystem with id {video_system._id}. Expected a numpy uint8 for "
+        f"camera_id argument, but got {invalid_id} of type {type(invalid_id).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(camera_name=invalid_name, save_frames=save_frames)
+        # noinspection PyTypeChecker
+        video_system.add_camera(camera_id=invalid_id, save_frames=save_frames)
 
-    invalid_camera_id = "str"
-
+    # Invalid camera index
+    invalid_index = "str"
     message = (
-        f"Unable to add the {camera_name} Camera object to the {video_system_fixture._name} VideoSystem. Expected an integer "
-        f"for camera_id argument, but got {invalid_camera_id} of type {type(invalid_camera_id).__name__}."
+        f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {video_system._id}. Expected an "
+        f"integer for camera_id argument, but got {invalid_index} of type {type(invalid_index).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(camera_name=camera_name, camera_id=invalid_camera_id, save_frames=save_frames)
+        # noinspection PyTypeChecker
+        video_system.add_camera(camera_id=camera_id, save_frames=save_frames, camera_index=invalid_index)
 
+    # Invalid fps rate
     invalid_acquisition_frame_rate = "str"
     message = (
-        f"Unable to add the {camera_name} Camera object to the {video_system_fixture._name} VideoSystem. Expected an integer, "
-        f"float or None for acquisition_frame_rate argument, but got {invalid_acquisition_frame_rate} of type "
+        f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {video_system._id}. Expected an "
+        f"integer, float or None for acquisition_frame_rate argument, but got {invalid_acquisition_frame_rate} of type "
         f"{type(invalid_acquisition_frame_rate).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        # noinspection PyTypeChecker
+        video_system.add_camera(
             camera_id=camera_id,
-            acquisition_frame_rate=invalid_acquisition_frame_rate,
             save_frames=save_frames,
+            acquisition_frame_rate=invalid_acquisition_frame_rate,
         )
 
+    # Invalid frame width
     invalid_frame_width = "str"
     message = (
-        f"Unable to add the {camera_name} Camera object to the {video_system_fixture._name} VideoSystem. Expected an integer "
-        f"or None for frame_width argument, but got {invalid_frame_width} of type {type(invalid_frame_width).__name__}."
+        f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {video_system._id}. Expected an "
+        f"integer or None for frame_width argument, but got {invalid_frame_width} of type "
+        f"{type(invalid_frame_width).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        # noinspection PyTypeChecker
+        video_system.add_camera(
             camera_id=camera_id,
-            acquisition_frame_rate=acquisition_frame_rate,
-            frame_width=invalid_frame_width,
             save_frames=save_frames,
+            frame_width=invalid_frame_width,
         )
 
+    # Invalid frame height
     invalid_frame_height = "str"
     message = (
-        f"Unable to add the {camera_name} Camera object to the {video_system_fixture._name} VideoSystem. Expected an integer "
-        f"or None for frame_height argument, but got {invalid_frame_height} of type {type(invalid_frame_height).__name__}."
+        f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {video_system._id}. Expected an "
+        f"integer or None for frame_height argument, but got {invalid_frame_height} of type "
+        f"{type(invalid_frame_height).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        # noinspection PyTypeChecker
+        video_system.add_camera(
             camera_id=camera_id,
-            acquisition_frame_rate=acquisition_frame_rate,
-            frame_width=frame_width,
-            frame_height=invalid_frame_height,
             save_frames=save_frames,
+            frame_height=invalid_frame_height,
         )
 
+    # Invalid OpenCV backend code for OpenCV camera
     opencv_backend = "2.0"
     message = (
-        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Expected "
-        f"an integer or None for opencv_backend argument, but got {opencv_backend} of type "
+        f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
+        f"Expected an integer or None for opencv_backend argument, but got {opencv_backend} of type "
         f"{type(opencv_backend).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        # noinspection PyTypeChecker
+        video_system.add_camera(
             camera_id=camera_id,
-            acquisition_frame_rate=acquisition_frame_rate,
-            frame_width=frame_width,
-            frame_height=frame_height,
-            opencv_backend=opencv_backend,
             save_frames=save_frames,
-            output_frames=True,
+            camera_backend=CameraBackends.OPENCV,
+            opencv_backend=opencv_backend,
         )
 
+    # Harvesters CTI path set to None for Harvesters camera.
+    message = (
+        f"Unable to add HarvestersCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
+        f"Expected the VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, "
+        f"but got None instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument "
+        f"when initializing the VideoSystem instance."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        # Resets the CTI path to simulate a scenario where it's not provided
+        original_cti_path = copy(video_system._cti_path)
+        video_system._cti_path = None
+        video_system.add_camera(
+            camera_id=camera_id,
+            save_frames=save_frames,
+            camera_backend=CameraBackends.HARVESTERS,
+        )
+        video_system._cti_path = original_cti_path  # Restores the CTI path
 
-def test_opencv_backend_assignment(video_system_fixture):
-    """Test that opencv_backend is correctly assigned when None is provided and camera_backend is OPENCV."""
 
-    # Camera does have a backend, you just did not understand how it works. _cameras is a tuple of CameraSystem objects.
-    # CameraSystem contains 'camera' field, which is the OpenCVCamera object and some other information.
+@pytest.mark.xdist_group(name="group2")
+def test_opencvcamera_configuration_errors(video_system):
+    """Verifies that add_camera() method correctly catches errors related to OpenCV camera configuration."""
 
+    # Skips the test if OpenCV-compatible hardware is not available.
     if not check_opencv():
         pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
-    camera_backend = CameraBackends.OPENCV
-    opencv_backend = None
-
-    video_system_fixture.add_camera(
-        camera_name="Test Camera",
-        camera_id=0,
-        save_frames=False,
-        camera_backend=camera_backend,
-        opencv_backend=opencv_backend,
-    )
-
-    # This is how you access a camera
-    camera_system = video_system_fixture._cameras[-1]
-    camera = camera_system.camera
-
-    # And this is how you check the backend. The Backend property returns a string-representation of the backend code.
-    # # for the default backend, this will be this string-representation of 'Any' backend.
-    if "Darwin" in sys.platform:
-        assert camera.backend == "AVFoundation framework iOS"
-
-    elif "Linux" in sys.platform:
-        assert camera.backend == "VFW / V4L (Platform Dependent)"
-
-    elif "win" in sys.platform:
-        assert camera.backend == "Microsoft Media Foundation"
-
-    else:
-        assert camera.backend == "Any"
-
-
-def test_grab_frame_errors(video_system_fixture):
     # Presets parameters that will be used by all errors
     camera_backend = CameraBackends.OPENCV
-    camera_name = "Test Camera"
+    camera_id = np.uint8(111)
     save_frames = True
-    camera_id = 0
+    camera_index = 0
 
     # Connects to the camera manually to get the 'default' frame dimensions and framerate
-    camera = OpenCVCamera(name="Test OpenCV")
+    camera = OpenCVCamera(camera_id=np.uint8(111))
     camera.connect()
     actual_width = camera.width
     actual_height = camera.height
-    actual_fps = camera.fps  # 30.0
+    actual_fps = camera.fps
     camera.disconnect()
 
+    # Unsupported frame height
     frame_height = 3000
     message = (
-        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
-        f"configuring the camera to acquire frames using the provided frame_height {frame_height}, but the "
-        f"camera returned a test frame with height {actual_height}. This indicates that the camera "
-        f"does not support the requested frame height and width combination."
+        f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
+        f"Attempted configuring the camera to acquire frames using the provided frame_height "
+        f"{frame_height}, but the camera returned a test frame with height {actual_height}. This "
+        f"indicates that the camera does not support the requested frame height and width combination."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
             camera_id=camera_id,
+            camera_index=camera_index,
             save_frames=save_frames,
             frame_height=frame_height,
+            frame_width=actual_width,
             camera_backend=camera_backend,
         )
 
-    # Test one invalid parameter at a time. This is width.
+    # Unsupported frame width
     frame_width = 3000
     message = (
-        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture.name} VideoSystem. "
-        f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, but the "
-        f"camera returned a test frame with width {actual_width}. This indicates that the camera "
+        f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
+        f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, "
+        f"but the camera returned a test frame with width {actual_width}. This indicates that the camera "
         f"does not support the requested frame height and width combination."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
             camera_id=camera_id,
+            camera_index=camera_index,
             save_frames=save_frames,
+            frame_height=actual_height,
             frame_width=frame_width,
             camera_backend=camera_backend,
         )
 
-    monochrome = cv2.COLOR_BGR2GRAY
+    # Unsupported fps
+    fps = 3000
     message = (
-        f"Unable to add the {camera_name} OpenCVCamera object to the {video_system_fixture._name} VideoSystem. Attempted "
-        f"configuring the camera to acquire colored frames, but the camera returned a test frame with "
-        f"monochrome colorspace. This indicates that the camera does not support acquiring colored frames."
+        f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
+        f"Attempted configuring the camera to acquire frames at the rate of {fps} frames per second, but the camera "
+        f"automatically adjusted the framerate to {actual_fps}. This indicates that the camera does not support the "
+        f"requested framerate."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
             camera_id=camera_id,
+            camera_index=camera_index,
             save_frames=save_frames,
-            frame_width=actual_width,
-            frame_height=actual_height,
+            acquisition_frame_rate=fps,
             camera_backend=camera_backend,
-            color=monochrome,
         )
 
-    camera_backend = CameraBackends.HARVESTERS
-    camera_name = "Test Camera"
-    save_frames = True
-    camera_id = 0
+    # Since our camera can do both color and monochrome imaging, we cannot test failure to assign colored or monochrome
+    # imaging mode here.
 
-    invalid_cti_path = None
-    camera = HarvestersCamera(name="Teset Harvesters", cti_path=invalid_cti_path)
 
-    camera.connect()
+def test_add_image_saver(video_system):
+    """Verifies the functioning of the VideoSystem add_image_saver() method."""
 
+    # Adds an image saver instance to the VideoSystem instance
+    video_system.add_image_saver(
+        source_id=np.uint8(222), image_format=ImageFormats.PNG, png_compression=9, thread_count=15
+    )
+
+    # Also adds a second saver to simulate multi-saver setup
+    video_system.add_image_saver(source_id=np.uint8(111), image_format=ImageFormats.JPG, jpeg_quality=90)
+
+    # Verifies that the savers have been added to the VideoSystem instance
+    assert len(video_system._savers) == 2
+
+
+def test_add_image_saver_errors(video_system):
+    """Verifies the error handling behavior of the VideoSystem add_image_saver() method."""
+
+    # Defines arguments that are reused by multiple tests
+    source_id = np.uint8(111)
+
+    # Invalid source id
+    invalid_source_id = "str"
     message = (
-        f"Unable to add a {camera_name} HarvestersCamera to the {video_system_fixture._name} VideoSystem. Expected the "
-        f"VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, but got None "
-        f"instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument when "
-        f"initializing the VideoSystem instance."
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected a numpy uint8 "
+        f"integer for source_id argument, but got {invalid_source_id} of type {type(invalid_source_id).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=invalid_source_id)
+
+    # Invalid output path
+    # Resets the output path to None
+    original_output_directory = copy(video_system._output_directory)
+    video_system._output_directory = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected a valid Path "
+        f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
+        f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
+        f"you intend to save camera frames."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id)
+    video_system._output_directory = original_output_directory  # Restores the original output directory
+
+    # Invalid image format
+    image_format = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected an ImageFormats "
+        f"instance for image_format argument, but got {image_format} of type {type(image_format).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, image_format=image_format)
+
+    # Invalid tiff compression strategy
+    tiff_compression_strategy = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected an integer for "
+        f"tiff_compression_strategy argument, but got {tiff_compression_strategy} of type "
+        f"{type(tiff_compression_strategy).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, tiff_compression_strategy=tiff_compression_strategy)
+
+    # Invalid jpeg quality
+    jpeg_quality = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected an integer "
+        f"between 0 and 100 for jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, jpeg_quality=jpeg_quality)
+
+    # Invalid jpeg sampling factor
+    jpeg_sampling_factor = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected one of the "
+        f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_*' constants for jpeg_sampling_factor argument, but got "
+        f"{jpeg_sampling_factor} of type {type(jpeg_sampling_factor).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, jpeg_sampling_factor=jpeg_sampling_factor)
+
+    # Invalid png compression
+    png_compression = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected an integer "
+        f"between 0 and 9 for png_compression argument, but got {png_compression} of type "
+        f"{type(png_compression).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, png_compression=png_compression)
+
+    # Invalid thread count
+    thread_count = None
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. Expected an integer "
+        f"greater than 0 for thread_count argument, but got {thread_count} of type {type(thread_count).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_image_saver(source_id=source_id, thread_count=thread_count)
+
+    # Verifies that using the same source_id more than once produces an error
+    video_system.add_image_saver(source_id=source_id)
+    message = (
+        f"Unable to add the ImageSaver object to the VideoSystem with id {video_system._id}. The camera with index "
+        f"{source_id} is already matched with a saver class instance. Currently, each saver instance has to "
+        f"use a single unique camera source."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        video_system_fixture.add_camera(
-            camera_name=camera_name,
-            camera_id=camera_id,
-            cti_path=invalid_cti_path,
+        video_system.add_image_saver(source_id=source_id)
+
+
+def test_add_video_saver(video_system):
+    """Verifies the functioning of the VideoSystem add_video_saver() method."""
+
+    # Adds a video saver instance to the VideoSystem instance. If the system has an NVIDIA gpu, the first saver is a
+    # GPU saver. Otherwise, both savers are CPU savers.
+    if not check_nvidia():
+        video_system.add_video_saver(
+            source_id=np.uint8(222),
+            hardware_encoding=True,
+            video_format=VideoFormats.MP4,
+            video_codec=VideoCodecs.H265,
+            preset=GPUEncoderPresets.FASTEST,
+            input_pixel_format=InputPixelFormats.BGR,
+            output_pixel_format=OutputPixelFormats.YUV444,
+            quantization_parameter=5,
+            gpu=0,
+        )
+    else:
+        video_system.add_video_saver(
+            source_id=np.uint8(222),
+            hardware_encoding=False,
+            video_format=VideoFormats.MP4,
+            video_codec=VideoCodecs.H265,
+            preset=CPUEncoderPresets.ULTRAFAST,
+            input_pixel_format=InputPixelFormats.BGR,
+            output_pixel_format=OutputPixelFormats.YUV444,
+            quantization_parameter=5,
         )
 
-    camera.disconnect()
+    # Also adds a second saver to simulate multi-saver setup. This is always a CPU saver.
+    video_system.add_video_saver(
+        source_id=np.uint8(111),
+        hardware_encoding=False,
+        video_format=VideoFormats.MKV,
+        video_codec=VideoCodecs.H264,
+        preset=CPUEncoderPresets.SLOW,
+        input_pixel_format=InputPixelFormats.MONOCHROME,
+        output_pixel_format=OutputPixelFormats.YUV420,
+        quantization_parameter=15,
+    )
+
+    # Verifies that the savers have been added to the VideoSystem instance
+    assert len(video_system._savers) == 2
 
 
-#     harvester_invalid_suffix = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.zip")
+def test_add_video_saver_errors(video_system):
+    """Verifies the error handling behavior of the VideoSystem add_video_saver() method."""
 
-#     message = (
-#         f"Unable to instantiate a {camera_name} HarvestersCamera class object. Expected a Path object "
-#         f"pointing to the '.cti' file for cti_path argument, but got {harvester_invalid_suffix} of "
-#         f"type {type(harvester_invalid_suffix).__name__}."
-#     )
-#     with pytest.raises(ValueError, match=error_format(message)):
-#         VideoSystem.create_camera(
-#             camera_name=camera_name,
-#             camera_id=camera_id,
-#             cti_path=harvester_invalid_suffix,
-#             frames_per_second=frames_per_second,
-#             frame_width=frame_width,
-#             frame_height=frame_height,
-#             camera_backend=CameraBackends.HARVESTERS,
-#         )
+    # Defines arguments that are reused by multiple tests
+    source_id = np.uint8(111)
 
+    # Invalid source id
+    invalid_source_id = "str"
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a numpy uint8 "
+        f"integer for source_id argument, but got {invalid_source_id} of type {type(invalid_source_id).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=invalid_source_id)
 
-# def test_mock_default_parameters():
-#     """Verifies that the default mock camera values for the frame height, width and fps are used if not specified"""
+    # Invalid output path
+    # Resets the output path to None
+    original_output_directory = copy(video_system._output_directory)
+    video_system._output_directory = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a valid Path "
+        f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
+        f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
+        f"you intend to save camera frames."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id)
+    video_system._output_directory = original_output_directory  # Restores the original output directory
 
-#     camera = VideoSystem.create_camera(
-#         camera_name="Test Camera",
-#         camera_id=2,
-#         camera_backend=CameraBackends.MOCK,
-#         frame_height=None,
-#         frame_width=None,
-#         frames_per_second=None,
-#     )
+    # Invalid hardware encoding flag
+    hardware_encoding = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a boolean for "
+        f"hardware_encoding argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, hardware_encoding=hardware_encoding)
 
-#     assert camera.height == 400
-#     assert camera.width == 600
-#     assert camera.fps == 30
+    # Invalid video format
+    video_format = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a VideoFormats "
+        f"instance for video_format argument, but got {video_format} of type {type(video_format).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, video_format=video_format)
 
+    # Invalid video codec
+    video_codec = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a VideoCodecs "
+        f"instance for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, video_codec=video_codec)
 
-# def test_invalid_backend():
-#     camera_name = "Test Camera"
-#     invalid_backend_value = "INVALID_BACKEND"
+    # Invalid encoder preset (for both hardware encoding flag states).
+    preset = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a "
+        f"GPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, hardware_encoding=True, preset=preset)
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected a "
+        f"CPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, hardware_encoding=False, preset=preset)
 
-#     message = (
-#         f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
-#         f"camera_backend argument {invalid_backend_value} of type {type(invalid_backend_value).__name__}. "
-#         f"camera_backend has to be one of the options available from the CameraBackends enumeration."
-#     )
+    # Invalid input pixel format
+    input_pixel_format = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected an "
+        f"InputPixelFormats instance for input_pixel_format argument, but got {input_pixel_format} of type "
+        f"{type(input_pixel_format).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, input_pixel_format=input_pixel_format)
 
-#     with pytest.raises(ValueError, match=error_format(message)):
-#         VideoSystem.create_camera(
-#             camera_name=camera_name,
-#             camera_id=2,
-#             frames_per_second=30,
-#             frame_width=600,
-#             frame_height=400,
-#             camera_backend=invalid_backend_value,
-#         )
+    # Invalid output pixel format
+    output_pixel_format = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected an "
+        f"OutputPixelFormats instance for output_pixel_format argument, but got {output_pixel_format} of type "
+        f"{type(output_pixel_format).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, output_pixel_format=output_pixel_format)
 
+    # Invalid quantization_parameter
+    quantization_parameter = None
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. Expected an integer "
+        f"between 0 and 51 for quantization_parameter argument, but got {quantization_parameter} of type "
+        f"{type(quantization_parameter).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_video_saver(source_id=source_id, quantization_parameter=quantization_parameter)
 
-# def test_create_image_saver():
-#     """Verifies that all attributes of the image saver class are valid before creation."""
-
-#     output_directory = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
-#     image_format = ImageFormats.TIFF
-#     tiff_compression = cv2.IMWRITE_TIFF_COMPRESSION_LZW
-#     jpeg_quality = 50
-#     jpeg_sampling_factor = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_420
-#     png_compression = 8
-
-#     invalid_output_directory = "/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti"
-
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected a Path instance for output_directory "
-#         f"argument, but got {invalid_output_directory} of type {type(invalid_output_directory).__name__}."
-#     )
-
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(output_directory=invalid_output_directory)
-
-#     invalid_image_format = None
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected an ImageFormats instance for "
-#         f"image_format argument, but got {invalid_image_format} of type {type(invalid_image_format).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(output_directory=output_directory, image_format=invalid_image_format)
-
-#     invalid_tiff_compression = "str"
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected an integer for tiff_compression "
-#         f"argument, but got {invalid_tiff_compression} of type {type(invalid_tiff_compression).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(
-#             output_directory=output_directory, image_format=image_format, tiff_compression=invalid_tiff_compression
-#         )
-
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 100 for "
-#         f"jpeg_quality argument, but got {101} of type {type(101)}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(
-#             output_directory=output_directory,
-#             image_format=image_format,
-#             tiff_compression=tiff_compression,
-#             jpeg_quality=101,
-#         )
-
-#     invalid_jpeg_sampling_factor = None
-
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected one of the "
-#         f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_' constants for jpeg_sampling_factor argument, but got "
-#         f"{invalid_jpeg_sampling_factor} of type {type(invalid_jpeg_sampling_factor).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(
-#             output_directory=output_directory,
-#             image_format=image_format,
-#             tiff_compression=tiff_compression,
-#             jpeg_quality=jpeg_quality,
-#             jpeg_sampling_factor=invalid_jpeg_sampling_factor,
-#         )
-
-#     invalid_png_compression = 11
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected an integer between 0 and 9 for "
-#         f"png_compression argument, but got {invalid_png_compression} of type "
-#         f"{type(invalid_png_compression).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(
-#             output_directory=output_directory,
-#             image_format=image_format,
-#             tiff_compression=tiff_compression,
-#             jpeg_quality=jpeg_quality,
-#             jpeg_sampling_factor=jpeg_sampling_factor,
-#             png_compression=invalid_png_compression,
-#         )
-
-#     invalid_thread_count = "str"
-#     message = (
-#         f"Unable to instantiate an ImageSaver class object. Expected an integer for thread_count "
-#         f"argument, but got {invalid_thread_count} of type {type(invalid_thread_count).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_image_saver(
-#             output_directory=output_directory,
-#             image_format=image_format,
-#             tiff_compression=tiff_compression,
-#             jpeg_quality=jpeg_quality,
-#             jpeg_sampling_factor=jpeg_sampling_factor,
-#             png_compression=png_compression,
-#             thread_count=invalid_thread_count,
-#         )
-
-
-# def test_create_video_saver(tmp_path):
-#     """Verifies that all attributes of the video saver class are valid before creation."""
-
-#     output_directory = Path(tmp_path)
-#     hardware_encoding = True
-#     video_format = VideoFormats.MP4
-#     video_codec = VideoCodecs.H265
-
-#     video_invalid_output_directory = "/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti"
-
-#     message = (
-#         f"Unable to instantiate a Saver class object. Expected a Path instance for output_directory argument, "
-#         f"but got {video_invalid_output_directory} of type {type(video_invalid_output_directory).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_video_saver(output_directory=video_invalid_output_directory)
-
-#     message = (
-#         f"Unable to instantiate a VideoSaver class object. Expected a boolean for hardware_encoding "
-#         f"argument, but got {'str'} of type {type('str').__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_video_saver(output_directory=output_directory, hardware_encoding="str")
-
-#     invalid_video_format = None
-
-#     message = (
-#         f"Unable to instantiate a VideoSaver class object. Expected a VideoFormats instance for "
-#         f"video_format argument, but got {invalid_video_format} of type {type(invalid_video_format).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_video_saver(
-#             output_directory=output_directory, hardware_encoding=hardware_encoding, video_format=invalid_video_format
-#         )
-
-#     invalid_video_codec = None
-
-#     message = (
-#         f"Unable to instantiate a VideoSaver class object. Expected a VideoCodecs instance for "
-#         f"video_codec argument, but got {invalid_video_codec} of type {type(invalid_video_codec).__name__}."
-#     )
-#     with pytest.raises(TypeError, match=error_format(message)):
-#         VideoSystem.create_video_saver(
-#             output_directory=output_directory,
-#             hardware_encoding=hardware_encoding,
-#             video_format=video_format,
-#             video_codec=invalid_video_codec,
-#         )
-
-#     def test_start(self):
-#         pass
+    # Verifies that using the same source_id more than once produces an error
+    video_system.add_video_saver(source_id=source_id)
+    message = (
+        f"Unable to add the VideoSaver object to the VideoSystem with id {video_system._id}. The camera with index "
+        f"{source_id} is already matched with a saver class instance. Currently, each saver instance has to "
+        f"use a single unique camera source."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system.add_video_saver(source_id=source_id)

@@ -5,7 +5,7 @@ import importlib_metadata
 project = 'ataraxis-video-system'
 # noinspection PyShadowingBuiltins
 copyright = '2024, Ivan Kondratyev (Inkaros) & Sun Lab'
-authors = ['Ivan Kondratyev (Inkaros)', 'Jacob Groner']
+authors = ['Ivan Kondratyev (Inkaros)', 'Jacob Groner', 'Natalie Yeung']
 release = importlib_metadata.version("ataraxis-video-system")  # Extracts the project version from the .toml file.
 
 # -- General configuration ---------------------------------------------------
@@ -15,6 +15,7 @@ extensions = [
     'sphinx_autodoc_typehints',  # To parse typehints into documentation
     'sphinx_rtd_theme',          # To format the documentation html using ReadTheDocs format.
     'sphinx_click',              # To read docstrings and command-line arguments from click-wrapped python functions.
+    'sphinx_rtd_dark_mode'       # Enables dark mode for RTD theme.
 ]
 
 templates_path = ['_templates']

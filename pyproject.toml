@@ -14,8 +14,9 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11, <3.12"  # Limited to 3.11 until 3.12+ support is added for genicam, a core harvesters package
 authors = [
-    { name = "Jacob Groner", email = "jrg349@cornell.edu" },
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
+    { name = "Jacob Groner", email = "jrg349@cornell.edu" },
+    { name = "Natalie Yeung", email = "nyy4@cornell.edu" },
 ]
 maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
@@ -54,7 +55,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
-Documentation = "https://app.netlify.com/sites/ataraxis-video-system-api-docs/overview"
+Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
 # Specifies additional dependencies that can be installed alongside the main library. Also, this is the section that
 # stores conda, condarun, and noconda lists that facilitate setting up dependencies via conda where possible.
@@ -82,10 +83,10 @@ conda = [
 
     # Documentation
     "sphinx>=8,<9",
-    "importlib_metadata>=8,<9",
+    "importlib-metadata>=8,<9",
     "sphinx-rtd-theme>=3,<4",
     "sphinx-click>=6,<7",
-    "sphinx-autodoc-typehints>=2,<3",
+    "sphinx-autodoc-typehints>=3,<4",
 
     # Linting and Stub-generation
     "mypy>=1,<2",
@@ -112,6 +113,9 @@ noconda =[
     "tox>=4,<5",
     "tox-uv>=1,<2",
     "uv>=0,<1",
+
+    # Documentation
+    "sphinx-rtd-dark-mode>=1,<2",
 
     # Building
     "build>=1,<2",
@@ -140,7 +144,7 @@ exclude = [".github", "recipe"]
 
 # Specifies the library structure.
 [tool.hatch.build.targets.wheel]
-packages = ["src/ataraxis_video_system"]
+packages = ["src/ataraxis_video_system", "examples"]
 
 # Ruff Configuration.
 [tool.ruff]

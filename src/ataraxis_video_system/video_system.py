@@ -29,7 +29,7 @@ from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
 from harvesters.core import Harvester  # type: ignore
 from ataraxis_base_utilities import console, ensure_directory_exists
-from ataraxis_data_structures import LogPackage, SharedMemoryArray
+from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
 from ataraxis_time.time_helpers import convert_time, get_timestamp
 
 from .saver import (
@@ -116,26 +116,23 @@ class VideoSystem:
     processes through an easy-to-use API.
 
     Notes:
-        Due to using multiprocessing to improve efficiency, this class would typically reserve 1 or 2 logical cores at
-        a minimum to run efficiently. Additionally, due to a time-lag of moving frames from a producer process to a
-        consumer process, the class will reserve a variable portion of the RAM to buffer the frame images. The reserved
+        Due to using multiprocessing to improve efficiency, this class reserves two logical cores to run efficiently.
+        Additionally, due to a time-lag of moving frames from the producer process to the
+        consumer process, the class will reserve a variable portion of the RAM to buffer the frames. The reserved
         memory depends on many factors and can only be established empirically.
 
         The class does not initialize cameras or savers at instantiation. Instead, you have to manually use the
-        add_camera and add_image_saver or add_video_saver methods to add cameras and savers to the system. All cameras
-        and all savers added to a single VideoSystem will run on the same logical core (one for savers,
+        add_camera() and add_image_saver() or add_video_saver() methods to add cameras and savers to the system. All
+        cameras and all savers added to a single VideoSystem will run on the same logical core (one for savers,
         one for cameras). To use more than two logical cores, create additional VideoSystem instances as necessary.
 
     Args:
         system_id: A unique byte-code identifier for the VideoSystem instance. This is used to identify the system in
             log files and generated video files. Therefore, this ID has to be unique across all concurrently
             active Ataraxis systems that use DataLogger to log data (such as AtaraxisMicroControllerInterface class).
-        system_name: A human-readable name used to identify the VideoSystem instance in error messages.
-        system_description: A brief description of the VideoSystem instance. This is used when creating the log file
-            that stores class runtime parameters and maps id-codes to meaningful names and descriptions to support
-            future data processing.
-        logger_queue: The multiprocessing Queue object exposed by the DataLogger class via its 'input_queue' property.
-            This queue is used to buffer and pipe data to be logged to the logger cores.
+        data_logger: An initialized DataLogger instance used to log the timestamps for all frames saved by this
+            VideoSystem instance. The DataLogger itself is NOT managed by this instance and will need to be activated
+            separately. This instance only extracts the necessary information to pipe the data to the logger.
         output_directory: The path to the output directory which will be used by all Saver class instances to save
             acquired camera frames as images or videos. This argument is required if you intend to add Saver instances
             to this VideoSystem and optional if you do not intend to save frames grabbed by this VideoSystem.
@@ -146,8 +143,6 @@ class VideoSystem:
 
     Attributes:
         _id: Stores the ID code of the VideoSystem instance.
-        _name: Stores the human-readable name of the VideoSystem instance.c
-        _description: Stores the description of the VideoSystem instance.
         _logger_queue: Stores the multiprocessing Queue object used to buffer and pipe data to be logged.
         _output_directory: Stores the path to the output directory.
         _cti_path: Stores the path to the '.cti' file that provides the GenTL Producer interface.
@@ -173,54 +168,54 @@ class VideoSystem:
     def __init__(
         self,
         system_id: np.uint8,
-        system_name: str,
-        system_description: str,
-        logger_queue: MPQueue,  # type: ignore
+        data_logger: DataLogger,
         output_directory: Optional[Path] = None,
         harvesters_cti_path: Optional[Path] = None,
     ):
         # Has to be set first to avoid stop method errors
         self._started: bool = False  # Tracks whether the system has active processes
 
-        # Resolves the system-name first, to use it in further error messages
-        if not isinstance(system_name, str):
-            message = (
-                f"Unable to initialize the VideoSystem class instance. Expected a string for system_name, but got "
-                f"{system_name} of type {type(system_name).__name__}."
-            )
-            console.error(message=message, error=TypeError)
-
         # Ensures system_id is a byte-convertible integer
         if not isinstance(system_id, np.uint8):
             message = (
-                f"Unable to initialize the {system_name} VideoSystem class instance. Expected a uint8 system_id, but "
-                f"encountered {system_id} of type {type(system_id).__name__}."
+                f"Unable to initialize the VideoSystem class instance. Expected a uint8 integer as system_id argument, "
+                f"but encountered {system_id} of type {type(system_id).__name__}."
             )
             console.error(message=message, error=TypeError)
 
         # If harvesters_cti_path is provided, checks if it is a valid file path.
-        if (
-            harvesters_cti_path is not None
-            and not harvesters_cti_path.exists()
-            and not harvesters_cti_path.is_file()
-            and not harvesters_cti_path.suffix == ".cti"
+        if harvesters_cti_path is not None and (
+            not harvesters_cti_path.exists() or not harvesters_cti_path.suffix == ".cti"
         ):
             message = (
-                f"Unable to initialize the {system_name} VideoSystem class instance. Expected the path to an existing "
+                f"Unable to initialize the VideoSystem instance with id {system_id}. Expected the path to an existing "
                 f"file with a '.cti' suffix or None for harvesters_cti_path, but encountered {harvesters_cti_path} of "
                 f"type {type(harvesters_cti_path).__name__}. If a valid path was provided, this error is likely due to "
                 f"the file not existing or not being accessible."
             )
             console.error(message=message, error=TypeError)
 
-        # Ensures invalid descriptions are converted to an empty string.
-        system_description = system_description if isinstance(system_description, str) else ""
+        # Ensures that the data_logger is an initialized DataLogger instance.
+        if not isinstance(data_logger, DataLogger):
+            message = (
+                f"Unable to initialize the VideoSystem instance with id {system_id}. Expected an initialized "
+                f"DataLogger instance for 'data_logger' argument, but encountered {data_logger} of type "
+                f"{type(data_logger).__name__}."
+            )
+            console.error(message=message, error=TypeError)
+
+        # Ensures that the output_directory is either a Path instance or None:
+        if output_directory is not None and not isinstance(output_directory, Path):
+            message = (
+                f"Unable to initialize the VideoSystem instance with id {system_id}. Expected a Path instance or None "
+                f"for 'output_directory' argument, but encountered {output_directory} of type "
+                f"{type(output_directory).__name__}."
+            )
+            console.error(message=message, error=TypeError)
 
         # Saves ID data and the logger queue to class attributes
         self._id: np.uint8 = system_id
-        self._name: str = system_name
-        self._description = system_description
-        self._logger_queue: MPQueue = logger_queue  # type: ignore
+        self._logger_queue: MPQueue = data_logger.input_queue  # type: ignore
         self._output_directory: Path | None = output_directory
         self._cti_path: Path | None = harvesters_cti_path
 
@@ -250,16 +245,16 @@ class VideoSystem:
     def __repr__(self) -> str:
         """Returns a string representation of the VideoSystem class instance."""
         representation_string: str = (
-            f"VideoSystem(name={self._name}, running={self._started}, camera_count={len(self._cameras)}, "
+            f"VideoSystem(id={self._id}, started={self._started}, camera_count={len(self._cameras)}, "
             f"saver_count={len(self._savers)})"
         )
         return representation_string
 
     def add_camera(
         self,
-        camera_name: str,
+        camera_id: np.uint8,
         save_frames: bool,
-        camera_id: int = 0,
+        camera_index: int = 0,
         camera_backend: CameraBackends = CameraBackends.OPENCV,
         output_frames: bool = False,
         output_frame_rate: int | float = 25,
@@ -279,14 +274,16 @@ class VideoSystem:
         its start() method is called.
 
         Args:
-            camera_name: The human-readable of the camera. This is used to help identify the camera to the user in
-                messages and during real-time frame display.
+            camera_id: The unique integer ID code for the camera. Note, each camera managed by the same VideoSystem has
+                to have a unique ID code. This ID is used to identify the frames produce by the camera in logs and
+                during real-time inter-process communication. The IDs are user-defined, there is no inherent meaning for
+                these codes.
             save_frames: Determines whether frames acquired by this camera should be saved to disk as images or video.
                 If this is enabled, there has to be a valid Saver class instance configured to save frames from this
                 Camera.
-            camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
-                available camera, 1 for the second, etc. Usually, the camera IDs are assigned by the host-system based
-                on the order of their connection.
+            camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
+                available camera, 1 for the second, etc. Usually, the host-system assigns the camera indices
+                based on the order of their connection.
             camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
                 the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
                 non-GenTL-compatible cameras.
@@ -328,35 +325,36 @@ class VideoSystem:
         """
         # Verifies that the input arguments are of the correct type. Note, checks backend-specific arguments in
         # backend-specific clause.
-        if not isinstance(camera_name, str):
+        if not isinstance(camera_id, np.uint8):
             message = (
-                f"Unable to add the Camera object to the {self._name} VideoSystem. Expected a string for camera_name "
-                f"argument, but got {camera_name} of type {type(camera_name).__name__}."
+                f"Unable to add the Camera object to the VideoSystem with id {self._id}. Expected a numpy uint8 for "
+                f"camera_id argument, but got {camera_id} of type {type(camera_id).__name__}."
             )
             console.error(error=TypeError, message=message)
-        if not isinstance(camera_id, int):
+        if not isinstance(camera_index, int):
             message = (
-                f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
-                f"for camera_id argument, but got {camera_id} of type {type(camera_id).__name__}."
+                f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {self._id}. Expected an "
+                f"integer for camera_id argument, but got {camera_index} of type {type(camera_index).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(acquisition_frame_rate, (int, float, NoneType)):
             message = (
-                f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer, "
-                f"float or None for acquisition_frame_rate argument, but got {acquisition_frame_rate} of type "
+                f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {self._id}. Expected an "
+                f"integer, float or None for acquisition_frame_rate argument, but got {acquisition_frame_rate} of type "
                 f"{type(acquisition_frame_rate).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(frame_width, (int, NoneType)):
             message = (
-                f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
-                f"or None for frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
+                f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {self._id}. Expected an "
+                f"integer or None for frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(frame_height, (int, NoneType)):
             message = (
-                f"Unable to add the {camera_name} Camera object to the {self._name} VideoSystem. Expected an integer "
-                f"or None for frame_height argument, but got {frame_height} of type {type(frame_height).__name__}."
+                f"Unable to add the Camera with id {camera_id} to the VideoSystem with id {self._id}. Expected an "
+                f"integer or None for frame_height argument, but got {frame_height} of type "
+                f"{type(frame_height).__name__}."
             )
             console.error(error=TypeError, message=message)
 
@@ -383,8 +381,8 @@ class VideoSystem:
             # If the backend is not an integer or None, raises an error
             elif not isinstance(opencv_backend, int):
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Expected "
-                    f"an integer or None for opencv_backend argument, but got {opencv_backend} of type "
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Expected an integer or None for opencv_backend argument, but got {opencv_backend} of type "
                     f"{type(opencv_backend).__name__}."
                 )
                 console.error(error=TypeError, message=message)
@@ -394,10 +392,10 @@ class VideoSystem:
 
             # Instantiates the OpenCVCamera class object
             camera = OpenCVCamera(
-                name=camera_name,
+                camera_id=camera_id,
                 color=image_color,
                 backend=opencv_backend,
-                camera_id=camera_id,
+                camera_index=camera_index,
                 height=frame_height,
                 width=frame_width,
                 fps=acquisition_frame_rate,
@@ -413,33 +411,34 @@ class VideoSystem:
             # Verifies the dimensions and the colorspace of the acquired frame
             if frame_height is not None and frame.shape[0] != frame_height:
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire frames using the provided frame_height {frame_height}, but the "
-                    f"camera returned a test frame with height {frame.shape[0]}. This indicates that the camera "
-                    f"does not support the requested frame height and width combination."
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Attempted configuring the camera to acquire frames using the provided frame_height "
+                    f"{frame_height}, but the camera returned a test frame with height {frame.shape[0]}. This "
+                    f"indicates that the camera does not support the requested frame height and width combination."
                 )
                 console.error(error=ValueError, message=message)
             if frame_width is not None and frame.shape[1] != frame_width:
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire frames using the provided frame_width {frame_width}, but the "
-                    f"camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, "
+                    f"but the camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
                     f"does not support the requested frame height and width combination."
                 )
                 console.error(error=ValueError, message=message)
-            if color and frame.shape[2] <= 1:
+            if color and frame.shape[2] <= 1:  # pragma: no cover
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire colored frames, but the camera returned a test frame with "
-                    f"monochrome colorspace. This indicates that the camera does not support acquiring colored frames."
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Attempted configuring the camera to acquire colored frames, but the camera returned a test frame "
+                    f"with monochrome colorspace. This indicates that the camera does not support acquiring colored "
+                    f"frames."
                 )
                 console.error(error=ValueError, message=message)
-            elif len(frame.shape) != 2:
+            elif len(frame.shape) != 2:  # pragma: no cover
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire monochrome frames, but the camera returned a test frame with "
-                    f"BGR colorspace. This likely indicates an OpenCV backend error, since it is unlikely that the "
-                    f"camera does not support monochrome colorspace."
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Attempted configuring the camera to acquire monochrome frames, but the camera returned a test "
+                    f"frame with BGR colorspace. This likely indicates an OpenCV backend error, since it is unlikely "
+                    f"that the camera does not support monochrome colorspace."
                 )
                 console.error(error=ValueError, message=message)
 
@@ -450,10 +449,10 @@ class VideoSystem:
                 fps_override = acquisition_frame_rate
             elif acquisition_frame_rate is not None and camera.fps < acquisition_frame_rate:  # type: ignore
                 message = (
-                    f"Unable to add the {camera_name} OpenCVCamera object to the {self._name} VideoSystem. Attempted "
-                    f"configuring the camera to acquire frames at the rate of {acquisition_frame_rate} frames per "
-                    f"second, but the camera automatically adjusted the framerate to {camera.fps}. This indicates that "
-                    f"the camera does not support the requested framerate."
+                    f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Attempted configuring the camera to acquire frames at the rate of {acquisition_frame_rate} "
+                    f"frames per second, but the camera automatically adjusted the framerate to {camera.fps}. This "
+                    f"indicates that the camera does not support the requested framerate."
                 )
                 console.error(error=ValueError, message=message)
 
@@ -466,10 +465,10 @@ class VideoSystem:
             # Ensures that the cti_path is provided
             if self._cti_path is None:
                 message = (
-                    f"Unable to add a {camera_name} HarvestersCamera to the {self._name} VideoSystem. Expected the "
-                    f"VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, but got None "
-                    f"instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument when "
-                    f"initializing the VideoSystem instance."
+                    f"Unable to add HarvestersCamera with id {camera_id} to the VideoSystem with id {self._id}. "
+                    f"Expected the VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, "
+                    f"but got None instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument "
+                    f"when initializing the VideoSystem instance."
                 )
                 console.error(error=ValueError, message=message)
                 # Fallback to appease mypy, should not be reachable
@@ -477,9 +476,9 @@ class VideoSystem:
 
             # Instantiates and returns the HarvestersCamera class object
             camera = HarvestersCamera(
-                name=camera_name,
-                cti_path=self._cti_path,
                 camera_id=camera_id,
+                cti_path=self._cti_path,
+                camera_index=camera_index,
                 height=frame_height,
                 width=frame_width,
                 fps=acquisition_frame_rate,
@@ -513,8 +512,8 @@ class VideoSystem:
 
             # Instantiates the MockCamera class object
             camera = MockCamera(
-                name=camera_name,
                 camera_id=camera_id,
+                camera_index=camera_index,
                 height=frame_height,
                 width=frame_width,
                 fps=acquisition_frame_rate,
@@ -528,7 +527,7 @@ class VideoSystem:
         # If the input backend does not match any of the supported backends, raises an error
         else:
             message = (
-                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"Unable to instantiate the Camera with id {camera_id} due to encountering an unsupported "
                 f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
                 f"camera_backend has to be one of the options available from the CameraBackends enumeration."
             )
@@ -540,7 +539,7 @@ class VideoSystem:
         # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
         if not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:  # type: ignore
             message = (
-                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"Unable to instantiate the Camera with id {camera_id} due to encountering an unsupported "
                 f"output_frame_rate argument {output_frame_rate} of type {type(output_frame_rate).__name__}. "
                 f"Output framerate override has to be an integer or floating point number that does not exceed the "
                 f"camera acquisition framerate ({camera.fps})."
@@ -550,7 +549,7 @@ class VideoSystem:
         # Same as above, but for display frame_rate
         if not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:  # type: ignore
             message = (
-                f"Unable to instantiate a {camera_name} Camera class object due to encountering an unsupported "
+                f"Unable to instantiate the Camera with id {camera_id} due to encountering an unsupported "
                 f"display_frame_rate argument {display_frame_rate} of type {type(display_frame_rate).__name__}. "
                 f"Display framerate override has to be an integer or floating point number that does not exceed the "
                 f"camera acquisition framerate ({camera.fps})."
@@ -576,7 +575,7 @@ class VideoSystem:
 
     def add_image_saver(
         self,
-        source_id: int,
+        source_id: np.uint8,
         image_format: ImageFormats = ImageFormats.TIFF,
         tiff_compression_strategy: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
         jpeg_quality: int = 95,
@@ -588,7 +587,7 @@ class VideoSystem:
 
         This method allows adding ImageSavers to an initialized VideoSystem instance. Currently, this is the only
         intended way of using ImageSaver classes available through this library. ImageSavers are not required for the
-        VideoSystem to function properly and, therefore, this method does not need to be called unless you need to save
+        VideoSystem to function and, therefore, this method does not need to be called unless you need to save
         the camera frames acquired during the runtime of this VideoSystem as images.
 
         Notes:
@@ -600,10 +599,9 @@ class VideoSystem:
             possible to optimize the disk space usage and still benefit from a decent frame saving speed.
 
         Args:
-            source_id: The index of the Camera instance whose frames will be saved by this ImageSaver. The index
-                is based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
-                the first added camera. This argument is very important as it is used to determine which savers are used
-                for each camera source. Each saver has to be matched with a camera not used by any other saver.
+            source_id: The unique identifier of the Camera instance whose frames will be saved by this ImageSaver.
+                Note, each camera-saver pair has to be unique. Each camera can use at most one saver, and each saver
+                can work with at most one camera.
             image_format: The format to use for the output images. Use ImageFormats enumeration
                 to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
             tiff_compression_strategy: The integer-code that specifies the compression strategy used for .tiff image
@@ -626,13 +624,20 @@ class VideoSystem:
 
         Raises:
             TypeError: If the input arguments are not of the correct type.
+            ValueError: If the camera with the specified source_id is already matched with a saver class instance.
         """
 
         # Verifies that the input arguments are of the correct type.
+        if not isinstance(source_id, np.uint8):
+            message = (
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected a numpy uint8 "
+                f"integer for source_id argument, but got {source_id} of type {type(source_id).__name__}."
+            )
+            console.error(error=TypeError, message=message)
         if not isinstance(self._output_directory, Path):
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected a valid Path object to "
-                f"be provided to the VideoSystem's output_directory argument at initialization, but instead "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected a valid Path "
+                f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
                 f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
                 f"you intend to save camera frames."
             )
@@ -641,21 +646,21 @@ class VideoSystem:
             raise TypeError(message)  # pragma: no cover
         if not isinstance(image_format, ImageFormats):
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected an ImageFormats "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an ImageFormats "
                 f"instance for image_format argument, but got {image_format} of type {type(image_format).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(tiff_compression_strategy, int):
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected an integer for "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer for "
                 f"tiff_compression_strategy argument, but got {tiff_compression_strategy} of type "
                 f"{type(tiff_compression_strategy).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(jpeg_quality, int) or not 0 <= jpeg_quality <= 100:
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected an integer between 0 "
-                f"and 100 for jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
+                f"between 0 and 100 for jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
             )
             console.error(error=TypeError, message=message)
         if jpeg_sampling_factor not in [
@@ -666,39 +671,32 @@ class VideoSystem:
             cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
         ]:
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected one of the "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected one of the "
                 f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_*' constants for jpeg_sampling_factor argument, but got "
                 f"{jpeg_sampling_factor} of type {type(jpeg_sampling_factor).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(png_compression, int) or not 0 <= png_compression <= 9:
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected an integer between 0 "
-                f"and 9 for png_compression argument, but got {png_compression} of type "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
+                f"between 0 and 9 for png_compression argument, but got {png_compression} of type "
                 f"{type(png_compression).__name__}."
             )
             console.error(error=TypeError, message=message)
-        if not isinstance(thread_count, int) or not 0 < thread_count:
+        if not isinstance(thread_count, int) or thread_count <= 0:
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected an integer greater "
-                f"than 0 for thread_count argument, but got {thread_count} of type {type(thread_count).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Ensures that the source id is valid
-        if not isinstance(source_id, int) or source_id < 0:
-            message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. Expected a single integer at or "
-                f"above zero as source_id argument, but got {source_id} of type {type(source_id).__name__}."
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
+                f"greater than 0 for thread_count argument, but got {thread_count} of type "
+                f"{type(thread_count).__name__}."
             )
             console.error(error=TypeError, message=message)
 
         # Ensures that each saver uses a unique camera source.
-        if source_id not in self._reserved_sources:
-            self._reserved_sources.add(source_id)
+        if int(source_id) not in self._reserved_sources:
+            self._reserved_sources.add(int(source_id))
         else:
             message = (
-                f"Unable to add the ImageSaver object to the {self._name} VideoSystem. The camera with index "
+                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. The camera with index "
                 f"{source_id} is already matched with a saver class instance. Currently, each saver instance has to "
                 f"use a single unique camera source."
             )
@@ -714,11 +712,11 @@ class VideoSystem:
             png_compression=png_compression,
             thread_count=thread_count,
         )
-        self._savers.append(_SaverSystem(saver=saver, source_id=source_id))
+        self._savers.append(_SaverSystem(saver=saver, source_id=int(source_id)))
 
     def add_video_saver(
         self,
-        source_id: int,
+        source_id: np.uint8,
         hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
@@ -732,7 +730,7 @@ class VideoSystem:
 
         This method allows adding VideoSavers to an initialized VideoSystem instance. Currently, this is the only
         intended way of using VideoSaver classes available through this library. VideoSavers are not required for the
-        VideoSystem to function properly and, therefore, this method does not need to be called unless you need to save
+        VideoSystem to function and, therefore, this method does not need to be called unless you need to save
         the camera frames acquired during the runtime of this VideoSystem as a video.
 
         Notes:
@@ -747,10 +745,9 @@ class VideoSystem:
             to use hardware encoding if it is available on the host system (requires Nvidia GPU).
 
         Args:
-            source_id: The index of the Camera instance whose frames will be saved by this VideoSaver. The index
-                is based on the order the cameras were / will be added to the VideoSystem instance with index 0 being
-                the first added camera. This argument is very important as it is used to determine which savers are used
-                for each camera source. Each saver has to be matched with a camera not used by any other saver.
+            source_id: The unique identifier of the Camera instance whose frames will be saved by this ImageSaver.
+                Note, each camera-saver pair has to be unique. Each camera can use at most one saver, and each saver
+                can work with at most one camera.
             hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is
                 almost always recommended to use the GPU encoding for considerably faster encoding with almost no
                 quality loss. However, GPU encoding is only supported by modern Nvidia GPUs.
@@ -781,15 +778,22 @@ class VideoSystem:
 
         Raises:
             TypeError: If the input arguments are not of the correct type.
+            ValueError: If the camera with the specified source_id is already matched with a saver class instance.
             RuntimeError: If the instantiated saver is configured to use GPU video encoding, but the method does not
                 detect any available NVIDIA GPUs. If FFMPEG is not accessible from the Python shell.
         """
 
         # Verifies that the input arguments are of the correct type.
+        if not isinstance(source_id, np.uint8):
+            message = (
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a numpy uint8 "
+                f"integer for source_id argument, but got {source_id} of type {type(source_id).__name__}."
+            )
+            console.error(error=TypeError, message=message)
         if not isinstance(self._output_directory, Path):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a valid Path object to "
-                f"be provided to the VideoSystem's output_directory argument at initialization, but instead "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a valid Path "
+                f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
                 f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
                 f"you intend to save camera frames."
             )
@@ -798,20 +802,20 @@ class VideoSystem:
             raise TypeError(message)  # pragma: no cover
         if not isinstance(hardware_encoding, bool):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a boolean for "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a boolean for "
                 f"hardware_encoding argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(video_format, VideoFormats):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a VideoFormats "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a VideoFormats "
                 f"instance for video_format argument, but got {video_format} of type {type(video_format).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(video_codec, VideoCodecs):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a VideoCodecs instance "
-                f"for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a VideoCodecs "
+                f"instance for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
             )
             console.error(error=TypeError, message=message)
 
@@ -819,29 +823,29 @@ class VideoSystem:
         if hardware_encoding:
             if not isinstance(preset, GPUEncoderPresets):
                 message = (
-                    f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a "
+                    f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a "
                     f"GPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
                 )
                 console.error(error=TypeError, message=message)
         else:
             if not isinstance(preset, CPUEncoderPresets):
                 message = (
-                    f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a "
+                    f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a "
                     f"CPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
                 )
                 console.error(error=TypeError, message=message)
 
         if not isinstance(input_pixel_format, InputPixelFormats):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected an InputPixelFormats "
-                f"instance for input_pixel_format argument, but got {input_pixel_format} of type "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an "
+                f"InputPixelFormats instance for input_pixel_format argument, but got {input_pixel_format} of type "
                 f"{type(input_pixel_format).__name__}."
             )
             console.error(error=TypeError, message=message)
         if not isinstance(output_pixel_format, OutputPixelFormats):
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected an OutputPixelFormats "
-                f"instance for output_pixel_format argument, but got {output_pixel_format} of type "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an "
+                f"OutputPixelFormats instance for output_pixel_format argument, but got {output_pixel_format} of type "
                 f"{type(output_pixel_format).__name__}."
             )
             console.error(error=TypeError, message=message)
@@ -850,60 +854,52 @@ class VideoSystem:
         # mention it in docstrings, but those who need to know will know.
         if not isinstance(quantization_parameter, int) or not -1 < quantization_parameter <= 51:
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected an integer between 0 "
-                f"and 51 for quantization_parameter argument, but got {quantization_parameter} of type "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an integer "
+                f"between 0 and 51 for quantization_parameter argument, but got {quantization_parameter} of type "
                 f"{type(quantization_parameter).__name__}."
             )
             console.error(error=TypeError, message=message)
 
-        # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
-        # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
-        if hardware_encoding:
-            try:
-                # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
-                subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
-            except subprocess.CalledProcessError:
-                message = (
-                    f"Unable to add the VideoSaver object to the {self._name} VideoSystem. The object is configured to "
-                    f"use the GPU video encoding backend, which currently only supports NVIDIA GPUs. Calling "
-                    f"'nvidia-smi' to verify the presence of NVIDIA GPUs did not run successfully, indicating that "
-                    f"there are no available NVIDIA GPUs on the host system. Use a CPU encoder or make sure nvidia-smi "
-                    f"is callable from Python shell."
-                )
-                console.error(error=RuntimeError, message=message)
+        # Ensures that each saver uses a unique camera source.
+        if int(source_id) not in self._reserved_sources:
+            self._reserved_sources.add(int(source_id))
+        else:
+            message = (
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. The camera with index "
+                f"{source_id} is already matched with a saver class instance. Currently, each saver instance has to "
+                f"use a single unique camera source."
+            )
+            console.error(error=ValueError, message=message)
 
         # VideoSavers universally rely on FFMPEG ton be available on the system Path, as FFMPEG is used to encode the
         # videos. Therefore, does a similar check to the one above to make sure that ffmpeg is callable.
         try:
-            # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
-            subprocess.run(["ffmpeg -version"], capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError:
+            # Runs ffmpeg version command, uses check to trigger CalledProcessError exception if runtime fails
+            subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError:  # pragma: no cover
             message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. VideoSavers require a "
+                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. VideoSavers require a "
                 f"third-party software, FFMPEG, to be available on the system's Path. Please make sure FFMPEG is "
                 f"installed and callable from Python shell. See https://www.ffmpeg.org/download.html for more "
                 f"information."
             )
             console.error(error=RuntimeError, message=message)
 
-        # Ensures that the source id is valid
-        if not isinstance(source_id, int) or source_id < 0:
-            message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. Expected a single integer at or "
-                f"above zero as source_id argument, but got {source_id} of type {type(source_id).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Ensures that each saver uses a unique camera source.
-        if source_id not in self._reserved_sources:
-            self._reserved_sources.add(source_id)
-        else:
-            message = (
-                f"Unable to add the VideoSaver object to the {self._name} VideoSystem. The camera with index "
-                f"{source_id} is already matched with a saver class instance. Currently, each saver instance has to "
-                f"use a single unique camera source."
-            )
-            console.error(error=ValueError, message=message)
+        # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
+        # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
+        if hardware_encoding:
+            try:
+                # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
+                subprocess.run(args=["nvidia-smi"], capture_output=True, text=True, check=True)
+            except subprocess.CalledProcessError:  # pragma: no cover
+                message = (
+                    f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. The object is "
+                    f"configured to use the GPU video encoding backend, which currently only supports NVIDIA GPUs. "
+                    f"Calling 'nvidia-smi' to verify the presence of NVIDIA GPUs did not run successfully, indicating "
+                    f"that there are no available NVIDIA GPUs on the host system. Use a CPU encoder or make sure "
+                    f"nvidia-smi is callable from Python shell."
+                )
+                console.error(error=RuntimeError, message=message)
 
         # Configures, initializes, and returns a VideoSaver instance
         saver = VideoSaver(
@@ -917,7 +913,7 @@ class VideoSystem:
             quantization_parameter=quantization_parameter,
             gpu=gpu,
         )
-        self._savers.append(_SaverSystem(saver=saver, source_id=source_id))
+        self._savers.append(_SaverSystem(saver=saver, source_id=int(source_id)))
 
     def start(self) -> None:
         """Starts the consumer and producer processes of the VideoSystem instance and begins acquiring camera frames.
@@ -932,8 +928,9 @@ class VideoSystem:
             setup. To enable saving camera frames, call the start_frame_saving() method.
 
         Raises:
+            ValueError: If two or more managed cameras have the same id-code.
             RuntimeError: If starting the consumer or producer processes stalls or fails. If there are Saver instances
-                configured to save frames from non-existing cameras or cameras that are not configured to save frames.
+                configured to save frames from non-existing cameras or cameras that are configured to save frames.
                 If there are cameras configured to save frames that are not matched with a unique saver instance.
         """
         # This timer is used to forcibly terminate processes that stall at initialization.
@@ -943,18 +940,34 @@ class VideoSystem:
         if self._started:
             return
 
-        # Loops over camera and builds a set of indices for cameras that need to save frames during runtime.
+        # Loops over camera and builds a set of indices for cameras that need to save frames during runtime. Also
+        # checks that all cameras have a unique id-code
         save_cameras = set()
-        for index, camera_system in enumerate(self._cameras):
+        camera_ids = set()
+        for camera_system in self._cameras:
+            camera_id = int(camera_system.camera.camera_id)
+
+            # Raises an error if two or more cameras have the same id-code
+            if camera_id in camera_ids:
+                message = (
+                    f"Unable to start the VideoSystem with id {self._id}. All cameras managed by the same VideoSystem "
+                    f"instance should have unique id-codes, but at least two camera instances have the same id-code "
+                    f"({camera_id}). "
+                )
+                console.error(error=ValueError, message=message)
+            else:
+                camera_ids.add(camera_id)
+
+            # Uses a separate set to store the IDs of cameras that need to save frames during runtime
             if camera_system.save_frames:
-                save_cameras.add(index)
+                save_cameras.add(camera_id)
 
         # Next, loops over each SaverSystem and checks if its source_id is a member of the save_cameras set. This allows
         # discovering savers that target non-existent camera sources or camera sources that are not producing frames.
         for index, saver in enumerate(self._savers):
             if saver.source_id not in save_cameras:
                 message = (
-                    f"Unable to start the {self._name} VideoSystem with id {self._id}. The index of the frame source "
+                    f"Unable to start the VideoSystem with id {self._id}. The index of the frame source "
                     f"(source camera) ({saver.source_id}) for the SaverSystem under the index {index} is not a valid "
                     f"frame-producing index. Either the camera under that index is not configured to save frames or "
                     f"the index is altogether outside the range of cameras managed by this VideoSystem instance. "
@@ -971,7 +984,7 @@ class VideoSystem:
         # are cameras configured to save frames that are not paired to a Saver instance.
         if len(save_cameras) > 0:
             message = (
-                f"Unable to start the {self._name} VideoSystem with id {self._id}. After matching camera sources to "
+                f"Unable to start the VideoSystem with id {self._id}. After matching camera sources to "
                 f"saver instances, the cameras stored under the following indices have not been matched to any Saver "
                 f"instance: {save_cameras}. Each camera configured to save frames has to be matched to a unique "
                 f"Saver instance."
@@ -984,7 +997,7 @@ class VideoSystem:
         # Index 2 (element 3) is used to flexibly enable or disable outputting camera frames to other processes.
         # Index 3 (element 4) is used to track VideoSystem initialization status.
         self._terminator_array = SharedMemoryArray.create_array(
-            name=f"{self._name}_terminator_array",  # Uses class name with an additional specifier
+            name=f"{self._id}_terminator_array",  # Uses class id with an additional specifier
             prototype=np.zeros(shape=4, dtype=np.uint8),
         )  # Instantiation automatically connects the main process to the array.
 
@@ -1000,11 +1013,11 @@ class VideoSystem:
 
         # Waits for the process to report that it has successfully initialized.
         initialization_timer.reset()
-        while self._terminator_array.read_data(index=3) != 2:
+        while self._terminator_array.read_data(index=3) != 2:  # pragma: no cover
             # If the process takes too long to initialize or dies, raises an error.
             if initialization_timer.elapsed > 10 or not self._consumer_process.is_alive():
                 message = (
-                    f"Unable to start the {self._name} VideoSystem with id {self._id}. The consumer process has "
+                    f"Unable to start the VideoSystem with id {self._id}. The consumer process has "
                     f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
                     f"indicates a problem with initializing one of the managed saver class instances."
                 )
@@ -1027,11 +1040,11 @@ class VideoSystem:
 
         # Waits for the process to report that it has successfully initialized.
         initialization_timer.reset()
-        while self._terminator_array.read_data(index=3) != 1:
+        while self._terminator_array.read_data(index=3) != 1:  # pragma: no cover
             # If the process takes too long to initialize or dies, raises an error.
             if initialization_timer.elapsed > 10 or not self._producer_process.is_alive():
                 message = (
-                    f"Unable to start the {self._name} VideoSystem with id {self._id}. The producer process has "
+                    f"Unable to start the VideoSystem with id {self._id}. The producer process has "
                     f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
                     f"indicates a problem with initializing one of the managed saver class instances."
                 )
@@ -1103,17 +1116,7 @@ class VideoSystem:
         return self._started
 
     @property
-    def name(self) -> str:
-        """Returns the name of the VideoSystem class instance."""
-        return self._name
-
-    @property
-    def description(self) -> str:
-        """Returns the description of the VideoSystem class instance."""
-        return self._description
-
-    @property
-    def id_code(self) -> np.uint8:
+    def system_id(self) -> np.uint8:
         """Returns the unique identifier code assigned to the VideoSystem class instance."""
         return self._id
 
@@ -1225,7 +1228,10 @@ class VideoSystem:
         return tuple(working_ids)  # Converts to tuple before returning to caller.
 
     @staticmethod
-    def _frame_display_loop(display_queue: Queue, camera_name: str) -> None:  # type: ignore
+    def _frame_display_loop(
+        display_queue: Queue,  # type: ignore
+        camera_id: int,
+    ) -> None:  # pragma: no cover
         """Continuously fetches frame images from display_queue and displays them via OpenCV imshow() method.
 
         This method runs in a thread as part of the _produce_images_loop() runtime. It is used to display
@@ -1244,12 +1250,12 @@ class VideoSystem:
             display_queue: A multithreading Queue object that is used to buffer grabbed frames to de-couple display from
                 acquisition. It is expected that the queue yields frames as NumPy ndarray objects. If the queue yields a
                 non-array object, the thread terminates.
-            camera_name: The name of the camera which produces displayed images. This is used to generate a descriptive
-                window name for the display GUI.
+            camera_id: The unique ID of the camera which produces displayed images. This is used to generate a
+                descriptive window name for the display GUI.
         """
 
         # Initializes the display window using 'normal' mode to support user-controlled resizing.
-        window_name = f"{camera_name} Frames."
+        window_name = f"Camera {camera_id} Frames."
         cv2.namedWindow(winname=window_name, flags=cv2.WINDOW_NORMAL)
 
         # Runs until manually terminated by the user through GUI or programmatically through the thread kill argument.
@@ -1284,7 +1290,7 @@ class VideoSystem:
         output_queue: MPQueue,  # type: ignore
         logger_queue: MPQueue,  # type: ignore
         terminator_array: SharedMemoryArray,
-    ) -> None:
+    ) -> None:  # pragma: no cover
         """Continuously grabs frames from each managed camera and queues them up to be saved by the consumer process.
 
         This method loops while the first element in terminator_array (index 0) is zero. It continuously grabs
@@ -1337,17 +1343,17 @@ class VideoSystem:
 
         # Loops over cameras and precreates the necessary objects to control the flow of acquired frames between
         # various VideoSystem components
-        camera_dict: dict[str, Any] = {}
+        camera_dict: dict[int, Any] = {}
         for camera_system in cameras:
-            # Extracts the camera name. This is used to generate dictionary entries for each camera.
-            camera_name = camera_system.camera.name
+            # Extracts the camera id. This is used to generate dictionary entries for each camera.
+            camera_id = int(camera_system.camera.camera_id)
 
             # For each camera configured to display frames, creates a worker thread and queue object that handles
             # displaying the frames.
             if camera_system.display_frames:
                 # Creates queue and thread for this camera
                 display_queue: Optional[Queue] = Queue()  # type: ignore
-                display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, camera_name))
+                display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, camera_id))
                 display_thread.start()
 
                 # Converts the timeout between showing two consecutive frames from frames_per_second to
@@ -1405,18 +1411,18 @@ class VideoSystem:
 
             # Fills the camera dictionary with the necessary data for each camera:
             # Display
-            camera_dict[camera_name]["show_timer"] = show_timer
-            camera_dict[camera_name]["show_time"] = show_time
-            camera_dict[camera_name]["display_queue"] = display_queue
-            camera_dict[camera_name]["display_thread"] = display_thread
+            camera_dict[camera_id]["show_timer"] = show_timer
+            camera_dict[camera_id]["show_time"] = show_time
+            camera_dict[camera_id]["display_queue"] = display_queue
+            camera_dict[camera_id]["display_thread"] = display_thread
 
             # Acquisition
-            camera_dict[camera_name]["acquisition_timer"] = acquisition_timer
-            camera_dict[camera_name]["frame_time"] = frame_time
+            camera_dict[camera_id]["acquisition_timer"] = acquisition_timer
+            camera_dict[camera_id]["frame_time"] = frame_time
 
             # Output
-            camera_dict[camera_name]["output_timer"] = output_timer
-            camera_dict[camera_name]["output_time"] = output_time
+            camera_dict[camera_id]["output_timer"] = output_timer
+            camera_dict[camera_id]["output_time"] = output_time
 
             camera_system.camera.connect()  # Connects to the hardware of each camera.
 
@@ -1429,20 +1435,20 @@ class VideoSystem:
             for camera_index, camera_system in enumerate(cameras):
                 # Extracts the camera class and acquisition runtime parameters from the camera_dictionary
                 camera = camera_system.camera
-                camera_name = camera.name
+                camera_id = int(camera.camera_id)
 
                 # Display
-                show_timeout: float = camera_dict[camera_name]["show_time"]
-                show_timer = camera_dict[camera_name]["show_timer"]
-                display_queue = camera_dict[camera_name]["display_queue"]
+                show_timeout: float = camera_dict[camera_id]["show_time"]
+                show_timer = camera_dict[camera_id]["show_timer"]
+                display_queue = camera_dict[camera_id]["display_queue"]
 
                 # Acquisition
-                frame_timeout: float = camera_dict[camera_name]["frame_time"]
-                acquisition_timer = camera_dict[camera_name]["acquisition_timer"]
+                frame_timeout: float = camera_dict[camera_id]["frame_time"]
+                acquisition_timer = camera_dict[camera_id]["acquisition_timer"]
 
                 # Output
-                output_timer = camera_dict[camera_name]["output_timer"]
-                output_timeout: float = camera_dict[camera_name]["output_time"]
+                output_timer = camera_dict[camera_id]["output_timer"]
+                output_timeout: float = camera_dict[camera_id]["output_time"]
 
                 # Grabs the first available frame as a numpy ndarray
                 frame = camera.grab_frame()
@@ -1481,12 +1487,12 @@ class VideoSystem:
 
         # Once the loop above is escaped, releases all resources and terminates the Process.
         for camera_system in cameras:
-            # Extracts the camera name. This is used to generate dictionary entries for each camera.
-            camera_name = camera_system.camera.name
+            # Extracts the camera id. This is used to generate dictionary entries for each camera.
+            camera_id = int(camera_system.camera.camera_id)
 
             # Extracts Queue and Thread used for displaying images
-            display_queue = camera_dict[camera_name]["display_queue"]
-            display_thread = camera_dict[camera_name]["display_thread"]
+            display_queue = camera_dict[camera_id]["display_queue"]
+            display_thread = camera_dict[camera_id]["display_thread"]
 
             # Terminates the display thread
             if display_queue is not None:
@@ -1508,12 +1514,12 @@ class VideoSystem:
         image_queue: MPQueue,  # type: ignore
         logger_queue: MPQueue,  # type: ignore
         terminator_array: SharedMemoryArray,
-    ) -> None:
+    ) -> None:  # pragma: no cover
         """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
         on the saver instance associated with the producer camera.
 
         This method loops while the first element in terminator_array (index 0) is nonzero. It continuously grabs
-        teh frames from image_queue and, depending on the index of the camera that produced them, uses the appropriate
+        the frames from image_queue and, depending on the index of the camera that produced them, uses the appropriate
         saver instance to write them to disk.
 
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
@@ -1616,7 +1622,7 @@ class VideoSystem:
         # Disconnects from the shared memory array and terminates the process.
         terminator_array.disconnect()
 
-    def _watchdog(self) -> None:
+    def _watchdog(self) -> None:  # pragma: no cover
         """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
         during runtime.
 
@@ -1637,7 +1643,7 @@ class VideoSystem:
             # Producer process
             if self._producer_process is not None and not self._producer_process.is_alive():
                 message = (
-                    f"The producer process for the {self._name} VideoSystem with id {self._id} has been prematurely "
+                    f"The producer process for the VideoSystem with id {self._id} has been prematurely "
                     f"shut down. This likely indicates that the process has encountered a runtime error that "
                     f"terminated the process."
                 )
@@ -1646,7 +1652,7 @@ class VideoSystem:
             # Consumer process:
             if self._consumer_process is not None and not self._consumer_process.is_alive():
                 message = (
-                    f"The consumer process for the {self._name} VideoSystem with id {self._id} has been prematurely "
+                    f"The consumer process for the VideoSystem with id {self._id} has been prematurely "
                     f"shut down. This likely indicates that the process has encountered a runtime error that "
                     f"terminated the process."
                 )
@@ -1680,7 +1686,7 @@ class VideoSystem:
         """Enables outputting frame data via the instance output_queue.
 
         Some cameras can be configured to additionally share acquired frame data with other concurrently active
-        processes. When the VideoSystem starts, this functionality is nto enabled by default and has to be enabled
+        processes. When the VideoSystem starts, this functionality is not enabled by default and has to be enabled
         separately via this method.
         """
         if self._started and self._terminator_array is not None:
@@ -1697,16 +1703,20 @@ class VideoSystem:
         instance.
 
         Args:
-            saver_index: The index at which teh saver was added to the VideoSystem. This directly depends on the order
+            saver_index: The index at which the saver was added to the VideoSystem. This directly depends on the order
                 the add_saver methods were called in, with the first added saver having the index of 0, the 2nd an index
                 of 1, etc.
         """
         saver_system = self._savers[saver_index]
-        if not isinstance(saver_system.saver, VideoSaver):
-            message = (
-                f"Unable to retrieve the saver found under index {saver_index}. The saver instance found under "
-                f"this index is not a VideoSaver."
-            )
-            console.error(message=message, error=TypeError)
+        if isinstance(saver_system.saver, VideoSaver):
+            return saver_system.saver
 
-        return saver_system.saver
+        # If the retrieved saver is not a VideoSaver, raises a TypeError.
+        message = (
+            f"Unable to retrieve the saver found under index {saver_index}. The saver instance found under "
+            f"this index is not a VideoSaver."
+        )
+        console.error(message=message, error=TypeError)
+
+        # Fallback to appease mypy, should not be reachable
+        raise TypeError(message)  # pragma: no cover
