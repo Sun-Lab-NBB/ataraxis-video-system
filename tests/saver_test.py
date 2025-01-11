@@ -55,15 +55,19 @@ def test_image_saver_repr(tmp_path):
 
 
 def test_image_saver_shutdown(tmp_path):
-    """Verifies the functioning of the ImageSaver shutdown() method."""
+    """Verifies the functioning of the ImageSaver stop_live_image_saver() method."""
 
-    # Setup and ensures the class is initialized
+    # Setup and ensures the saver is not yet running
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
-    assert saver._running
+    assert not saver.is_live
+
+    # starts the saver and verifies it is running
+    saver.create_live_image_saver()
+    assert saver.is_live
 
     # Shutdown
-    saver.shutdown()
-    assert not saver._running
+    saver.stop_live_image_saver()
+    assert not saver.is_live
 
 
 def test_image_saver_save_frame_errors(tmp_path):
@@ -76,6 +80,17 @@ def test_image_saver_save_frame_errors(tmp_path):
     # Generates a test frame
     camera.connect()
     frame = camera.grab_frame()
+
+    # Verifies that attempting to save a frame before the image_saver is started raises an exception.
+    frame_id = "001"
+    message = (
+        f"Unable to save the image with the ID {frame_id} as the image saver has not been started. Use "
+        f"create_live_image_saver() method to start a live image saver before using this method."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        saver.save_frame(frame_id=frame_id, frame=frame)
+
+    saver.create_live_image_saver()  # Initializes the image saver
 
     # Verifies that the method correctly fails when an invalid frame ID is provided
     frame_id = "a"
@@ -104,6 +119,7 @@ def test_save_image(image_format, tmp_path):
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)
     saver = ImageSaver(output_directory=tmp_path, image_format=image_format, jpeg_quality=100)
+    saver.create_live_image_saver()
 
     # Connects to the camera and grabs the test frame
     camera.connect()
@@ -256,6 +272,7 @@ def test_create_video_from_image_folder(tmp_path):
 
     # Generates 20 standalone images to be converted to the video file
     image_saver = ImageSaver(output_directory=images_directory, image_format=ImageFormats.PNG)
+    image_saver.create_live_image_saver()
     for frame_id in range(20):
         frame_data = camera.grab_frame()
         image_saver.save_frame(frame=frame_data, frame_id=str(frame_id))

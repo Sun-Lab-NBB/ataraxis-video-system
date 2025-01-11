@@ -1,4 +1,4 @@
-"""This module contains classes that allow interfacing with supported Camera backends and an enumeration that contains
+"""This module provides classes that interface with supported Camera backends and an enumeration that contains
 supported backend codes.
 
 The classes from this module function as a unified API that allows any other module to work with any supported
@@ -29,8 +29,8 @@ from ataraxis_base_utilities import console
 
 
 class CameraBackends(Enum):
-    """Maps valid literal values used to specify Camera class backend when requesting it from create_camera() method of
-    the VideoSystem class to programmatically callable variables.
+    """Maps valid literal values used to specify Camera class backend when requesting it from the create_camera ()
+    method of the VideoSystem class to programmatically callable variables.
 
     Use this enumeration instead of 'hardcoding' Camera backends where possible to automatically adjust to future API
     changes to this library.
@@ -40,21 +40,21 @@ class CameraBackends(Enum):
     and only use opencv as a 'fallback' for camera that do not support GeniCam standard.
     """
 
-    HARVESTERS: str = "harvesters"
+    HARVESTERS = "harvesters"
     """
     This is the preferred backend for all cameras that support the GeniCam standard. This includes most scientific and
     industrial machine-vision cameras. This backend is based on the 'harvesters' project and it works with any type of
     GeniCam camera (USB, Ethernet, PCIE). The binding is extremely efficient and can handle large volume of data at a 
     high framerate.
     """
-    OPENCV: str = "opencv"
+    OPENCV = "opencv"
     """
     This is the 'fallback' backend that should be used with cameras that do not support the GeniCam standard. OpenCV is
     a widely used machine-vision library that offers a flexible camera interface and video-acquisition tools. That said,
     the publicly available OpenCV bindings differ in efficiency for different platforms and camera types and may require
     additional project-specific configuration to work optimally. 
     """
-    MOCK: str = "mock"
+    MOCK = "mock"
     """
     This backend should not be used in production projects. It is used to optimize project testing by providing a 
     Camera class that is not limited by available hardware. This is primarily used to enable parallel testing of 
@@ -170,7 +170,7 @@ class OpenCVCamera:
         self._acquiring: bool = False
 
     def __del__(self) -> None:
-        """Ensures that camera is disconnected upon garbage collection."""
+        """Ensures that the camera is disconnected upon garbage collection."""
         self.disconnect()
 
     def __repr__(self) -> str:
@@ -185,7 +185,7 @@ class OpenCVCamera:
     def connect(self) -> None:
         """Initializes the camera VideoCapture object and sets the video acquisition parameters.
 
-        This method has to be called before calling grab_frames() method. It is used to initialize and prepare the
+        This method has to be called before calling the grab_frames () method. It is used to initialize and prepare the
         camera for image collection.
 
         Notes:
@@ -221,7 +221,7 @@ class OpenCVCamera:
         """Disconnects from the camera by releasing the VideoCapture object.
 
         After calling this method, it will be impossible to grab new frames until the camera is (re)connected to via the
-        connect() method. Make sure this method is called during VideoSystem shutdown procedure to properly release
+        connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
 
@@ -316,7 +316,7 @@ class OpenCVCamera:
             calling this method extracts the first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-            delay up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 
@@ -326,7 +326,7 @@ class OpenCVCamera:
 
         Returns:
             A NumPy array with the outer dimensions matching the preset camera frame dimensions. All returned frames
-            use the BGR colorspace by default and will, therefore, include 3 additional color channel dimensions for
+            use the BGR colorspace by default and will, therefore, include three additional color channel dimensions for
             each two-dimensional pixel index.
 
         Raises:
@@ -431,7 +431,7 @@ class HarvestersCamera:
         self._harvester.update()  # Discovers compatible cameras using the input .cti file interface
 
     def __del__(self) -> None:
-        """Ensures that camera is disconnected upon garbage collection."""
+        """Ensures that the camera is disconnected upon garbage collection."""
         self.disconnect()  # Releases the camera object
         self._harvester.reset()  # Releases the Harvester class resources
 
@@ -447,9 +447,10 @@ class HarvestersCamera:
     def connect(self) -> None:
         """Initializes the camera ImageAcquirer object and sets the video acquisition parameters.
 
-        This method has to be called before calling grab_frames() method. It is used to initialize and prepare the
+        This method has to be called before calling the grab_frames () method. It is used to initialize and prepare the
         camera for image collection. Note, the method does not automatically start acquiring images. Image acquisition
-        starts with the first call to grab_frames() method to make the API consistent across all our camera classes.
+        starts with the first call to the grab_frames () method to make the API consistent across all our camera
+        classes.
 
         Notes:
             While this method passes acquisition parameters, such as fps and frame dimensions, to the camera, there is
@@ -487,7 +488,7 @@ class HarvestersCamera:
         the ImageAcquirer object.
 
         After calling this method, it will be impossible to grab new frames until the camera is (re)connected to via the
-        connect() method. Make sure this method is called during VideoSystem shutdown procedure to properly release
+        connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
 
@@ -564,7 +565,7 @@ class HarvestersCamera:
             first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-            delay up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 
@@ -621,7 +622,7 @@ class HarvestersCamera:
                 out_array: NDArray[Any] = content.data.reshape(height, width).copy()
                 return out_array
 
-            # For color data, evaluates the input format and reshapes the data as necessary
+            # For color data, evaluates the input format and reshapes the data as necessary.
             # This is excluded from coverage as we do not have a color-capable camera to test this right now
             elif (
                 data_format in rgb_formats
@@ -662,7 +663,7 @@ class MockCamera:
     """Simulates (mocks) the API behavior and functionality of the OpenCVCamera and HarvestersCamera classes.
 
     This class is primarily used to test VideoSystem class functionality without using a physical camera, which
-    optimizes testing efficiency and speed. The class mimics the behavior of the 'real' camera classes, but does not
+    optimizes testing efficiency and speed. The class mimics the behavior of the 'real' camera classes but does not
     establish a physical connection with any camera hardware. The class accepts and returns static values that fully
     mimic the 'real' API.
 
@@ -696,8 +697,10 @@ class MockCamera:
         _frames: Stores the pool of pre-generated frame images used to simulate frame grabbing.
         _current_frame_index: The index of the currently evaluated frame in the pre-generated frame pool. This is used
             to simulate the cyclic buffer used by 'real' camera classes.
+        _timer: After the camera is 'connected', this attribute is used to store the timer class that controls the
+            output fps rate.
         _time_between_frames: Stores the number of milliseconds that has to pass between acquiring new frames. This is
-            used to simulate real camera fps rate.
+            used to simulate the real camera fps rate.
     """
 
     def __init__(
@@ -737,8 +740,7 @@ class MockCamera:
         self._frames = tuple(frames_list)
         self._current_frame_index: int = 0
 
-        # Uses millisecond precision, which supports simulating up to 1000 fps.
-        self._timer: PrecisionTimer = PrecisionTimer("ms")
+        self._timer: PrecisionTimer | None = None
 
         # Uses the fps to derive the number of microseconds that has to pass between each frame acquisition. This is
         # used to simulate real camera fps during grab_frame() runtime.
@@ -748,10 +750,15 @@ class MockCamera:
         """Simulates connecting to the camera, which is a necessary prerequisite to grab frames from the camera."""
         self._camera = True
 
+        # Uses millisecond precision, which supports simulating up to 1000 fps. The time has to be initialized here to
+        # make the class compatible with the VideoSystem, class (due to multiprocessing backend).
+        self._timer = PrecisionTimer("ms")
+
     def disconnect(self) -> None:
         """Simulates disconnecting from the camera, which is part of the broader camera shutdown procedure."""
         self._camera = False
         self._acquiring = False
+        self._timer = None
 
     @property
     def is_connected(self) -> bool:
@@ -796,8 +803,8 @@ class MockCamera:
 
         Returns:
             A NumPy array with the outer dimensions matching the preset camera frame dimensions. Depending on whether
-            the camera is simulating 'color' or 'monochrome' mode, the returned frames will either have 1 or 3 color
-            channels.
+            the camera is simulating 'color' or 'monochrome' mode, the returned frames will either have one or three
+            color channels.
 
         Raises:
             RuntimeError: If the method is called for a class not currently 'connected' to a camera.
@@ -816,12 +823,14 @@ class MockCamera:
 
         # All our 'real' classes are designed to block in-place if the frame is not available. Here, this behavior
         # is simulated by using the timer class to 'force' the method to work at a certain FPS rate.
-        while self._timer.elapsed < self._time_between_frames:
+        while self._timer is not None and self._timer.elapsed < self._time_between_frames:
             pass
 
         # Acquires the next frame from the frame pool
         frame = self._frames[self._current_frame_index].copy()
-        self._timer.reset()  # Resets the timer to measure the time elapsed since the last frame acquisition.
+
+        if self._timer is not None:
+            self._timer.reset()  # Resets the timer to measure the time elapsed since the last frame acquisition.
 
         # Increments the flame pool index. Since the frame pool size is statically set to 10, the maximum retrieval
         # index is 9. Whenever the index reaches 9, it is reset back to 0 (to simulate circular buffer behavior).

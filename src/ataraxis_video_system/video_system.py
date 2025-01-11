@@ -1,10 +1,10 @@
-"""This module contains the main VideoSystem class that contains methods for setting up, running, and tearing down
+"""This module provides the main VideoSystem class that contains methods for setting up, running, and tearing down
 interactions between Camera and Saver classes.
 
-While Camera and Saver classes provide convenient interface for cameras and saver backends, VideoSystem connects
-cameras to savers and manages the flow of frames between them. Each VideoSystem is a self-contained entity that
-provides a simple API for recording data from a wide range of cameras as images or videos. The class is written in a
-way that maximizes runtime performance.
+While Camera and Saver classes provide an interface for cameras and saver backends, VideoSystem connects cameras to
+savers and manages the flow of frames between them. Each VideoSystem is a self-contained entity that provides a simple
+API for recording data from a wide range of cameras as images or videos. The class is written in a way that maximizes
+runtime performance.
 
 All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
@@ -22,6 +22,7 @@ from multiprocessing import (
     Process,
 )
 from multiprocessing.managers import SyncManager
+from multiprocessing.shared_memory import SharedMemory
 
 import cv2
 import numpy as np
@@ -110,7 +111,7 @@ class VideoSystem:
 
     This class controls the runtime of Camera and Saver instances running on independent cores (processes) to maximize
     the frame throughout. The class achieves two main objectives: It efficiently moves frames acquired by camera(s)
-    to the saver(s) that write them to disk and manages runtime behavior of the managed classes. To do so, the class
+    to the saver(s) that writes them to disk and manages runtime behavior of the managed classes. To do so, the class
     initializes and controls multiple subprocesses to ensure frame producer and consumer classes have sufficient
     computational resources. The class abstracts away all necessary steps to set up, execute, and tear down the
     processes through an easy-to-use API.
@@ -275,7 +276,7 @@ class VideoSystem:
 
         Args:
             camera_id: The unique integer ID code for the camera. Note, each camera managed by the same VideoSystem has
-                to have a unique ID code. This ID is used to identify the frames produce by the camera in logs and
+                to have a unique ID code. This ID is used to identify the frames produced by the camera in logs and
                 during real-time inter-process communication. The IDs are user-defined, there is no inherent meaning for
                 these codes.
             save_frames: Determines whether frames acquired by this camera should be saved to disk as images or video.
@@ -288,7 +289,7 @@ class VideoSystem:
                 the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
                 non-GenTL-compatible cameras.
             output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This
-                allows real time processing of acquired frames by other concurrent processes.
+                allows real-time processing of acquired frames by other concurrent processes.
             output_frame_rate: Allows adjusting the frame rate at which acquired frames are sent to the output_queue.
                 Note, the output framerate cannot exceed the native frame rate of the camera, but it can be lower than
                 the native acquisition frame rate. The acquisition frame rate is set via the frames_per_second argument
@@ -363,7 +364,7 @@ class VideoSystem:
         output_frames = False if not isinstance(output_frames, bool) else output_frames
 
         # Pre-initializes the fps override to 0. A 0 value indicates that the override is not used. It is enabled
-        # automatically as a fallback when camera lacks native fps limiting capabilities.
+        # automatically as a fallback when the camera lacks native fps limiting capabilities.
         fps_override: int | float = 0
 
         # Converts integer frames_per_second inputs to floats, since the Camera classes expect it to be a float.
@@ -375,7 +376,7 @@ class VideoSystem:
 
         # OpenCVCamera
         if camera_backend == CameraBackends.OPENCV:
-            # If backend preference is None, uses generic preference
+            # If the backend preference is None, uses generic preference
             if opencv_backend is None:
                 opencv_backend = int(cv2.CAP_ANY)
             # If the backend is not an integer or None, raises an error
@@ -612,7 +613,7 @@ class VideoSystem:
                 value means better quality, less data loss, bigger file size, and slower processing time.
             jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image color-space. Has to be
                 one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended to use code 444 to
-                preserve the full color-space of the image if your application requires this. Another popular option is
+                preserve the full color space of the image if your application requires this. Another popular option is
                 422, which results in better compression at the cost of color coding precision.
             png_compression: An integer value between 0 and 9 that specifies the compression used for .png image files.
                 Unlike JPEG, PNG files are always lossless. This value controls the trade-off between the compression
@@ -761,7 +762,7 @@ class VideoSystem:
             input_pixel_format: The pixel format used by input data. Use InputPixelFormats enumeration to specify the
                 pixel format of the frame data that will be passed to this saver. Currently, only 'MONOCHROME', 'BGR',
                 and 'BGRA' options are supported. The correct option to choose depends on the configuration of the
-                Camera class(es) that acquire frames for this saver.
+                Camera class(es) that acquires frames for this saver.
             output_pixel_format: The pixel format to be used by the output video file. Use OutputPixelFormats
                 enumeration to specify the desired pixel format. Currently, only 'YUV420' and 'YUV444' options are
                 supported.
@@ -772,9 +773,9 @@ class VideoSystem:
                 encoding process, as the changes are uniform across the whole video. Lower values mean better quality
                 (0 is best, 51 is worst). Note, the default value assumes H265 encoder and is likely too low for H264
                 encoder. H264 encoder should default to ~25.
-            gpu: The index of the GPU to use for hardware encoding. Valid GPU indices can be obtained from 'nvidia-smi'
-                command and start with 0 for the first available GPU. This is only used when hardware_encoding is True
-                and is ignored otherwise.
+            gpu: The index of the GPU to use for hardware encoding. Valid GPU indices can be obtained from the
+                'nvidia-smi' command and start with 0 for the first available GPU. This is only used when
+                hardware_encoding is True and is ignored otherwise.
 
         Raises:
             TypeError: If the input arguments are not of the correct type.
@@ -891,7 +892,7 @@ class VideoSystem:
             try:
                 # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
                 subprocess.run(args=["nvidia-smi"], capture_output=True, text=True, check=True)
-            except subprocess.CalledProcessError:  # pragma: no cover
+            except Exception:  # pragma: no cover
                 message = (
                     f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. The object is "
                     f"configured to use the GPU video encoding backend, which currently only supports NVIDIA GPUs. "
@@ -918,13 +919,13 @@ class VideoSystem:
     def start(self) -> None:
         """Starts the consumer and producer processes of the VideoSystem instance and begins acquiring camera frames.
 
-        This process begins frame acquisition, but not frame saving! To enable saving acquired frames, call
+        This process starts acquiring frames but does not save them! To enable saving acquired frames, call the
         start_frame_saving() method. A call to this method should always be paired with a call to the stop() method to
         properly release the resources allocated to the class.
 
         Notes:
             By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
-            in some cases the user may want to see the camera feed, but only record the frames after some initial
+            in some cases the user may want to see the camera feed but only record the frames after some initial
             setup. To enable saving camera frames, call the start_frame_saving() method.
 
         Raises:
@@ -1136,13 +1137,13 @@ class VideoSystem:
         Notes:
             Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this method
             tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
-            advised to test each of the IDs with 'interactive-run' CLI command to manually map IDs to cameras based
+            advised to test each of the IDs with the 'interactive-run' CLI command to manually map IDs to cameras based
             on the produced visual stream.
 
             This method works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The method
             connects to each camera and takes a test image to ensure the camera is accessible, and it should ONLY be
             called when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will
-            stop early if it encounters more than 5 non-functional IDs in a row.
+            stop early if it encounters more than five non-functional IDs in a row.
 
             This method will yield errors from OpenCV, which are not circumventable at this time. That said,
             since the method is not designed to be used in well-configured production runtimes, this is not
@@ -1232,7 +1233,7 @@ class VideoSystem:
         display_queue: Queue,  # type: ignore
         camera_id: int,
     ) -> None:  # pragma: no cover
-        """Continuously fetches frame images from display_queue and displays them via OpenCV imshow() method.
+        """Continuously fetches frame images from display_queue and displays them via the OpenCV imshow () method.
 
         This method runs in a thread as part of the _produce_images_loop() runtime. It is used to display
         frames as they are grabbed from the camera and passed to the multiprocessing queue. This allows visually
@@ -1240,7 +1241,7 @@ class VideoSystem:
 
         Notes:
             Since the method uses OpenCV under-the-hood, it repeatedly releases GIL as it runs. This makes it
-            beneficial to have this functionality as a sub-thread, instead of realizing it at the same level as the
+            beneficial to have this functionality as a sub-thread instead of realizing it at the same level as the
             rest of the image production loop code.
 
             This thread runs until it is terminated through the display window GUI or passing a non-NumPy-array
@@ -1314,7 +1315,7 @@ class VideoSystem:
         Args:
             video_system_id: The unique byte-code identifier of the VideoSystem instance. This is used to identify the
                 VideoSystem when logging data.
-            cameras: The list of CameraSystem instances managed by this VideoSystem instance.
+            cameras: The list of CameraSystem instances is managed by this VideoSystem instance.
             image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
             output_queue: A multiprocessing queue that buffers and pipes acquired frames to other concurrently active
                 processes (not managed by this VideoSystem instance).
@@ -1384,7 +1385,7 @@ class VideoSystem:
             else:
                 frame_time = -1.0  # This is essentially similar to None
 
-            # Calculates the timeout in microseconds per frame, for outputting the frames to other processes.
+            # Calculates the timeout in microseconds per frame for outputting the frames to other processes.
             if camera_system.output_frames:
                 # noinspection PyTypeChecker
                 output_time = convert_time(
@@ -1410,6 +1411,9 @@ class VideoSystem:
             output_timer: PrecisionTimer = PrecisionTimer("us")
 
             # Fills the camera dictionary with the necessary data for each camera:
+            # Root camera entry:
+            camera_dict[camera_id] = {}
+
             # Display
             camera_dict[camera_id]["show_timer"] = show_timer
             camera_dict[camera_id]["show_time"] = show_time
@@ -1430,9 +1434,9 @@ class VideoSystem:
         terminator_array.write_data(index=3, data=np.uint8(1))
 
         # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 1
-        while not self._terminator_array.read_data(index=0):  # type: ignore
+        while not terminator_array.read_data(index=0):
             # Loops over each camera during each acquisition cycle:
-            for camera_index, camera_system in enumerate(cameras):
+            for camera_system in cameras:
                 # Extracts the camera class and acquisition runtime parameters from the camera_dictionary
                 camera = camera_system.camera
                 camera_id = int(camera.camera_id)
@@ -1461,7 +1465,7 @@ class VideoSystem:
                 if acquisition_timer.elapsed < frame_timeout:
                     continue
                 else:
-                    # Resets the acquisition timer before processing the frame, so that the wait time for the next
+                    # Resets the acquisition timer before processing the frame so that the wait time for the next
                     # frame is 'absorbed' into processing the frame.
                     acquisition_timer.reset()
 
@@ -1470,13 +1474,13 @@ class VideoSystem:
                 # is only executed if frame saving is enabled via the terminator_array variable using index 1 (globally)
                 # and if the specific Camera instance is configured to save frames at all.
                 if terminator_array.read_data(index=1) and camera_system.save_frames:
-                    image_queue.put((frame, camera_index, frame_stamp))
+                    image_queue.put((frame, camera_id, frame_stamp))
 
                 # If the camera is configured to output frame data via the output_queue and the necessary conditions
                 # are fulfilled, sends the frame data to the output_queue. Does not include frame acquisition timestamp,
-                # as this data is usually not necessary for real time processing.
+                # as this data is usually not necessary for real-time processing.
                 if terminator_array.read_data(index=2) and output_timer.elapsed >= output_timeout:
-                    output_queue.put((frame, camera_index))
+                    output_queue.put((frame, camera_id))
                     output_timer.reset()  # Resets the output timer
 
                 # If the camera is configured to display acquired frames, queues each frame to be displayed. This
@@ -1537,8 +1541,8 @@ class VideoSystem:
         Args:
             video_system_id: The unique byte-code identifier of the VideoSystem instance. This is used to identify the
                 VideoSystem when logging data.
-            savers: The tuple of SaverSystem instances managed by this VideoSystem instance.
-            cameras: The tuple of CameraSystem instances managed by this VideoSystem instance.
+            savers: The tuple of SaverSystem instances is managed by this VideoSystem instance.
+            cameras: The tuple of CameraSystem instances is managed by this VideoSystem instance.
             image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
             logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
                 This queue is used to buffer and pipe data to be logged to the logger cores.
@@ -1551,32 +1555,39 @@ class VideoSystem:
         # Loops over all managed savers and sets up the necessary assets to process incoming frames
         saver_dict: dict[int, Any] = {}
         for saver_system in savers:
-            # Video savers require additional setup before they can save 'live' frames. Specifically, they need to
-            # create the video-container and set up the process to pipe frame data to the encoder process.
+            # Both savers have an additional setup process that has to be carried out before frames can be submitted for
+            # saving,
             if isinstance(saver_system.saver, VideoSaver):
                 # Retrieves the source camera object. Since cameras are verified at instantiation, this process can
                 # query the width, height, and fps information from the source without connecting to camera hardware.
                 # This allows pre-setting the video container to encode frame data grabbed from the source hardware
-                # by the producer process.
-                source: _CameraSystem = cameras[saver_system.source_id]
-
-                # Initializes the video encoding by instantiating the FFMPEG process that does the encoding.
-                saver_system.saver.create_live_video_encoder(
-                    frame_width=source.camera.width,  # type: ignore
-                    frame_height=iource.camera.height,  # type: ignore
-                    video_id=f"{saver_system.source_id:04d}",  # Uses the index of the source with 4-digit padding
-                    video_frames_per_second=fsource.camera.fps,  # type: ignore
-                )
+                # by the producer process. The start() method ensures each camera that produces frames is paired with
+                # exactly one saver class (and there are no unpaired cameras and savers).
+                for system in cameras:
+                    if system.camera.camera_id == saver_system.source_id:
+                        # Initializes the video encoding by instantiating the FFMPEG process that does the encoding.
+                        saver_system.saver.create_live_video_encoder(
+                            frame_width=system.camera.width,  # type: ignore
+                            frame_height=system.camera.height,  # type: ignore
+                            video_id=f"{saver_system.source_id:04d}",  # Uses the index of the source with padding
+                            video_frames_per_second=system.camera.fps,  # type: ignore
+                        )
+                        break  # aborts once the source is resolved
+            # For ImageSavers, the only setup consists of calling the 'live' image saver creation method to initialize
+            # the threads and local queue objects.
+            else:
+                saver_system.saver.create_live_image_saver()
 
             # Packages the savers into a dictionary using their source id. The initializer ensures that all savers
             # have unique source IDs.
-            saver_dict[saver_system.source_id]["saver"] = saver_system.saver
+            saver_dict[saver_system.source_id] = {}  # Precreates the root dictionary entry for each saver
+            saver_dict[saver_system.source_id]["saver"] = saver_system.saver  # Adds the saver class
 
             # For each saver, regardless of type, appends a saved frame tracker to the frame_counters list. This is
             # used to generate frame-ids, which is used by ImageSavers. Although VideoSavers do not use this
-            # functionality, they are designed to accept ID codes for API compatibility, so frame_trackers is created
+            # functionality, they are designed to accept ID codes for API compatibility, so frame_trackers are created
             # both for ImageSavers and VideoSavers.
-            saver_dict[saver_system.source_id]["frame_tracker"].append(1)  # The first frame number is 1
+            saver_dict[saver_system.source_id]["frame_tracker"] = 1  # The first frame number is 1
 
         # Sets the 3d index value of the terminator_array to 2 to indicate that all SaverSystems have been started.
         terminator_array.write_data(index=3, data=np.uint8(2))
@@ -1603,6 +1614,9 @@ class VideoSystem:
             frame_id = f"{saver_dict[camera_id]['frame_tracker']:020d}"
             saver.save_frame(frame_id, frame)  # Same API for Image and Video savers.
 
+            # Increments the frame tracker
+            saver_dict[camera_id]["frame_tracker"] += 1
+
             # Logs frame acquisition data. For this, uses camera_id as data, video system id as source_id and the
             # timestamp transmitted from the producer process.
             package = LogPackage(
@@ -1617,7 +1631,7 @@ class VideoSystem:
             if isinstance(saver_system.saver, VideoSaver):
                 saver_system.saver.terminate_live_encoder()
             else:
-                saver_system.saver.shutdown()
+                saver_system.saver.stop_live_image_saver()
 
         # Disconnects from the shared memory array and terminates the process.
         terminator_array.disconnect()
@@ -1661,8 +1675,8 @@ class VideoSystem:
     def stop_frame_saving(self) -> None:
         """Disables saving acquired camera frames.
 
-        Does not interfere with grabbing and displaying the frames to user, this process is only stopped when the main
-        stop() method is called.
+        Does not interfere with grabbing and displaying the frames to the user, this process is only stopped when the
+        main stop() method is called.
         """
         if self._started and self._terminator_array is not None:
             self._terminator_array.write_data(index=1, data=np.uint8(0))
@@ -1670,7 +1684,7 @@ class VideoSystem:
     def start_frame_saving(self) -> None:
         """Enables saving acquired camera frames.
 
-        The frames are grabbed and (optionally) displayed to user after the main start() method is called, but they
+        The frames are grabbed and (optionally) displayed to the user after the main start() method is called, but they
         are not initially saved to disk. The call to this method additionally enables saving the frames to disk
         """
         if self._started and self._terminator_array is not None:
@@ -1704,8 +1718,8 @@ class VideoSystem:
 
         Args:
             saver_index: The index at which the saver was added to the VideoSystem. This directly depends on the order
-                the add_saver methods were called in, with the first added saver having the index of 0, the 2nd an index
-                of 1, etc.
+                the add_saver methods were called in, with the first added saver having the index of 0, the second an
+                index of 1, etc.
         """
         saver_system = self._savers[saver_index]
         if isinstance(saver_system.saver, VideoSaver):
@@ -1720,3 +1734,19 @@ class VideoSystem:
 
         # Fallback to appease mypy, should not be reachable
         raise TypeError(message)  # pragma: no cover
+
+    def vacate_shared_memory_buffer(self) -> None:
+        """Clears the SharedMemory buffer with the same name as the one used by the class.
+
+        While this method should not be needed if the class is used correctly, there is a possibility that invalid
+        class termination leaves behind non-garbage-collected SharedMemory buffer. In turn, this would prevent the
+        class remote Process from being started again. This method allows manually removing that buffer to reset the
+        system. The method is designed to do nothing if the buffer with the same name as the microcontroller does not
+        exist.
+        """
+        try:
+            buffer = SharedMemory(name=f"{self._id}_terminator_array", create=False)
+            buffer.close()
+            buffer.unlink()
+        except FileNotFoundError:
+            pass

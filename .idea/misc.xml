@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="cmdArguments" value="--line-length 120" />
     <option name="enabledOnReformat" value="true" />
-    <option name="sdkName" value="axvs_dev_lin" />
+    <option name="sdkName" value="axvs_dev_osx" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="axvs_dev_lin" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="axvs_dev_osx" project-jdk-type="Python SDK" />
 </project>

@@ -1,4 +1,4 @@
-"""This module contains a CLI script that can be used to instantiate a VideoSystem from command-line interface and
+"""This module contains a CLI script that can be used to instantiate a VideoSystem from the command-line interface and
 manually control its runtime.
 
 Primarily, this is helpful for manual and semi-automated evaluation of class performance that benefits from the ability
@@ -67,7 +67,7 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
 )
 @click.option(
     "-i",
-    "--camera_id",
+    "--camera_index",
     type=int,
     default=0,
     show_default=True,
@@ -175,7 +175,7 @@ def live_run(
 
     # Initializes the system
     video_system = VideoSystem(
-        system_id=np.uint(111),
+        system_id=np.uint8(111),
         data_logger=logger,
         output_directory=Path(output_directory),
         harvesters_cti_path=Path(cti_path) if cti_path is not None else None,
@@ -280,7 +280,7 @@ def live_run(
             console.echo(message, level=LogLevel.WARNING)
 
     message = (
-        f"Live VideoSystem: terminated. Saved frames (if any) are available from the " f"{output_directory} directory."
+        f"Live VideoSystem: terminated. Saved frames (if any) are available from the {output_directory} directory."
     )
     console.echo(message=message, level=LogLevel.SUCCESS)
 

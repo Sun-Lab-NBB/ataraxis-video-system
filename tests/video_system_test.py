@@ -3,9 +3,11 @@
 from copy import copy
 from pathlib import Path
 import subprocess
+import multiprocessing
 
 import numpy as np
 import pytest
+from ataraxis_time import PrecisionTimer
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import DataLogger
 
@@ -20,6 +22,7 @@ from ataraxis_video_system.saver import (
     OutputPixelFormats,
 )
 from ataraxis_video_system.camera import OpenCVCamera, CameraBackends
+from hyperframe import frame
 
 
 def check_opencv() -> bool:
@@ -389,7 +392,7 @@ def test_opencvcamera_configuration_errors(video_system):
         )
 
     # Unsupported fps
-    fps = 3000
+    fps = 3000.0
     message = (
         f"Unable to add the OpenCVCamera with id {camera_id} to the VideoSystem with id {video_system._id}. "
         f"Attempted configuring the camera to acquire frames at the rate of {fps} frames per second, but the camera "
@@ -534,7 +537,7 @@ def test_add_video_saver(video_system):
 
     # Adds a video saver instance to the VideoSystem instance. If the system has an NVIDIA gpu, the first saver is a
     # GPU saver. Otherwise, both savers are CPU savers.
-    if not check_nvidia():
+    if check_nvidia():
         video_system.add_video_saver(
             source_id=np.uint8(222),
             hardware_encoding=True,
@@ -694,3 +697,66 @@ def test_add_video_saver_errors(video_system):
     )
     with pytest.raises(ValueError, match=error_format(message)):
         video_system.add_video_saver(source_id=source_id)
+
+
+def test_start_stop(video_system):
+
+    # While not strictly necessary, ensures that there are no leftover uncollected shared memory buffers.
+    video_system.vacate_shared_memory_buffer()
+
+    # Does not test displaying threads, as this functionality is currently broken on MacOS. We test it through the
+    # live_run() script. Verifies using three cameras at the same time to achieve maximum feature coverage.
+
+    # Saves frames and outputs them to queue
+    video_system.add_camera(
+        camera_id=np.uint8(101),
+        save_frames=True,
+        display_frames=False,
+        display_frame_rate=1,
+        output_frames=True,
+        camera_backend=CameraBackends.MOCK,
+    )
+    # Instantiates a video saver for the 101 camera.
+    video_system.add_video_saver(source_id=np.uint8(101), quantization_parameter=40)
+
+    # Just saves the frames
+    video_system.add_camera(
+        camera_id=np.uint8(202),
+        save_frames=True,
+        display_frames=False,
+        output_frames=False,
+        camera_backend=CameraBackends.MOCK,
+    )
+    # Instantiates an image saver for the 202 camera.
+    video_system.add_image_saver(source_id=np.uint8(202))
+
+    # This camera neither saves nor displays frames, it is here just to load up system resources.
+    video_system.add_camera(
+        camera_id=np.uint8(51),
+        save_frames=False,
+        display_frames=False,
+        output_frames=False,
+        camera_backend=CameraBackends.MOCK,
+    )
+
+    # Starts cameras and savers
+    video_system.start()
+
+    # Tests frame for all cameras
+    timer = PrecisionTimer("s")
+    video_system.start_frame_saving()
+    timer.delay_noblock(delay=2)  # 2-second delay
+    video_system.stop_frame_saving()
+
+    # The first camera is additionally configured to output frames via the output_queue. Given the output framerate of
+    # 1 fps and the 2-second delay, the camera should output between 2 and 3 frames
+    out_frames = []
+    while not video_system.output_queue.empty():
+        out_frames.append(video_system.output_queue.get())
+
+    assert 2 >= len(out_frames) and len(out_frames) < 4
+
+    # Frames are submitted tot he output queue as a tuple of frame data (as a numpy aray) and the ID of the camera that
+    # produced the frame. Ensures only the first camera sent frames to teh output queue.
+    for frame_tuple in out_frames:
+        assert frame_tuple[2] == 101
