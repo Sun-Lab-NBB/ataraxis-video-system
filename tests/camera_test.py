@@ -1,56 +1,10 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import VideoSystem
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
-
-
-def check_opencv():
-    """Returns True if the system has access to an OpenCV-compatible camera.
-
-    This is used to disable saver tests that rely on the presence of an OpenCV-compatible camera when no valid hardware
-    is available.
-    """
-    # noinspection PyBroadException
-    try:
-        opencv_id = VideoSystem.get_opencv_ids()
-        assert len(opencv_id) > 0  # If no IDs are discovered, this means there are no OpenCV cameras.
-        return True
-    except:
-        return False
-
-
-def check_harvesters(cti_path: Path):
-    """Returns True if the system has access to a Harvesters (GeniCam-compatible) camera.
-
-    Args:
-        cti_path: The path to the CTI file to use for GeniCam camera connection.
-
-    This is used to disable saver tests that rely on the presence of a Harvesters-compatible camera when no valid
-    hardware is available.
-    """
-
-    # If the CTI file does not exist, it is impossible to interface with Harvesters cameras, even if they exist.
-    if not cti_path.exists():
-        return False
-
-    try:
-        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
-        assert len(harvesters_id) > 0  # If no IDs are discovered, this means there are no Harvesters cameras.
-        return True
-    except:
-        return False
-
-
-@pytest.fixture()
-def cti_path() -> Path:
-    """Returns the path to the CTI file that is used to interface with GeniCam-compatible cameras."""
-    return Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
 
 
 @pytest.mark.parametrize(
@@ -160,11 +114,11 @@ def test_opencv_camera_init_repr() -> None:
         (False, 15, 176, 144),
     ],
 )
-def test_opencv_camera_connect_disconnect(color, fps, width, height) -> None:
+def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height) -> None:
     """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
 
     # Skips the test if OpenCV-compatible hardware is not available.
-    if not check_opencv():
+    if not has_opencv:
         pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
@@ -193,11 +147,11 @@ def test_opencv_camera_connect_disconnect(color, fps, width, height) -> None:
         (False, 30, 1280, 720),
     ],
 )
-def test_opencv_camera_grab_frame(color, fps, width, height) -> None:
+def test_opencv_camera_grab_frame(has_opencv, color, fps, width, height) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
 
     # Skips the test if OpenCV-compatible hardware is not available.
-    if not check_opencv():
+    if not has_opencv:
         pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
@@ -257,11 +211,11 @@ def test_opencv_camera_grab_frame_errors() -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_init_repr(cti_path) -> None:
+def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
 
     # Skips the test if Harvesters-compatible hardware is not available.
-    if not check_harvesters(cti_path):
+    if not has_harvesters:
         pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
@@ -287,11 +241,11 @@ def test_harvesters_camera_init_repr(cti_path) -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_connect_disconnect(cti_path) -> None:
+def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
 
     # Skips the test if Harvesters-compatible hardware is not available.
-    if not check_harvesters(cti_path):
+    if not has_harvesters:
         pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
@@ -316,11 +270,11 @@ def test_harvesters_camera_connect_disconnect(cti_path) -> None:
     "fps, width, height",
     [(30, 600, 400), (60, 1200, 1200), (None, None, None)],
 )
-def test_harvesters_camera_grab_frame(fps, width, height, cti_path) -> None:
+def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_path) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
 
     # Skips the test if Harvesters-compatible hardware is not available.
-    if not check_harvesters(cti_path):
+    if not has_harvesters:
         pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
@@ -348,11 +302,11 @@ def test_harvesters_camera_grab_frame(fps, width, height, cti_path) -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_grab_frame_errors(cti_path) -> None:
+def test_harvesters_camera_grab_frame_errors(has_harvesters, cti_path) -> None:
     """Verifies the error handling of the HarvestersCamera grab_frame() method."""
 
     # Skips the test if Harvesters-compatible hardware is not available.
-    if not check_harvesters(cti_path):
+    if not has_harvesters:
         pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup

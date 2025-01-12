@@ -2,7 +2,6 @@
 
 from copy import copy
 from pathlib import Path
-import subprocess
 
 import numpy as np
 import pytest
@@ -23,57 +22,6 @@ from ataraxis_video_system.saver import (
 from ataraxis_video_system.camera import OpenCVCamera, CameraBackends
 
 
-def check_opencv() -> bool:
-    """Returns True if the system has access to an OpenCV-compatible camera.
-
-    This is used to disable saver tests that rely on the presence of an OpenCV-compatible camera when no valid hardware
-    is available.
-    """
-    # noinspection PyBroadException
-    try:
-        opencv_id = VideoSystem.get_opencv_ids()
-        assert len(opencv_id) > 0  # If no IDs are discovered, this means there are no OpenCV cameras.
-        return True
-    except:
-        return False
-
-
-def check_harvesters(cti_path: Path) -> bool:
-    """Returns True if the system has access to a Harvesters (GeniCam-compatible) camera.
-
-    Args:
-        cti_path: The path to the CTI file to use for GeniCam camera connection.
-
-    This is used to disable saver tests that rely on the presence of a Harvesters-compatible camera when no valid
-    hardware is available.
-    """
-
-    # If the CTI file does not exist, it is impossible to interface with Harvesters cameras, even if they exist.
-    if not cti_path.exists():
-        return False
-
-    try:
-        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
-        assert len(harvesters_id) > 0  # If no IDs are discovered, this means there are no Harvesters cameras.
-        return True
-    except:
-        return False
-
-
-def check_nvidia():
-    """Returns True if the system has access to an NVIDIA GPU.
-
-    This is used to disable saver tests that rely on the presence of an NVIDIA GPU to use hardware encoding.
-    """
-    try:
-        subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
-        return True
-    # If the process fails, this likely means nvidia-smi is not available and, therefore, the system does not have
-    # access to an NVIDIA GPU.
-    except Exception:
-        return False
-
-
 @pytest.fixture()
 def data_logger(tmp_path) -> DataLogger:
     """Generates a DataLogger class instance and returns it to caller."""
@@ -82,7 +30,7 @@ def data_logger(tmp_path) -> DataLogger:
 
 
 @pytest.fixture
-def video_system(tmp_path, data_logger) -> VideoSystem:
+def video_system(tmp_path, data_logger, has_harvesters) -> VideoSystem:
     """Creates a VideoSystem instance and returns it to caller."""
 
     system_id = np.uint8(1)
@@ -91,7 +39,7 @@ def video_system(tmp_path, data_logger) -> VideoSystem:
     # If the local harvesters CTI file does not exist, sets the path to None to prevent initialization errors due to
     # a missing CTI path
     harvesters_cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
-    if not check_harvesters(harvesters_cti_path):
+    if not has_harvesters:
         harvesters_cti_path = None
 
     return VideoSystem(
@@ -201,9 +149,9 @@ def test_init_errors(data_logger):
         CameraBackends.HARVESTERS,
     ],
 )
-def test_add_camera(backend, video_system):
+def test_add_camera(backend, video_system, has_opencv):
     """Verifies the functioning of the VideoSystem add_camera() method for all supported camera backends."""
-    if backend == CameraBackends.OPENCV and not check_opencv():
+    if backend == CameraBackends.OPENCV and not has_opencv:
         pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
     if backend == CameraBackends.HARVESTERS and video_system._cti_path is None:
@@ -332,11 +280,11 @@ def test_add_camera_errors(video_system):
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_opencvcamera_configuration_errors(video_system):
+def test_opencvcamera_configuration_errors(video_system, has_opencv):
     """Verifies that add_camera() method correctly catches errors related to OpenCV camera configuration."""
 
     # Skips the test if OpenCV-compatible hardware is not available.
-    if not check_opencv():
+    if not has_opencv:
         pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Presets parameters that will be used by all errors
@@ -530,12 +478,12 @@ def test_add_image_saver_errors(video_system):
         video_system.add_image_saver(source_id=source_id)
 
 
-def test_add_video_saver(video_system):
+def test_add_video_saver(video_system, has_nvidia):
     """Verifies the functioning of the VideoSystem add_video_saver() method."""
 
     # Adds a video saver instance to the VideoSystem instance. If the system has an NVIDIA gpu, the first saver is a
     # GPU saver. Otherwise, both savers are CPU savers.
-    if check_nvidia():
+    if has_nvidia:
         video_system.add_video_saver(
             source_id=np.uint8(222),
             hardware_encoding=True,
@@ -696,7 +644,7 @@ def test_add_video_saver_errors(video_system):
     with pytest.raises(ValueError, match=error_format(message)):
         video_system.add_video_saver(source_id=source_id)
 
-@pytest.mark.xdist_group(name="group2")
+
 def test_start_stop(video_system):
     # While not strictly necessary, ensures that there are no leftover shared memory buffers.
     video_system.vacate_shared_memory_buffer()
@@ -766,3 +714,5 @@ def test_start_stop(video_system):
 
     # Ensures no frames made it to the output_queue
     assert video_system.output_queue.empty()
+
+    video_system.stop()

@@ -1,7 +1,6 @@
 """Contains tests for classes and methods provided by the saver.py module."""
 
 import time
-import subprocess
 
 import cv2
 import numpy as np
@@ -20,20 +19,6 @@ from ataraxis_video_system.saver import (
     OutputPixelFormats,
 )
 from ataraxis_video_system.camera import MockCamera
-
-
-def check_nvidia():
-    """Returns True if the system has access to an NVIDIA GPU.
-
-    This is used to disable saver tests that rely on the presence of an NVIDIA GPU to use hardware encoding.
-    """
-    try:
-        subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=True)
-        return True
-    # If the process fails, this likely means nvidia-smi is not available and, therefore, the system does not have
-    # access to an NVIDIA GPU.
-    except Exception:
-        return False
 
 
 def test_image_saver_repr(tmp_path):
@@ -149,21 +134,21 @@ def test_video_saver_repr(tmp_path):
 @pytest.mark.parametrize(
     "video_codec, hardware_encoding, output_pixel_format, preset",
     [
-        (VideoCodecs.H265, True, OutputPixelFormats.YUV444, GPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H265, True, OutputPixelFormats.YUV420, GPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H264, True, OutputPixelFormats.YUV444, GPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H264, True, OutputPixelFormats.YUV420, GPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H265, False, OutputPixelFormats.YUV444, CPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H265, False, OutputPixelFormats.YUV420, CPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H264, False, OutputPixelFormats.YUV444, CPUEncoderPresets.MEDIUM),
-        (VideoCodecs.H264, False, OutputPixelFormats.YUV420, CPUEncoderPresets.MEDIUM),
+        (VideoCodecs.H265, True, OutputPixelFormats.YUV444, GPUEncoderPresets.FASTEST),
+        (VideoCodecs.H265, True, OutputPixelFormats.YUV420, GPUEncoderPresets.FASTEST),
+        (VideoCodecs.H264, True, OutputPixelFormats.YUV444, GPUEncoderPresets.FASTEST),
+        (VideoCodecs.H264, True, OutputPixelFormats.YUV420, GPUEncoderPresets.FASTEST),
+        (VideoCodecs.H265, False, OutputPixelFormats.YUV444, CPUEncoderPresets.ULTRAFAST),
+        (VideoCodecs.H265, False, OutputPixelFormats.YUV420, CPUEncoderPresets.ULTRAFAST),
+        (VideoCodecs.H264, False, OutputPixelFormats.YUV444, CPUEncoderPresets.ULTRAFAST),
+        (VideoCodecs.H264, False, OutputPixelFormats.YUV420, CPUEncoderPresets.ULTRAFAST),
     ],
 )
-def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_format, preset, tmp_path):
+def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_format, preset, tmp_path, has_nvidia):
     """Verifies the functioning of the VideoSaver save_frame() and create_live_video_encoder() methods."""
 
     # Skips GPU-bound tests if no valid NVIDIA GPU is available.
-    if hardware_encoding and not check_nvidia():
+    if hardware_encoding and not has_nvidia:
         pytest.skip(f"Skipping this test as it requires an NVIDIA GPU.")
 
     # Setup
@@ -177,6 +162,7 @@ def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_for
         preset=GPUEncoderPresets.MEDIUM,
         input_pixel_format=InputPixelFormats.BGR,
         output_pixel_format=output_pixel_format,
+        quantization_parameter=50,
     )
     camera.connect()
 

@@ -1085,8 +1085,11 @@ class VideoSystem:
         # This inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
         self._started = False
 
-        # Sets the global shutdown flag to true and resets other values to 0.
+        # Sets the global shutdown flag to true
         self._terminator_array.write_data(index=0, data=np.uint8(1))
+
+        # Delays for 2 seconds to allow the consumer process to terminate its runtime
+        shutdown_timer.delay_noblock(delay=2)
 
         # Waits until both multiprocessing queues made by the instance are empty. This is aborted if the shutdown
         # stalls at this step for 10+ minutes
@@ -1149,41 +1152,49 @@ class VideoSystem:
             called when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will
             stop early if it encounters more than five non-functional IDs in a row.
 
-            This method will yield errors from OpenCV, which are not circumventable at this time. That said,
-            since the method is not designed to be used in well-configured production runtimes, this is not
-            a major concern.
-
         Returns:
              A tuple of strings. Each string contains camera ID, frame width, frame height, and camera fps value.
         """
-        non_working_count = 0
-        working_ids = []
 
-        # This loop will keep iterating over IDs until it discovers 5 non-working IDs. The loop is designed to
-        # evaluate 100 IDs at maximum to prevent infinite execution.
-        for evaluated_id in range(100):
-            # Evaluates each ID by instantiating a video-capture object and reading one image and dimension data from
-            # the connected camera (if any was connected).
-            camera = cv2.VideoCapture(evaluated_id)
+        # Disables OpenCV error logging temporarily
+        prev_log_level = cv2.getLogLevel()
+        cv2.setLogLevel(0)
 
-            # If the evaluated camera can be connected and returns images, it's ID is appended to the ID list
-            if camera.isOpened() and camera.read()[0]:
-                width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                fps = camera.get(cv2.CAP_PROP_FPS)
-                descriptive_string = f"OpenCV Camera ID: {evaluated_id}, Width: {width}, Height: {height}, FPS: {fps}."
-                working_ids.append(descriptive_string)
-                non_working_count = 0  # Resets non-working count whenever a working camera is found.
-            else:
-                non_working_count += 1
+        try:
+            non_working_count = 0
+            working_ids = []
 
-            # Breaks the loop early if more than 5 non-working IDs are found consecutively
-            if non_working_count >= 5:
-                break
+            # This loop will keep iterating over IDs until it discovers 5 non-working IDs. The loop is designed to
+            # evaluate 100 IDs at maximum to prevent infinite execution.
+            for evaluated_id in range(100):
+                # Evaluates each ID by instantiating a video-capture object and reading one image and dimension data
+                # from the connected camera (if any was connected).
+                camera = cv2.VideoCapture(evaluated_id)
 
-            camera.release()  # Releases the camera object to recreate it above for the next cycle
+                # If the evaluated camera can be connected and returns images, it's ID is appended to the ID list
+                if camera.isOpened() and camera.read()[0]:
+                    width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    fps = camera.get(cv2.CAP_PROP_FPS)
+                    descriptive_string = (
+                        f"OpenCV Camera ID: {evaluated_id}, Width: {width}, Height: {height}, FPS: {fps}."
+                    )
+                    working_ids.append(descriptive_string)
+                    non_working_count = 0  # Resets non-working count whenever a working camera is found.
+                else:
+                    non_working_count += 1
 
-        return tuple(working_ids)  # Converts to tuple before returning to caller.
+                # Breaks the loop early if more than 5 non-working IDs are found consecutively
+                if non_working_count >= 5:
+                    break
+
+                camera.release()  # Releases the camera object to recreate it above for the next cycle
+
+            return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+        finally:
+            # Restores previous log level
+            cv2.setLogLevel(prev_log_level)
 
     @staticmethod
     def get_harvesters_ids(cti_path: Path) -> tuple[str, ...]:

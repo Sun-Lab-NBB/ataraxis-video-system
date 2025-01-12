@@ -390,10 +390,6 @@ class VideoSystem:
             called when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will
             stop early if it encounters more than five non-functional IDs in a row.
 
-            This method will yield errors from OpenCV, which are not circumventable at this time. That said,
-            since the method is not designed to be used in well-configured production runtimes, this is not
-            a major concern.
-
         Returns:
              A tuple of strings. Each string contains camera ID, frame width, frame height, and camera fps value.
         """
