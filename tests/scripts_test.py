@@ -39,7 +39,7 @@ def test_live_run() -> None:
         args = [
             "--camera-backend",
             "mock",  # Uses mock backend to avoid the need for real camera
-            "--camera_id",
+            "--camera_index",
             "0",
             "--saver-backend",
             "image",  # Uses image saver for guaranteed support on all architectures
