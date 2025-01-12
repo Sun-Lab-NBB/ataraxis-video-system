@@ -696,7 +696,7 @@ def test_add_video_saver_errors(video_system):
     with pytest.raises(ValueError, match=error_format(message)):
         video_system.add_video_saver(source_id=source_id)
 
-
+@pytest.mark.xdist_group(name="group2")
 def test_start_stop(video_system):
     # While not strictly necessary, ensures that there are no leftover shared memory buffers.
     video_system.vacate_shared_memory_buffer()

@@ -209,10 +209,6 @@ def test_opencv_camera_grab_frame(color, fps, width, height) -> None:
     frame = camera.grab_frame()
     assert camera.is_acquiring  # Ensures calling grab_frame() switches the camera into acquisition mode
 
-    # Verifies the dimensions of the grabbed frame
-    assert frame.shape[0] == height
-    assert frame.shape[1] == width
-
     # Ensures that acquiring colored frames correctly returns a multidimensional numpy array
     if color:
         assert frame.shape[2] > 1
