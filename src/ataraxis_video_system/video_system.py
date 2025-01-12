@@ -538,7 +538,9 @@ class VideoSystem:
 
         # If the output_frame_rate argument is not an integer or floating value, defaults to using the same framerate
         # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
-        if not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:  # type: ignore
+        if output_frames and (
+            not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps  # type: ignore
+        ):
             message = (
                 f"Unable to instantiate the Camera with id {camera_id} due to encountering an unsupported "
                 f"output_frame_rate argument {output_frame_rate} of type {type(output_frame_rate).__name__}. "
@@ -548,7 +550,9 @@ class VideoSystem:
             console.error(error=TypeError, message=message)
 
         # Same as above, but for display frame_rate
-        if not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps:  # type: ignore
+        if display_frames and (
+            not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps  # type: ignore
+        ):
             message = (
                 f"Unable to instantiate the Camera with id {camera_id} due to encountering an unsupported "
                 f"display_frame_rate argument {display_frame_rate} of type {type(display_frame_rate).__name__}. "
@@ -1442,8 +1446,8 @@ class VideoSystem:
                 camera_id = int(camera.camera_id)
 
                 # Display
-                show_timeout: float = camera_dict[camera_id]["show_time"]
                 show_timer = camera_dict[camera_id]["show_timer"]
+                show_timeout: float = camera_dict[camera_id]["show_time"]
                 display_queue = camera_dict[camera_id]["display_queue"]
 
                 # Acquisition
@@ -1479,7 +1483,11 @@ class VideoSystem:
                 # If the camera is configured to output frame data via the output_queue and the necessary conditions
                 # are fulfilled, sends the frame data to the output_queue. Does not include frame acquisition timestamp,
                 # as this data is usually not necessary for real-time processing.
-                if terminator_array.read_data(index=2) and output_timer.elapsed >= output_timeout:
+                if (
+                    terminator_array.read_data(index=2)
+                    and output_timeout is not None
+                    and output_timer.elapsed >= output_timeout
+                ):
                     output_queue.put((frame, camera_id))
                     output_timer.reset()  # Resets the output timer
 
@@ -1583,12 +1591,6 @@ class VideoSystem:
             saver_dict[saver_system.source_id] = {}  # Precreates the root dictionary entry for each saver
             saver_dict[saver_system.source_id]["saver"] = saver_system.saver  # Adds the saver class
 
-            # For each saver, regardless of type, appends a saved frame tracker to the frame_counters list. This is
-            # used to generate frame-ids, which is used by ImageSavers. Although VideoSavers do not use this
-            # functionality, they are designed to accept ID codes for API compatibility, so frame_trackers are created
-            # both for ImageSavers and VideoSavers.
-            saver_dict[saver_system.source_id]["frame_tracker"] = 1  # The first frame number is 1
-
         # Sets the 3d index value of the terminator_array to 2 to indicate that all SaverSystems have been started.
         terminator_array.write_data(index=3, data=np.uint8(2))
 
@@ -1609,13 +1611,8 @@ class VideoSystem:
             # Uses the included camera_id to extract the saver associated with the given camera_id
             saver = saver_dict[camera_id]["saver"]
 
-            # Accesses and casts the current frame counter to string using enough padding to represent a 64-bit integer.
-            # The frame count is used as the ID of the saved frame.
-            frame_id = f"{saver_dict[camera_id]['frame_tracker']:020d}"
-            saver.save_frame(frame_id, frame)  # Same API for Image and Video savers.
-
-            # Increments the frame tracker
-            saver_dict[camera_id]["frame_tracker"] += 1
+            # Sends teh frame to be saved by the queried saver
+            saver.save_frame(frame)  # Same API for Image and Video savers.
 
             # Logs frame acquisition data. For this, uses camera_id as data, video system id as source_id and the
             # timestamp transmitted from the producer process.
@@ -1631,7 +1628,7 @@ class VideoSystem:
             if isinstance(saver_system.saver, VideoSaver):
                 saver_system.saver.terminate_live_encoder()
             else:
-                saver_system.saver.stop_live_image_saver()
+                saver_system.saver.terminate_image_saver()
 
         # Disconnects from the shared memory array and terminates the process.
         terminator_array.disconnect()
@@ -1679,7 +1676,8 @@ class VideoSystem:
         main stop() method is called.
         """
         if self._started and self._terminator_array is not None:
-            self._terminator_array.write_data(index=1, data=np.uint8(0))
+            # noinspection PyTypeChecker
+            self._terminator_array.write_data(index=1, data=0)
 
     def start_frame_saving(self) -> None:
         """Enables saving acquired camera frames.
@@ -1688,13 +1686,14 @@ class VideoSystem:
         are not initially saved to disk. The call to this method additionally enables saving the frames to disk
         """
         if self._started and self._terminator_array is not None:
-            self._terminator_array.write_data(index=1, data=np.uint8(1))
+            # noinspection PyTypeChecker
+            self._terminator_array.write_data(index=1, data=1)
 
     def stop_frame_output(self) -> None:
         """Disables outputting frame data via the instance output_queue."""
         if self._started and self._terminator_array is not None:
             # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=2, data=np.uint8(0))
+            self._terminator_array.write_data(index=2, data=0)
 
     def start_frame_output(self) -> None:
         """Enables outputting frame data via the instance output_queue.
@@ -1705,7 +1704,7 @@ class VideoSystem:
         """
         if self._started and self._terminator_array is not None:
             # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=2, data=np.uint8(1))
+            self._terminator_array.write_data(index=2, data=1)
 
     def get_video_saver(self, saver_index: int) -> VideoSaver:
         """Returns the VideoSaver class instance stored under the given saver_index inside the VideoSystem _savers

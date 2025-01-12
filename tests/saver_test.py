@@ -66,7 +66,7 @@ def test_image_saver_shutdown(tmp_path):
     assert saver.is_live
 
     # Shutdown
-    saver.stop_live_image_saver()
+    saver.terminate_image_saver()
     assert not saver.is_live
 
 
@@ -82,24 +82,12 @@ def test_image_saver_save_frame_errors(tmp_path):
     frame = camera.grab_frame()
 
     # Verifies that attempting to save a frame before the image_saver is started raises an exception.
-    frame_id = "001"
     message = (
-        f"Unable to save the image with the ID {frame_id} as the image saver has not been started. Use "
-        f"create_live_image_saver() method to start a live image saver before using this method."
+        f"Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
+        f"create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
-        saver.save_frame(frame_id=frame_id, frame=frame)
-
-    saver.create_live_image_saver()  # Initializes the image saver
-
-    # Verifies that the method correctly fails when an invalid frame ID is provided
-    frame_id = "a"
-    message = (
-        f"Unable to save the image with the ID {frame_id} as the ID is not valid. The ID must be a "
-        f"digit-convertible string, such as 0001."
-    )
-    with pytest.raises(ValueError, match=error_format(message)):
-        saver.save_frame(frame_id=frame_id, frame=frame)
+        saver.save_frame(frame=frame)
 
 
 # noinspection PyRedundantParentheses
@@ -126,9 +114,8 @@ def test_save_image(image_format, tmp_path):
     frame_data = camera.grab_frame()
 
     # Sends the frame to be saved
-    image_id = "235"
-    output_path = tmp_path.joinpath(f"{image_id}.{saver._image_format.value}")
-    saver.save_frame(image_id, frame_data)
+    output_path = tmp_path.joinpath(f"{str(1).zfill(20)}.{saver._image_format.value}")
+    saver.save_frame(frame_data)
 
     time.sleep(1)  # Short delay to ensure the frame is saved before checking integrity (see below)
 
@@ -201,7 +188,7 @@ def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_for
     # Generates and saves 20 test frames
     for _ in range(20):
         frame_data = camera.grab_frame()
-        saver.save_frame(_frame_id=1, frame=frame_data)
+        saver.save_frame(frame=frame_data)
 
     # Terminates the live encoder before the class is garbage-collected. This also finalizes video saving.
     saver.terminate_live_encoder()
@@ -237,7 +224,7 @@ def test_video_saver_save_frame_errors(tmp_path):
         f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
-        saver.save_frame(_frame_id=123, frame=frame)
+        saver.save_frame(frame=frame)
 
     # Initializes a live encoder process
     saver.create_live_video_encoder(video_id="2", frame_width=400, frame_height=400, video_frames_per_second=45)
@@ -275,7 +262,7 @@ def test_create_video_from_image_folder(tmp_path):
     image_saver.create_live_image_saver()
     for frame_id in range(20):
         frame_data = camera.grab_frame()
-        image_saver.save_frame(frame=frame_data, frame_id=str(frame_id))
+        image_saver.save_frame(frame=frame_data)
 
     # Converts the images to a video file and verifies that the video file exists
     video_id = "TestID"

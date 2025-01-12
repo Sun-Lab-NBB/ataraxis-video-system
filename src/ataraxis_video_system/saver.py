@@ -329,6 +329,7 @@ class ImageSaver:
         _executor: A ThreadPoolExecutor for managing the image writer threads.
         _running: A flag indicating whether the worker thread is running.
         _worker_thread: A thread that continuously fetches data from the queue and passes it to worker threads.
+        _frame_counter: A monotonic counter used to iteratively generate names for frame images.
     """
 
     def __init__(
@@ -372,6 +373,9 @@ class ImageSaver:
         self._executor: None | ThreadPoolExecutor = None
         self._worker_thread: None | Thread = None
 
+        # Initializes the input frame counter, which is used to generate frame (image) IDs.
+        self._frame_counter: int = 0
+
     def __repr__(self) -> str:
         """Returns a string representation of the ImageSaver object."""
         representation_string = (
@@ -384,9 +388,9 @@ class ImageSaver:
 
     def __del__(self) -> None:
         """Ensures the class releases all resources before being garbage-collected."""
-        self.stop_live_image_saver()
+        self.terminate_image_saver()
 
-    def create_live_image_saver(self):
+    def create_live_image_saver(self) -> None:
         """Initializes the saver by starting the saver threads.
 
         This method works similar to the create_live_video_encoder() method from the VideoSaver class and is responsible
@@ -395,7 +399,7 @@ class ImageSaver:
         input frames as images via the save_frame() method.
 
         Notes:
-            Each call to this method has to be paired with a call to the stop_live_image_saver() method.
+            Each call to this method has to be paired with a call to the terminate_image_saver() method.
         """
         if not self._running:
             self._running = True
@@ -415,12 +419,12 @@ class ImageSaver:
             # Continuously pops the data from the queue if data is available and sends it to saver threads.
             try:
                 # Uses a low-delay polling delay strategy to both release the GIL and maximize fetching speed.
-                output_path, data = self._queue.get(timeout=0.1)
-                self._executor.submit(self._save_image, output_path, data)
+                frame_id, frame_data = self._queue.get(timeout=0.1)  # type: ignore
+                self._executor.submit(self._save_image, frame_id, frame_data)  # type: ignore
             except Empty:
                 continue
 
-    def _save_image(self, image_id: str, data: NDArray[Any]) -> None:
+    def _save_image(self, frame_id: str, frame: NDArray[Any]) -> None:
         """Saves the input frame data as an image using the specified ID and class-stored output parameters.
 
         This method is passed to the ThreadPoolExecutor for concurrent execution, allowing for efficient saving of
@@ -428,71 +432,65 @@ class ImageSaver:
         speed.
 
         Args:
-            image_id: The zero-padded ID of the image to save, e.g.: '0001'. The IDs have to be unique, as images are
+            frame_id: The zero-padded ID of the image to save, e.g.: '0001'. The IDs have to be unique, as images are
                 saved to the same directory and are only distinguished by the ID. For other library methods to work as
                 expected, the ID must be a digit-convertible string.
-            data: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
+            frame: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
         """
 
         # Uses output directory, image ID, and image format to construct the image output path
-        output_path = Path(self._output_directory, f"{image_id}.{self._image_format.value}")
+        output_path = Path(self._output_directory, f"{frame_id}.{self._image_format.value}")
 
         # Tiff format
         if self._image_format.value == "tiff":
-            cv2.imwrite(filename=str(output_path), img=data, params=self._tiff_parameters)
+            cv2.imwrite(filename=str(output_path), img=frame, params=self._tiff_parameters)
 
         # JPEG format
         elif self._image_format.value == "jpg":
-            cv2.imwrite(filename=str(output_path), img=data, params=self._jpeg_parameters)
+            cv2.imwrite(filename=str(output_path), img=frame, params=self._jpeg_parameters)
 
         # PNG format
         else:
-            cv2.imwrite(filename=str(output_path), img=data, params=self._png_parameters)
+            cv2.imwrite(filename=str(output_path), img=frame, params=self._png_parameters)
 
-    def save_frame(self, frame_id: str, frame: NDArray[Any]) -> None:
+    def save_frame(self, frame: NDArray[Any]) -> None:
         """Queues the input frame to be saved by one of the writer threads.
 
         This method functions as the class API entry-point. For a well-configured class to save a frame as an image,
-        only frame data and ID passed to this method are necessary. The class automatically handles everything else.
+        only frame data passed to this method is necessary. The class automatically handles everything else, including
+        assigning the appropriate zero-padded frame ID as the name of the output image.
 
         Args:
-            frame_id: The zero-padded ID of the frame to save, e.g.: '0001'. The IDs have to be unique, as frames are
-                saved to the same directory and are only distinguished by the ID. For other library classes to work as
-                expected, the ID must be a digit-convertible string.
-            frame: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
+            frame: The data of the frame to save. The frame can be monochrome or colored.
 
         Raises:
-            ValueError: If input frame_id does not conform to the expected format.
-            RuntimeError: If the image saver has not been started.
+            RuntimeError: If this method is called before starting the live image saver.
         """
 
         if not self._running:
             message = (
-                f"Unable to save the image with the ID {frame_id} as the image saver has not been started. Use "
-                f"create_live_image_saver() method to start a live image saver before using this method."
+                f"Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
+                f"create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
             )
-            console.error(error=RuntimeError, message=message)
+            console.error(message=message, error=RuntimeError)
 
-        # Ensures that input IDs conform to the expected format.
-        if frame_id is not None and not frame_id.isdigit():
-            message = (
-                f"Unable to save the image with the ID {frame_id} as the ID is not valid. The ID must be a "
-                f"digit-convertible string, such as 0001."
-            )
-            console.error(error=ValueError, message=message)
-
+        self._frame_counter += 1  # Increments the frame counter for the next image ID
+        frame_id = str(self._frame_counter).zfill(20)  # Generates a zero-padded frame ID based on the processed count
         # Queues the data to be saved locally
-        self._queue.put((frame_id, frame))
+        self._queue.put((frame_id, frame))  # type: ignore
 
-    def stop_live_image_saver(self) -> None:
-        """Stops the worker thread and waits for all pending tasks to complete.
+    def terminate_image_saver(self) -> None:
+        """Stops the live image saver and waits for all pending tasks to complete.
 
         This method has to be called to properly release class resources during shutdown.
         """
         if self._running:
             self._running = False
-            self._worker_thread.join()
-            self._executor.shutdown(wait=True)
+            if self._worker_thread is not None:
+                self._worker_thread.join()
+
+            if self._executor is not None:
+                self._executor.shutdown(wait=True)
 
     @property
     def is_live(self) -> bool:
@@ -894,7 +892,7 @@ class VideoSaver:
             )
             console.error(message=message, error=RuntimeError)
 
-    def save_frame(self, _frame_id: int, frame: NDArray[Any]) -> None:
+    def save_frame(self, frame: NDArray[Any]) -> None:
         """Sends the input frame to be encoded by the 'live' FFMPEG encoder process.
 
         This method is used to submit frames to be saved to a precreated FFMPEG process. It expects that the
@@ -907,9 +905,7 @@ class VideoSaver:
             method.
 
         Args:
-            _frame_id: This is a placeholder argument that is not used by the method. Having this placeholder is
-                necessary to standardize the frame-saving API for Video and Image saver classes.
-            frame: The frame to be encoded stored in a numpy array.
+            frame: The data of the frame to be encoded into the video by the active live encoder.
 
         Raises:
             RuntimeError: If 'live' encoder does not exist. Also, if the method encounters an error when submitting the
