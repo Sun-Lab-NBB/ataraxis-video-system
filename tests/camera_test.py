@@ -17,7 +17,6 @@ from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCam
 )
 def test_mock_camera_init(color, fps, width, height) -> None:
     """Verifies the functioning of the MockCamera __init__() method."""
-
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=color, fps=fps, width=width, height=height)
     assert camera.width == width
     assert camera.height == height
@@ -29,7 +28,6 @@ def test_mock_camera_init(color, fps, width, height) -> None:
 
 def test_mock_camera_connect_disconnect():
     """Verifies the functioning of the MockCamera connect() and disconnect() methods."""
-
     # Setup
     camera = MockCamera()  # Uses default parameters
 
@@ -44,7 +42,6 @@ def test_mock_camera_connect_disconnect():
 
 def test_mock_camera_grab_frame():
     """Verifies the functioning of MockCamera grab_frame() method."""
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=-1, color=False, width=2, height=3)
     camera.connect()
@@ -68,7 +65,6 @@ def test_mock_camera_grab_frame():
 
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the MockCamera grab_frame() method."""
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1)
 
@@ -84,7 +80,6 @@ def test_mock_camera_grab_frame_errors() -> None:
 @pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_init_repr() -> None:
     """Verifies the functioning of the OpenCVCamera __init__() and __repr__() methods."""
-
     # Setup
     camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=True, fps=100, width=500, height=500)
 
@@ -116,10 +111,9 @@ def test_opencv_camera_init_repr() -> None:
 )
 def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height) -> None:
     """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
-
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:
-        pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
+        pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
     camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=color, fps=fps, width=width, height=height)
@@ -149,10 +143,9 @@ def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height)
 )
 def test_opencv_camera_grab_frame(has_opencv, color, fps, width, height) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
-
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:
-        pytest.skip(f"Skipping this test as it requires an OpenCV-compatible camera.")
+        pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
     camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=color, fps=fps, width=width, height=height)
@@ -177,7 +170,6 @@ def test_opencv_camera_grab_frame(has_opencv, color, fps, width, height) -> None
 @pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the OpenCVCamera grab_frame() method."""
-
     # Setup
     camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=-1)  # Uses invalid ID -1
     camera._backend = -10  # Also invalidates the backend code to trigger some errors below.
@@ -213,10 +205,9 @@ def test_opencv_camera_grab_frame_errors() -> None:
 @pytest.mark.xdist_group(name="group2")
 def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
-
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
     camera = HarvestersCamera(
@@ -243,10 +234,9 @@ def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
 @pytest.mark.xdist_group(name="group2")
 def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
-
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
     camera = HarvestersCamera(
@@ -272,10 +262,9 @@ def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
 )
 def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_path) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
-
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
     camera = HarvestersCamera(
@@ -304,10 +293,9 @@ def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_pa
 @pytest.mark.xdist_group(name="group2")
 def test_harvesters_camera_grab_frame_errors(has_harvesters, cti_path) -> None:
     """Verifies the error handling of the HarvestersCamera grab_frame() method."""
-
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip(f"Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
     camera = HarvestersCamera(

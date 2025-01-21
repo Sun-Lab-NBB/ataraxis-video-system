@@ -49,7 +49,7 @@ dependencies = [
     "harvesters>=1,<2",
     "ataraxis-time>=3,<4",
     "ataraxis-base-utilities>=3,<4",
-    "ataraxis-data-structures>=2,<3",
+    "ataraxis-data-structures>=3,<4",
     "click>=8,<9",
 ]
 
@@ -73,7 +73,7 @@ condarun = [
 conda = [
     # Testing
     "pytest>=8,<9",
-    "pytest-cov>=5,<6",
+    "pytest-cov>=6,<7",
     "pytest-xdist>=3,<4",
     "pillow>=11,<12",
 
@@ -99,11 +99,8 @@ conda = [
     "hatchling>=1,<2",
 
     # Distribution
-    "twine>=5,<6",
+    "twine>=6,<7",
     "grayskull>=2,<3",
-
-    # Miscellaneous helpers
-    "black>=24,<25",
 ]
 
 # Dependencies known to not be installable with conda for at least one supported development platform
@@ -228,6 +225,7 @@ directory = "reports/coverage_html"
 [tool.coverage.run]
 disable_warnings = ["module-not-measured"]
 parallel = true
+concurrency = ["multiprocessing", "thread"]
 source = ["ataraxis_video_system"]
 
 # Specifies additional ignore directives

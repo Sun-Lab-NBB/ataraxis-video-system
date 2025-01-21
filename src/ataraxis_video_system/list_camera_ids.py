@@ -32,7 +32,6 @@ def list_ids(backend: str, cti_path: str) -> None:
     This method is primarily intended to be used on systems where the exact camera layout is not known. This is
     especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
     """
-
     # Records teh current console status and, if necessary, ensured console is enabled before running this command.
     is_enabled = True
     if not console.enabled:

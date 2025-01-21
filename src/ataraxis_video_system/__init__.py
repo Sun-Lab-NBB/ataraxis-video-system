@@ -8,4 +8,4 @@ Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 from .saver import VideoSaver
 from .video_system import VideoSystem
 
-__all__ = ["VideoSystem", "VideoSaver"]
+__all__ = ["VideoSaver", "VideoSystem"]

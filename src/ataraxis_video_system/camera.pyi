@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 from _typeshed import Incomplete
 from numpy.typing import NDArray
-from harvesters.core import ImageAcquirer as ImageAcquirer
 
 class CameraBackends(Enum):
     """Maps valid literal values used to specify Camera class backend when requesting it from the create_camera ()
@@ -178,7 +177,7 @@ class OpenCVCamera:
             calling this method extracts the first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+            delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 
@@ -194,7 +193,6 @@ class OpenCVCamera:
         Raises:
             RuntimeError: If the camera does not yield an image, or if the method is called for a class not currently
                 connected to a camera.
-
         """
 
 class HarvestersCamera:
@@ -330,7 +328,7 @@ class HarvestersCamera:
             first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+            delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 

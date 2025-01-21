@@ -1,5 +1,5 @@
-Welcome to ataraxis-video=-system API documentation page
-========================================================
+Welcome to ataraxis-video-system API documentation page
+=======================================================
 
 ataraxis-video-system is a Python library that interfaces with a wide range of cameras to flexibly record visual stream
 data as images or videos.

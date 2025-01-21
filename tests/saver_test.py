@@ -23,7 +23,6 @@ from ataraxis_video_system.camera import MockCamera
 
 def test_image_saver_repr(tmp_path):
     """Verifies the functioning of the ImageSaver class __repr__ method."""
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
@@ -41,7 +40,6 @@ def test_image_saver_repr(tmp_path):
 
 def test_image_saver_shutdown(tmp_path):
     """Verifies the functioning of the ImageSaver stop_live_image_saver() method."""
-
     # Setup and ensures the saver is not yet running
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
     assert not saver.is_live
@@ -57,7 +55,6 @@ def test_image_saver_shutdown(tmp_path):
 
 def test_image_saver_save_frame_errors(tmp_path):
     """Verifies the error handling of the ImageSaver save_frame() method."""
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = ImageSaver(output_directory=tmp_path, image_format=ImageFormats.PNG)
@@ -68,8 +65,8 @@ def test_image_saver_save_frame_errors(tmp_path):
 
     # Verifies that attempting to save a frame before the image_saver is started raises an exception.
     message = (
-        f"Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
-        f"create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
+        "Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
+        "create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
         saver.save_frame(frame=frame)
@@ -88,7 +85,6 @@ def test_save_image(image_format, tmp_path):
         image frames obtained from the mock camera and the saved images is set to have a tolerance of 3 intensity-values
         for every pixel.
     """
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)
     saver = ImageSaver(output_directory=tmp_path, image_format=image_format, jpeg_quality=100)
@@ -111,7 +107,6 @@ def test_save_image(image_format, tmp_path):
 
 def test_video_saver_repr(tmp_path):
     """Verifies the functioning of the VideoSaver class __repr__ method."""
-
     # Setup
     saver = VideoSaver(
         output_directory=tmp_path,
@@ -146,10 +141,9 @@ def test_video_saver_repr(tmp_path):
 )
 def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_format, preset, tmp_path, has_nvidia):
     """Verifies the functioning of the VideoSaver save_frame() and create_live_video_encoder() methods."""
-
     # Skips GPU-bound tests if no valid NVIDIA GPU is available.
     if hardware_encoding and not has_nvidia:
-        pytest.skip(f"Skipping this test as it requires an NVIDIA GPU.")
+        pytest.skip("Skipping this test as it requires an NVIDIA GPU.")
 
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)
@@ -189,7 +183,6 @@ def test_video_saver_save_frame(video_codec, hardware_encoding, output_pixel_for
 
 def test_video_saver_save_frame_errors(tmp_path):
     """Verifies the error handling of the VideoSaver save_frame() and create_live_video_encoder() methods."""
-
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=False, fps=1000, width=400, height=400)
     saver = VideoSaver(
@@ -206,8 +199,8 @@ def test_video_saver_save_frame_errors(tmp_path):
 
     # Verifies that saving a frame without an active live encoder correctly raises an error.
     message = (
-        f"Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
-        f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
+        "Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
+        "create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
         saver.save_frame(frame=frame)
@@ -227,7 +220,6 @@ def test_video_saver_save_frame_errors(tmp_path):
 
 def test_create_video_from_image_folder(tmp_path):
     """Verifies the functioning of the VideoSaver create_video_from_image_folder() method."""
-
     # Defines subdirectories used in testing
     video_directory = tmp_path.joinpath("TestVideo")
     images_directory = tmp_path.joinpath("TestImages")
@@ -261,7 +253,6 @@ def test_create_video_from_image_folder(tmp_path):
 
 def test_create_video_from_image_errors(tmp_path):
     """Verifies the error handling of the VideoSaver create_video_from_image_folder() method."""
-
     # Setup
     saver = VideoSaver(
         output_directory=tmp_path.joinpath("Video"),

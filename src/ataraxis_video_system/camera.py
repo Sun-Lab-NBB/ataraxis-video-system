@@ -10,7 +10,7 @@ the 'create_camera()' method from the VideoSystem class.
 """
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 from pathlib import Path
 
 import cv2
@@ -151,9 +151,9 @@ class OpenCVCamera:
         color: bool = True,
         backend: int = cv2.CAP_ANY,
         camera_index: int = 0,
-        fps: Optional[float] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
+        fps: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> None:
         # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
         # the necessary input filtering.
@@ -163,10 +163,10 @@ class OpenCVCamera:
         self._color: bool = color
         self._backend: int = backend
         self._camera_index: int = camera_index
-        self._camera: Optional[cv2.VideoCapture] = None
-        self._fps: Optional[float] = fps
-        self._width: Optional[int] = width
-        self._height: Optional[int] = height
+        self._camera: cv2.VideoCapture | None = None
+        self._fps: float | None = fps
+        self._width: int | None = width
+        self._height: int | None = height
         self._acquiring: bool = False
 
     def __del__(self) -> None:
@@ -224,7 +224,6 @@ class OpenCVCamera:
         connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
-
         # If the camera is already disconnected, returns without doing anything.
         if self._camera is not None:
             self._camera.release()
@@ -350,14 +349,13 @@ class OpenCVCamera:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert BGR to Monochrome if needed
 
             return frame
-        else:
-            message = (
-                f"The OpenCV-managed camera with id {self._id} is not connected, and cannot "
-                f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
-            )
-            console.error(message=message, error=RuntimeError)
-            # Fallback to appease mypy, should not be reachable
-            raise RuntimeError(message)  # pragma: no cover
+        message = (
+            f"The OpenCV-managed camera with id {self._id} is not connected, and cannot "
+            f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
+        )
+        console.error(message=message, error=RuntimeError)
+        # Fallback to appease mypy, should not be reachable
+        raise RuntimeError(message)  # pragma: no cover
 
 
 class HarvestersCamera:
@@ -409,9 +407,9 @@ class HarvestersCamera:
         camera_id: np.uint8,
         cti_path: Path,
         camera_index: int = 0,
-        fps: Optional[float] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
+        fps: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> None:
         # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
         # the necessary input filtering.
@@ -419,10 +417,10 @@ class HarvestersCamera:
         # Saves class parameters to class attributes
         self._id: np.uint8 = camera_id
         self._camera_index: int = camera_index
-        self._camera: Optional[ImageAcquirer] = None
-        self._fps: Optional[float] = fps
-        self._width: Optional[int] = width
-        self._height: Optional[int] = height
+        self._camera: ImageAcquirer | None = None
+        self._fps: float | None = fps
+        self._width: int | None = width
+        self._height: int | None = height
 
         # Initializes the Harvester class to discover the list of available cameras.
         self._harvester = Harvester()
@@ -490,7 +488,6 @@ class HarvestersCamera:
         connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
-
         # If the camera is already disconnected, returns without doing anything.
         if self._camera is not None:
             self._camera.stop()  # Stops image acquisition
@@ -516,8 +513,7 @@ class HarvestersCamera:
         """
         if self._camera is not None:
             return bool(self._camera.is_acquiring())
-        else:
-            return False  # If the camera is not connected, it cannot be acquiring images.
+        return False  # If the camera is not connected, it cannot be acquiring images.
 
     @property
     def fps(self) -> float | None:
@@ -623,7 +619,7 @@ class HarvestersCamera:
 
             # For color data, evaluates the input format and reshapes the data as necessary.
             # This is excluded from coverage as we do not have a color-capable camera to test this right now
-            elif (
+            if (
                 data_format in rgb_formats
                 or data_format in rgba_formats
                 or data_format in bgr_formats
@@ -646,16 +642,16 @@ class HarvestersCamera:
                 return frame
 
             # If the image has an unsupported data format, raises an error
-            else:  # pragma: no cover
-                message = (
-                    f"The Harvesters-managed camera with id {self._id} yielded an image "
-                    f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
-                    f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
-                    f"Otherwise, you may need to implement a custom data reshaper algorithm."
-                )
-                console.error(message=message, error=RuntimeError)
-                # This should never be reached, it is here to appease mypy
-                raise RuntimeError(message)  # pragma: no cover
+            # pragma: no cover
+            message = (
+                f"The Harvesters-managed camera with id {self._id} yielded an image "
+                f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
+                f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
+                f"Otherwise, you may need to implement a custom data reshaper algorithm."
+            )
+            console.error(message=message, error=RuntimeError)
+            # This should never be reached, it is here to appease mypy
+            raise RuntimeError(message)  # pragma: no cover
 
 
 class MockCamera:

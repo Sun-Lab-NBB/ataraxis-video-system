@@ -361,7 +361,7 @@ class VideoSaver:
             video_id: The identifier for the video being encoded.
         """
     def create_video_from_image_folder(
-        self, video_frames_per_second: int | float, image_directory: Path, video_id: str, *, cleanup: bool = False
+        self, video_frames_per_second: float, image_directory: Path, video_id: str, *, cleanup: bool = False
     ) -> None:
         """Converts a set of existing id-labeled images stored in a folder into a video file.
 
@@ -391,7 +391,7 @@ class VideoSaver:
             Exception: If there are no images with supported file-extensions in the specified directory.
         """
     def create_live_video_encoder(
-        self, frame_width: int, frame_height: int, video_id: str, video_frames_per_second: int | float
+        self, frame_width: int, frame_height: int, video_id: str, video_frames_per_second: float
     ) -> None:
         """Creates a 'live' FFMPEG encoder process, making it possible to use the save_frame() class method.
 

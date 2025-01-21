@@ -1,11 +1,11 @@
 # AtaraxisVideoSystem
 
-A library that combines OpenCV, GenTL, and FFMPEG to interface with and flexibly record and manipulate the visual data
-from a wide range of cameras.
+A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as images or videos.
 
 ![PyPI - Version](https://img.shields.io/pypi/v/ataraxis-video-system)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ataraxis-video-system)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://tinyurl.com/uvbadge)](https://github.com/astral-sh/uv)
+[![Ruff](https://tinyurl.com/ruffbadge)](https://github.com/astral-sh/ruff)
 ![type-checked: mypy](https://img.shields.io/badge/type--checked-mypy-blue?style=flat-square&logo=python)
 ![PyPI - License](https://img.shields.io/pypi/l/ataraxis-video-system)
 ![PyPI - Status](https://img.shields.io/pypi/status/ataraxis-video-system)
@@ -14,12 +14,21 @@ ___
 
 ## Detailed Description
 
-This library provides a system for efficiently saving image and video data from cameras in real time. This includes the ability to receive data from different camera types and input formats. The system can be configured to save data in different formats including JPEG, PNG, and TIFF. The system can dynamically balance lossless vs lossy compression in order maximize data precision while keeping up with high speed cameras. To accomplish this, the library leverages multiprocessing and can use both CPU and GPU cores.
+This library provides an interface for efficiently acquiring and saving visual data from cameras in real time. To 
+achieve this, the library internally binds OpenCV and GeniCam backends to grab frames from a wide range of consumer, 
+industrial and scientific cameras using USB and Gigabit interfaces. To save the acquired frames, the library uses FFMPEG
+CPUs and / or GPUs and supports H264 and H265 codecs. The library abstracts all setup, acquisition, and cleanup 
+procedures via a simple API exposed by the VideoSystem interface class, while allowing for extensive configuration of 
+all managed elements. To optimize runtime efficiency, the library uses multithreading and multiprocessing, where 
+appropriate.
 ___
 
 ## Features
 
-- Supports Windows, Linux, and OSx.
+- Supports Windows, Linux, and macOS.
+- Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial and scientific cameras.
+- Uses FFMPEG to efficiently encode acquired data as videos or images in real time.
+- Highly flexible and customizable, can be extensively fine-tuned for quality or throughput.
 - Pure-python API.
 - GPL 3 License.
 ___
@@ -38,31 +47,33 @@ ___
 
 ## Dependencies
 
-For users, all library dependencies are installed automatically when using the appropriate installation specification
-for all supported installation methods (see [Installation](#Installation) section). For developers, see the
-[Developers](#Developers) section for information on installing additional development dependencies.
+- [FFMPEG](https://www.ffmpeg.org/download.html). Make sure that the installed FFMPEG is available in your system’s 
+  path, and Python has permissions to call FFMPEG. We recommend using the latest stable release of FFMPEG, although the
+  minimal requirement is support for H254 and H265 codecs.
+
+For users, all other library dependencies are installed automatically by all supported installation methods 
+(see [Installation](#installation) section).
+
+For developers, see the [Developers](#developers) section for information on installing additional development 
+dependencies.
 ___
 
 ## Installation
 
 ### Source
 
-**_Note. Building from source may require additional build-components. It is highly advised to use the option to install from PIP or CONDA instead._**
+Note, installation from source is ***highly discouraged*** for everyone who is not an active project developer.
+Developers should see the [Developers](#Developers) section for more details on installing from source. The instructions
+below assume you are ***not*** a developer.
 
-1. Download this repository to your local machine using your preferred method, such as git-cloning. Optionally, use one
-   of the stable releases that include precompiled binary wheels in addition to source code.
-2. ```cd``` to the root directory of the project using your CLI of choice.
-3. Run ```python -m pip install .``` to install the project.
+1. Download this repository to your local machine using your preferred method, such as Git-cloning. Use one
+   of the stable releases from [GitHub](https://github.com/Sun-Lab-NBB/ataraxis-video-system/releases).
+2. Unpack the downloaded zip and note the path to the binary wheel (`.whl`) file contained in the archive.
+3. Run ```python -m pip install WHEEL_PATH```, replacing 'WHEEL_PATH' with the path to the wheel file, to install the 
+   wheel into the active python environment.
 
-### PIP
-
-Use the following command to install the library using PIP:  
-```pip install ataraxis-video-system```
-
-### Conda / Mamba
-
-Use the following command to install the library using Conda or Mamba:  
-```conda install ataraxis-video-system```
+### pip
+Use the following command to install the library using pip: ```pip install ataraxis-video-system```.
 ___
 
 ## Usage
@@ -227,80 +238,85 @@ ___
 
 ## API Documentation
 
-See the [API documentation](link) for the
-detailed description of the methods and their arguments, exposed through the Videosystem python class.
+See the [API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for the
+detailed description of the methods and classes exposed by components of this library.
 ___
 
 ## Developers
 
-This section provides additional installation, dependency, and build-system instructions for the developers that want to
-modify the source code of this library. Additionally, it contains instructions for recreating the conda environments
-that were used during development from the included .yml files.
+This section provides installation, dependency, and build-system instructions for the developers that want to
+modify the source code of this library.
 
 ### Installing the library
 
-1. Download this repository to your local machine using your preferred method, such as git-cloning.
-2. ```cd``` to the root directory of the project using your CLI of choice.
-3. Run ```python -m pip install .'[dev]'``` command to install development dependencies and the library. For some
-   systems, you may need to use a slightly modified version of this command: ```python -m pip install .[dev]```.
-   Alternatively, see the [environments](#environments) section for details on how to create a development environment
-   with all necessary dependencies, using a .yml or requirements.txt file.
+The easiest way to ensure you have most recent development dependencies and library source files is to install the 
+python environment for your OS (see below). All environments used during development are exported as .yml files and as 
+spec.txt files to the [envs](envs) folder. The environment snapshots were taken on each of the three explicitly 
+supported OS families: Windows 11, OSx Darwin, and GNU Linux.
 
-**Note:** When using tox automation, having a local version of the library may interfere with tox methods that attempt
-to build a library using an isolated environment. It is advised to remove the library from your test environment, or
-disconnect from the environment, prior to running any tox tasks.
+**Note!** Since the OSx environment was built for the Darwin platform (Apple Silicon), it may not work on Intel-based 
+Apple devices.
+
+1. If you do not already have it installed, install [tox](https://tox.wiki/en/latest/user_guide.html) into the active
+   python environment. The rest of this installation guide relies on the interaction of local tox installation with the
+   configuration files included in with this library.
+2. Download this repository to your local machine using your preferred method, such as git-cloning. If necessary, unpack
+   and move the project directory to the appropriate location on your system.
+3. ```cd``` to the root directory of the project using your command line interface of choice. Make sure it contains
+   the `tox.ini` and `pyproject.toml` files.
+4. Run ```tox -e import``` to automatically import the os-specific development environment included with the source 
+   distribution. Alternatively, you can use ```tox -e create``` to create the environment from scratch and automatically
+   install the necessary dependencies using pyproject.toml file. 
+5. If either step 4 command fails, use ```tox -e provision``` to fix a partially installed environment.
+
+**Hint:** while only the platforms mentioned above were explicitly evaluated, this project will likely work on any 
+common OS, but may require additional configurations steps.
 
 ### Additional Dependencies
 
-In addition to installing the python packages, separately install the following dependencies:
+In addition to installing the required python packages, separately install the following dependencies:
 
-- An appropriate build tools or Docker, if you intend to build binary wheels via
-  [cibuildwheel](https://cibuildwheel.pypa.io/en/stable/) (See the link for information on which dependencies to
-  install).
-- [Python](https://www.python.org/downloads/) distributions, one for each version that you intend to support. Currently,
-  this library supports 3.10, 3.11 and 3.12. The easiest way to get tox to work as intended is to have separate
-  python distributions, but using [pyenv](https://github.com/pyenv/pyenv) is a good alternative too.
+1. [Python](https://www.python.org/downloads/) distributions, one for each version that you intend to support. These 
+   versions will be installed in-addition to the main Python version installed in the development environment.
+   The easiest way to get tox to work as intended is to have separate python distributions, but using 
+   [pyenv](https://github.com/pyenv/pyenv) is a good alternative. This is needed for the 'test' task to work as 
+   intended.
 
 ### Development Automation
 
-To help developers, this project comes with a set of fully configured 'tox'-based pipelines for verifying and building
-the project. Each of the tox commands builds the project in an isolated environment before carrying out its task.
+This project comes with a fully configured set of automation pipelines implemented using 
+[tox](https://tox.wiki/en/latest/user_guide.html). Check [tox.ini file](tox.ini) for details about 
+available pipelines and their implementation. Alternatively, call ```tox list``` from the root directory of the project
+to see the list of available tasks.
 
-Below is a list of all available commands and their purpose:
+**Note!** All commits to this project have to successfully complete the ```tox``` task before being pushed to GitHub. 
+To minimize the runtime for this task, use ```tox --parallel```.
 
-- ```tox -e lint``` Checks and, where safe, fixes code formatting, style, and type-hinting.
-- ```tox -e test``` Builds the projects and executes the tests stored in the /tests directory using pytest-coverage
-  module.
-- ```tox -e docs``` Uses Sphinx to generate API documentation from Python Google-style docstrings. If Doxygen-generated
-  .xml files for the C++ extension are available, uses Breathe plugin to convert them to Sphinx-compatible format and
-  add
-  them to the final API .html file.
-- ```tox --parallel``` Carries out all commands listed above in-parallel (where possible). Remove the '--parallel'
-  argument to run the commands sequentially. Note, this command will build and test the library for all supported python
-  versions.
-- ```tox -e build``` Builds the binary wheels for the library for all architectures supported by the host machine.
+For more information, you can also see the 'Usage' section of the 
+[ataraxis-automation project](https://github.com/Sun-Lab-NBB/ataraxis-automation#Usage) documentation.
 
-### Environments
+### Automation Troubleshooting
 
-In addition to tox-based automation, all environments used during development are exported as .yml
-files and as spec.txt files to the [envs](envs) folder. The environment snapshots were taken on each of the three
-supported OS families: Windows 11, OSx 14.5 and Ubuntu Cinnamon 24.04 LTS.
-
-To install the development environment for your OS:
-
-1. Download this repository to your local machine using your preferred method, such as git-cloning.
-2. ```cd``` into the [envs](envs) folder.
-3. Run ```conda env create -f ENVNAME.yml``` or ```mamba env create -f ENVNAME.yml```. Replace 'ENVNAME.yml' with the
-   name of the environment you want to install (hpt_dev_osx for OSx, hpt_dev_win64 for Windows and hpt_dev_lin64 for
-   Linux). Note, the OSx environment was built against M1 (Apple Silicon) platform and may not work on Intel-based Apple
-   devices.
+Many packages used in 'tox' automation pipelines (uv, mypy, ruff) and 'tox' itself are prone to various failures. In 
+most cases, this is related to their caching behavior. Despite a considerable effort to disable caching behavior known 
+to be problematic, in some cases it cannot or should not be eliminated. If you run into an unintelligible error with 
+any of the automation components, deleting the corresponding .cache (.tox, .ruff_cache, .mypy_cache, etc.) manually 
+or via a cli command is very likely to fix the issue.
 
 ___
 
+## Versioning
+
+We use [semantic versioning](https://semver.org/) for this project. For the versions available, see the 
+[tags on this repository](https://github.com/Sun-Lab-NBB/ataraxis-video-system/tags).
+
+---
+
 ## Authors
 
-- Jacob Groner ([Jgroner11](https://github.com/Jgroner11))
 - Ivan Kondratyev ([Inkaros](https://github.com/Inkaros))
+- Jacob Groner ([Jgroner11](https://github.com/Jgroner11))
+- Natalie Yeung
 
 ___
 
@@ -311,5 +327,8 @@ ___
 
 ## Acknowledgments
 
-- All Sun Lab [members](https://neuroai.github.io/sunlab/people) for providing the inspiration and comments during the
+- All Sun lab [members](https://neuroai.github.io/sunlab/people) for providing the inspiration and comments during the
   development of this library.
+- The creators of all other projects used in our development automation pipelines [see pyproject.toml](pyproject.toml).
+
+---

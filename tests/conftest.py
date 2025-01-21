@@ -1,5 +1,6 @@
 """Stores fixtures used by other tests. Defining these fixtures at the session scope allows running the associated
-test once for each test session."""
+test once for each test session.
+"""
 
 from pathlib import Path
 import subprocess

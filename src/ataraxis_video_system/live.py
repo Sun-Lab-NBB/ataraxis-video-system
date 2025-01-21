@@ -38,8 +38,8 @@ def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
     if value is not None:
         return int(value)
 
-    else:  # pragma: no cover
-        return None
+    # pragma: no cover
+    return None
 
 
 def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
@@ -50,8 +50,8 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     if value is not None:
         return float(value)
 
-    else:  # pragma: no cover
-        return None
+    # pragma: no cover
+    return None
 
 
 @click.command()
@@ -166,11 +166,10 @@ def live_run(
         not allow fine-tuning Saver class parameters and supports limited Camera and VideoSystem class behavior
         configuration. Use the API for production applications.
     """
-
     console.enable()  # Enables console output
 
     # Initializes and starts the DataLogger instance
-    logger = DataLogger(output_directory=Path(output_directory).joinpath("Log"))
+    logger = DataLogger(output_directory=Path(output_directory))
     logger.start()
 
     # Initializes the system
@@ -182,10 +181,8 @@ def live_run(
     )
 
     # Adds the requested camera to the VideoSystem
-    camera_id = np.uint8(1)
     if camera_backend == "mock":
         video_system.add_camera(
-            camera_id=camera_id,
             save_frames=True,
             display_frames=display_frames,
             camera_backend=CameraBackends.MOCK,
@@ -197,7 +194,6 @@ def live_run(
         )
     elif camera_backend == "harvesters":  # pragma: no cover
         video_system.add_camera(
-            camera_id=camera_id,
             save_frames=True,
             display_frames=display_frames,
             camera_backend=CameraBackends.HARVESTERS,
@@ -208,7 +204,6 @@ def live_run(
         )
     else:  # pragma: no cover
         video_system.add_camera(
-            camera_id=camera_id,
             save_frames=True,
             display_frames=display_frames,
             camera_backend=CameraBackends.OPENCV,
@@ -228,14 +223,12 @@ def live_run(
     saver: ImageSaver | VideoSaver
     if saver_backend == "image":
         video_system.add_image_saver(
-            source_id=np.uint8(1),
             image_format=ImageFormats.PNG,
             png_compression=1,
             thread_count=10,
         )
     else:  # pragma: no cover
         video_system.add_video_saver(
-            source_id=np.uint8(1),
             hardware_encoding=False if saver_backend == "video_cpu" else True,
             preset=CPUEncoderPresets.FAST if saver_backend == "video_cpu" else GPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,
@@ -243,7 +236,7 @@ def live_run(
 
     # Starts the system by spawning child processes
     video_system.start()
-    message = f"Live VideoSystem: initialized and started (spawned child processes)."
+    message = "Live VideoSystem: initialized and started (spawned child processes)."
     console.echo(message=message, level=LogLevel.INFO)
 
     # Ensures that manual control instruction is only shown once
@@ -252,24 +245,25 @@ def live_run(
     while video_system.started:
         if once:
             message = (
-                f"Live VideoSystem manual control: activated. Enter 'q' to terminate system runtime."
-                f"Enter 'w' to start saving camera frames. Enter 's' to stop saving camera frames. After termination, "
-                f"the system may stay alive for up to 60 seconds to finish saving buffered frames."
+                "Live VideoSystem manual control: activated. Enter 'q' to terminate system runtime."
+                "Enter 'w' to start saving camera frames. Enter 's' to stop saving camera frames. After termination, "
+                "the system may stay alive for up to 60 seconds to finish saving buffered frames."
             )
             console.echo(message=message, level=LogLevel.SUCCESS)
             once = False
 
         key = input("\nEnter command key:")
         if key.lower()[0] == "q":
-            message = f"Terminating Live VideoSystem..."
+            message = "Terminating Live VideoSystem..."
             console.echo(message)
             video_system.stop()
+            logger.stop()
         elif key.lower()[0] == "w":  # pragma: no cover
-            message = f"Starting Live VideoSystem camera frames saving..."
+            message = "Starting Live VideoSystem camera frames saving..."
             console.echo(message)
             video_system.start_frame_saving()
         elif key.lower()[0] == "s":  # pragma: no cover
-            message = f"Stopping Live VideoSystem camera frames saving..."
+            message = "Stopping Live VideoSystem camera frames saving..."
             console.echo(message)
             video_system.stop_frame_saving()
         else:  # pragma: no cover

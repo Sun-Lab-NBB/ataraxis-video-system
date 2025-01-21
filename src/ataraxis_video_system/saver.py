@@ -12,7 +12,7 @@ the 'create_saver()' method from the VideoSystem class.
 import re
 from enum import Enum
 from queue import Empty, Queue
-from typing import Any, Optional
+from typing import Any
 from pathlib import Path
 import threading
 from threading import Thread
@@ -437,7 +437,6 @@ class ImageSaver:
                 expected, the ID must be a digit-convertible string.
             frame: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
         """
-
         # Uses output directory, image ID, and image format to construct the image output path
         output_path = Path(self._output_directory, f"{frame_id}.{self._image_format.value}")
 
@@ -466,11 +465,10 @@ class ImageSaver:
         Raises:
             RuntimeError: If this method is called before starting the live image saver.
         """
-
         if not self._running:
             message = (
-                f"Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
-                f"create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
+                "Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
+                "create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
             )
             console.error(message=message, error=RuntimeError)
 
@@ -625,11 +623,10 @@ class VideoSaver:
                 encoder_profile = "main444-8"  # 444p requires this profile
             else:
                 encoder_profile = "main"  # 420p requires at least this profile
+        elif output_pixel_format.value == "yuv444p":
+            encoder_profile = "high444"  # 444p requires this profile
         else:
-            if output_pixel_format.value == "yuv444p":
-                encoder_profile = "high444"  # 444p requires this profile
-            else:
-                encoder_profile = "high420"  # 420p requires at least this profile
+            encoder_profile = "high420"  # 420p requires at least this profile
 
         # This is unique to CPU codecs. Resolves the 'parameter' specifier based on the codec name. This is used to
         # force CPU encoders to use the QP control mode.
@@ -665,11 +662,10 @@ class VideoSaver:
         )
 
         # Stores the FFMPEG process for 'live' frame saving. Initialized to a None placeholder value
-        self._ffmpeg_process: Optional[Popen[bytes]] = None
+        self._ffmpeg_process: Popen[bytes] | None = None
 
     def __repr__(self) -> str:
         """Returns a string representation of the VideoEncoder object."""
-
         if self._ffmpeg_process is None:
             live_encoder = False
         else:
@@ -687,8 +683,7 @@ class VideoSaver:
         """Returns True if the class is running an active 'live' encoder and False otherwise."""
         if self._ffmpeg_process is None:
             return False
-        else:
-            return True
+        return True
 
     @staticmethod
     def _report_encoding_progress(process: Popen[bytes], video_id: str) -> None:
@@ -706,7 +701,6 @@ class VideoSaver:
             process: The Popen object representing the ffmpeg process.
             video_id: The identifier for the video being encoded.
         """
-
         # Initial message to notify the user that encoding is in progress
         console.echo(message=f"Started encoding video: {video_id}", level=LogLevel.INFO)
 
@@ -728,7 +722,7 @@ class VideoSaver:
                     console.echo(f"Video {video_id} encoding progress: {progress_time}", level=LogLevel.INFO)
 
     def create_video_from_image_folder(
-        self, video_frames_per_second: int | float, image_directory: Path, video_id: str, *, cleanup: bool = False
+        self, video_frames_per_second: float, image_directory: Path, video_id: str, *, cleanup: bool = False
     ) -> None:
         """Converts a set of existing id-labeled images stored in a folder into a video file.
 
@@ -757,7 +751,6 @@ class VideoSaver:
         Raises:
             Exception: If there are no images with supported file-extensions in the specified directory.
         """
-
         # First, crawls the image directory and extracts all image files (based on the file extension). Also, only keeps
         # images whose names are convertible to integers (the format used by VideoSystem class). This process also
         # sorts the images based on their integer IDs (this is why they have to be integers).
@@ -844,7 +837,7 @@ class VideoSaver:
         frame_width: int,
         frame_height: int,
         video_id: str,
-        video_frames_per_second: int | float,
+        video_frames_per_second: float,
     ) -> None:
         """Creates a 'live' FFMPEG encoder process, making it possible to use the save_frame() class method.
 
@@ -866,7 +859,6 @@ class VideoSaver:
         Raises:
             RuntimeError: If a 'live' FFMPEG encoder process already exists.
         """
-
         # If the FFMPEG process does not already exist, creates a new process before encoding the input frame
         if self._ffmpeg_process is None:
             # Uses class attributes and input video ID to construct the output video path
@@ -911,12 +903,11 @@ class VideoSaver:
             RuntimeError: If 'live' encoder does not exist. Also, if the method encounters an error when submitting the
                 frame to the FFMPEG process.
         """
-
         # Raises an error if the 'live' encoder does not exist
         if self._ffmpeg_process is None:
             message = (
-                f"Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
-                f"create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
+                "Unable to submit the frame to a 'live' FFMPEG encoder process as the process does not exist. Call "
+                "create_live_video_encoder() method to create a 'live' encoder before calling save_frame() method."
             )
             console.error(message=message, error=RuntimeError)
 
@@ -927,7 +918,7 @@ class VideoSaver:
             message = f"FFMPEG process failed to process the input frame with error: {e}"
             console.error(message=message, error=RuntimeError)
 
-    def terminate_live_encoder(self, timeout: Optional[float] = None) -> None:
+    def terminate_live_encoder(self, timeout: float | None = None) -> None:
         """Terminates the 'live' FFMPEG encoder process if it exists.
 
         This method has to be called to properly release FFMPEG resources once the process is no longer necessary. Only
@@ -938,7 +929,6 @@ class VideoSaver:
                 is used to prevent deadlocks while still allowing the process to finish encoding buffered frames before
                 termination.
         """
-
         # If the process does not exist, returns immediately
         if self._ffmpeg_process is None:
             return
