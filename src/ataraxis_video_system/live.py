@@ -1,4 +1,4 @@
-"""This module contains a CLI script that can be used to instantiate a VideoSystem from command-line interface and
+"""This module contains a CLI script that can be used to instantiate a VideoSystem from the command-line interface and
 manually control its runtime.
 
 Primarily, this is helpful for manual and semi-automated evaluation of class performance that benefits from the ability
@@ -14,7 +14,9 @@ from typing import Any
 from pathlib import Path
 
 import click
+import numpy as np
 from ataraxis_base_utilities import LogLevel, console
+from ataraxis_data_structures import DataLogger
 
 from .saver import (
     ImageSaver,
@@ -36,8 +38,8 @@ def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
     if value is not None:
         return int(value)
 
-    else:  # pragma: no cover
-        return None
+    # pragma: no cover
+    return None
 
 
 def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
@@ -48,8 +50,8 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     if value is not None:
         return float(value)
 
-    else:  # pragma: no cover
-        return None
+    # pragma: no cover
+    return None
 
 
 @click.command()
@@ -65,7 +67,7 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
 )
 @click.option(
     "-i",
-    "--camera_id",
+    "--camera_index",
     type=int,
     default=0,
     show_default=True,
@@ -109,6 +111,7 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     "-cti",
     "--cti_path",
     required=False,
+    default=None,
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     help="The path to the .cti file, which is sued by the 'harvesters' camera backend. This is required for "
     "'harvesters' backend to work as expected.",
@@ -142,17 +145,17 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
 )
 def live_run(
     camera_backend: str,
-    camera_id: int,
+    camera_index: int,
     saver_backend: str,
     output_directory: str,
     display_frames: bool,
     monochrome: bool,
-    cti_path: str,
+    cti_path: str | None,
     width: int,
     height: int,
     fps: float,
 ) -> None:
-    """Instantiates Camera, Saver and VideoSystem classes using the input parameters and runs the VideoSystem with
+    """Instantiates Camera, Saver, and VideoSystem classes using the input parameters and runs the VideoSystem with
     manual control from the user.
 
     This method uses input() command to allow interfacing with the running system through a terminal window. The user
@@ -163,39 +166,51 @@ def live_run(
         not allow fine-tuning Saver class parameters and supports limited Camera and VideoSystem class behavior
         configuration. Use the API for production applications.
     """
-
     console.enable()  # Enables console output
 
-    # Instantiates the requested camera
-    camera_name = "Live Camera"
+    # Initializes and starts the DataLogger instance
+    logger = DataLogger(output_directory=Path(output_directory))
+    logger.start()
+
+    # Initializes the system
+    video_system = VideoSystem(
+        system_id=np.uint8(111),
+        data_logger=logger,
+        output_directory=Path(output_directory),
+        harvesters_cti_path=Path(cti_path) if cti_path is not None else None,
+    )
+
+    # Adds the requested camera to the VideoSystem
     if camera_backend == "mock":
-        camera = VideoSystem.create_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.MOCK,
-            camera_id=camera_id,
+            camera_index=camera_index,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
+            acquisition_frame_rate=fps,
             color=monochrome,
         )
     elif camera_backend == "harvesters":  # pragma: no cover
-        camera = VideoSystem.create_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.HARVESTERS,
-            camera_id=camera_id,
+            camera_index=camera_index,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
-            cti_path=Path(cti_path),
+            acquisition_frame_rate=fps,
         )
     else:  # pragma: no cover
-        camera = VideoSystem.create_camera(
-            camera_name=camera_name,
+        video_system.add_camera(
+            save_frames=True,
+            display_frames=display_frames,
             camera_backend=CameraBackends.OPENCV,
-            camera_id=camera_id,
+            camera_index=camera_index,
             frame_width=width,
             frame_height=height,
-            frames_per_second=fps,
+            acquisition_frame_rate=fps,
             color=monochrome,
         )
 
@@ -207,78 +222,59 @@ def live_run(
 
     saver: ImageSaver | VideoSaver
     if saver_backend == "image":
-        saver = VideoSystem.create_image_saver(
-            output_directory=Path(output_directory),
+        video_system.add_image_saver(
             image_format=ImageFormats.PNG,
             png_compression=1,
             thread_count=10,
         )
-    elif saver_backend == "video_cpu":  # pragma: no cover
-        saver = VideoSystem.create_video_saver(
-            output_directory=Path(output_directory),
-            hardware_encoding=False,
-            preset=CPUEncoderPresets.FAST,
-            input_pixel_format=pixel_color,
-        )
     else:  # pragma: no cover
-        saver = VideoSystem.create_video_saver(
-            output_directory=Path(output_directory),
-            hardware_encoding=True,
-            preset=GPUEncoderPresets.FAST,
+        video_system.add_video_saver(
+            hardware_encoding=False if saver_backend == "video_cpu" else True,
+            preset=CPUEncoderPresets.FAST if saver_backend == "video_cpu" else GPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,
         )
-
-    # Initializes the system
-    video_system = VideoSystem(
-        camera=camera,
-        saver=saver,
-        shutdown_timeout=60,  # Intentionally kept low, unlike the API default
-        system_name="Live",
-        display_frames=display_frames,
-    )
 
     # Starts the system by spawning child processes
     video_system.start()
-    message = f"VideoSystem {video_system.name}: initialized and started (spawned child processes)."
+    message = "Live VideoSystem: initialized and started (spawned child processes)."
     console.echo(message=message, level=LogLevel.INFO)
 
     # Ensures that manual control instruction is only shown once
     once: bool = True
     # Ues terminal input to control the video system
-    while video_system.is_running:
+    while video_system.started:
         if once:
             message = (
-                f"VideoSystem {video_system.name} manual control: activated. Enter 'q' to terminate system runtime."
-                f"Enter 'w' to start saving camera frames. Enter 's' to stop saving camera frames. After termination, "
-                f"the system may stay alive for up to 60 seconds to finish saving buffered frames."
+                "Live VideoSystem manual control: activated. Enter 'q' to terminate system runtime."
+                "Enter 'w' to start saving camera frames. Enter 's' to stop saving camera frames. After termination, "
+                "the system may stay alive for up to 60 seconds to finish saving buffered frames."
             )
             console.echo(message=message, level=LogLevel.SUCCESS)
             once = False
 
         key = input("\nEnter command key:")
         if key.lower()[0] == "q":
-            message = f"Terminating VideoSystem {video_system.name}..."
+            message = "Terminating Live VideoSystem..."
             console.echo(message)
             video_system.stop()
+            logger.stop()
         elif key.lower()[0] == "w":  # pragma: no cover
-            message = f"Starting VideoSystem {video_system.name} camera frames saving..."
+            message = "Starting Live VideoSystem camera frames saving..."
             console.echo(message)
             video_system.start_frame_saving()
         elif key.lower()[0] == "s":  # pragma: no cover
-            message = f"Stopping VideoSystem {video_system.name} camera frames saving..."
+            message = "Stopping Live VideoSystem camera frames saving..."
             console.echo(message)
             video_system.stop_frame_saving()
         else:  # pragma: no cover
             message = (
-                f"Unknown input key {key.lower()[0]} encountered while interacting with VideoSystem "
-                f"{video_system.name}. Use 'q' to terminate the system, 'w' to start saving frames, and 's' to stop "
-                f"saving frames."
+                f"Unknown input key {key.lower()[0]} encountered while interacting with Live VideoSystem. Use 'q' to "
+                f"terminate the system, 'w' to start saving frames, and 's' to stop saving frames."
             )
             console.echo(message, level=LogLevel.WARNING)
 
     message = (
-        f"VideoSystem {video_system.name}: terminated. Saved frames (if any) are available from the "
-        f"{output_directory} directory."
+        f"Live VideoSystem: terminated. Saved frames (if any) are available from the {output_directory} directory."
     )
     console.echo(message=message, level=LogLevel.SUCCESS)
 

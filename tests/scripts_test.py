@@ -1,4 +1,4 @@
-"""Contains tests that verify standalone scripts can be run.
+"""Contains tests that verify standalone scripts can run on this system.
 
 Notes:
     This test suite is not meant to be exhaustive! All scripts are evaluated manually before production distribution,
@@ -39,7 +39,7 @@ def test_live_run() -> None:
         args = [
             "--camera-backend",
             "mock",  # Uses mock backend to avoid the need for real camera
-            "--camera_id",
+            "--camera_index",
             "0",
             "--saver-backend",
             "image",  # Uses image saver for guaranteed support on all architectures

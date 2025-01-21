@@ -1,12 +1,11 @@
-"""This library exposes methods that allow interfacing with a wide range of cameras and recording visual stream data
-from these cameras as images or videos.
+"""A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as images or
+videos.
 
 See https://github.com/Sun-Lab-NBB/ataraxis-video-system for more details.
 API documentation: https://ataraxis-video-system-api-docs.netlify.app/
-Authors: Jacob Groner, Ivan Kondratyev (Inkaros)
+Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 """
 
-from .saver import VideoSaver
 from .video_system import VideoSystem
 
-__all__ = ["VideoSystem", "VideoSaver"]
+__all__ = ["VideoSystem"]

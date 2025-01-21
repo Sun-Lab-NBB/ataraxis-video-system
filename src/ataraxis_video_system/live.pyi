@@ -19,17 +19,17 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
 
 def live_run(
     camera_backend: str,
-    camera_id: int,
+    camera_index: int,
     saver_backend: str,
     output_directory: str,
     display_frames: bool,
     monochrome: bool,
-    cti_path: str,
+    cti_path: str | None,
     width: int,
     height: int,
     fps: float,
 ) -> None:
-    """Instantiates Camera, Saver and VideoSystem classes using the input parameters and runs the VideoSystem with
+    """Instantiates Camera, Saver, and VideoSystem classes using the input parameters and runs the VideoSystem with
     manual control from the user.
 
     This method uses input() command to allow interfacing with the running system through a terminal window. The user

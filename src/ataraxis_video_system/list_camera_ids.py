@@ -1,3 +1,5 @@
+"""This module contains a helper script that lists the IDs of cameras accessible through OpenCV or Harvesters backend."""
+
 from pathlib import Path
 
 import click
@@ -30,7 +32,11 @@ def list_ids(backend: str, cti_path: str) -> None:
     This method is primarily intended to be used on systems where the exact camera layout is not known. This is
     especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
     """
-    console.enable()  # Enables console output
+    # Records teh current console status and, if necessary, ensured console is enabled before running this command.
+    is_enabled = True
+    if not console.enabled:
+        is_enabled = False
+        console.enable()  # Enables console output
 
     # Depending on the backend, calls the appropriate ID-discovery command and lists discovered IDs.
     if backend == "opencv":
@@ -44,6 +50,10 @@ def list_ids(backend: str, cti_path: str) -> None:
         console.echo("Available Harvesters camera IDs:")
         for num, id_string in enumerate(harvester_ids, start=1):
             console.echo(f"{num}: {id_string}")
+
+    # If the console was enabled by this runtime, ensures it is disabled before finishing the runtime.
+    if not is_enabled:
+        console.disable()
 
 
 if __name__ == "__main__":  # pragma: no cover

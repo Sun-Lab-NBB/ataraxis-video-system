@@ -5,11 +5,10 @@ from pathlib import Path
 import numpy as np
 from _typeshed import Incomplete
 from numpy.typing import NDArray
-from harvesters.core import ImageAcquirer as ImageAcquirer
 
 class CameraBackends(Enum):
-    """Maps valid literal values used to specify Camera class backend when requesting it from create_camera() method of
-    the VideoSystem class to programmatically callable variables.
+    """Maps valid literal values used to specify Camera class backend when requesting it from the create_camera ()
+    method of the VideoSystem class to programmatically callable variables.
 
     Use this enumeration instead of 'hardcoding' Camera backends where possible to automatically adjust to future API
     changes to this library.
@@ -40,8 +39,8 @@ class OpenCVCamera:
         desired values before starting frame-acquisition.
 
     Args:
-        name: The string-name of the camera. This is used to help identify the camera and to mark all frames acquired
-            from this camera.
+        camera_id: The unique ID code of the camera instance. This is used to identify the camera and to mark all
+            frames acquired from this camera.
         color: Specifies if the camera acquires colored or monochrome images. There is no way to get this
             information via OpenCV, and all images read from VideoCapture use BGR colorspace even for the monochrome
             source. This setting does not control whether the camera acquires colored images. It only controls how
@@ -49,7 +48,7 @@ class OpenCVCamera:
             images will be reduced to using only one channel.
         backend: The integer-code for the backend to use for the connected VideoCapture object. Generally, it
             is advised not to change the default value of this argument unless you know what you are doing.
-        camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
+        camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
             available camera, 1 for the second, etc.
         fps: The desired Frames Per Second to capture the frames at. Note, this depends on the hardware capabilities of
             the camera and is affected by multiple related parameters, such as image dimensions, camera buffer size and
@@ -62,10 +61,10 @@ class OpenCVCamera:
             provided (set to None), this parameter will be obtained from the connected camera.
 
     Attributes:
-        _name: Stores the string-name of the camera.
+        _id: Stores the string-name of the camera.
         _color: Determines whether the camera acquires colored or monochrome images.
         _backend: Stores the code for the backend to be used by the connected VideoCapture object.
-        _camera_id: Stores the numeric camera ID, which is used during connect() method runtime.
+        _camera_index: Stores the index of the camera, which is used during connect() method runtime.
         _camera: Stores the OpenCV VideoCapture object that interfaces with the camera.
         _fps: Stores the desired Frames Per Second to capture the frames at.
         _width: Stores the desired width of the camera frames to acquire.
@@ -78,10 +77,10 @@ class OpenCVCamera:
     """
 
     _backends: dict[str, float]
-    _name: Incomplete
+    _id: Incomplete
     _color: Incomplete
     _backend: Incomplete
-    _camera_id: Incomplete
+    _camera_index: Incomplete
     _camera: Incomplete
     _fps: Incomplete
     _width: Incomplete
@@ -89,22 +88,22 @@ class OpenCVCamera:
     _acquiring: bool
     def __init__(
         self,
-        name: str,
+        camera_id: np.uint8,
         color: bool = True,
         backend: int = ...,
-        camera_id: int = 0,
+        camera_index: int = 0,
         fps: float | None = None,
         width: int | None = None,
         height: int | None = None,
     ) -> None: ...
     def __del__(self) -> None:
-        """Ensures that camera is disconnected upon garbage collection."""
+        """Ensures that the camera is disconnected upon garbage collection."""
     def __repr__(self) -> str:
         """Returns a string representation of the OpenCVCamera object."""
     def connect(self) -> None:
         """Initializes the camera VideoCapture object and sets the video acquisition parameters.
 
-        This method has to be called prior to calling grab_frames() method. It is used to initialize and prepare the
+        This method has to be called before calling the grab_frames () method. It is used to initialize and prepare the
         camera for image collection.
 
         Notes:
@@ -117,7 +116,7 @@ class OpenCVCamera:
         """Disconnects from the camera by releasing the VideoCapture object.
 
         After calling this method, it will be impossible to grab new frames until the camera is (re)connected to via the
-        connect() method. Make sure this method is called during VideoSystem shutdown procedure to properly release
+        connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
     @property
@@ -163,8 +162,8 @@ class OpenCVCamera:
                 codes.
         """
     @property
-    def name(self) -> str:
-        """Returns the name of the camera."""
+    def camera_id(self) -> np.uint8:
+        """Returns the unique identifier code of the camera."""
     def grab_frame(self) -> NDArray[Any]:
         """Grabs the first available frame from the camera buffer and returns it to caller as a NumPy array object.
 
@@ -178,7 +177,7 @@ class OpenCVCamera:
             calling this method extracts the first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-            delay up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+            delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 
@@ -188,13 +187,12 @@ class OpenCVCamera:
 
         Returns:
             A NumPy array with the outer dimensions matching the preset camera frame dimensions. All returned frames
-            use the BGR colorspace by default and will, therefore, include 3 additional color channel dimensions for
+            use the BGR colorspace by default and will, therefore, include three additional color channel dimensions for
             each two-dimensional pixel index.
 
         Raises:
             RuntimeError: If the camera does not yield an image, or if the method is called for a class not currently
                 connected to a camera.
-
         """
 
 class HarvestersCamera:
@@ -214,12 +212,12 @@ class HarvestersCamera:
         desired values before starting frame-acquisition.
 
     Args:
-        name: The string-name of the camera. This is used to help identify the camera and to mark all frames acquired
-            from this camera.
+        camera_id: The unique ID code of the camera instance. This is used to identify the camera and to mark all
+            frames acquired from this camera.
         cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use the
             file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire, would
             work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
-        camera_id: The numeric ID of the camera, relative to all available video devices, e.g.: 0 for the first
+        camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
             available camera, 1 for the second, etc.
         fps: The desired Frames Per Second to capture the frames at. Note, this depends on the hardware capabilities of
             the camera and is affected by multiple related parameters, such as image dimensions, camera buffer size and
@@ -232,8 +230,8 @@ class HarvestersCamera:
             provided (set to None), this parameter will be obtained from the connected camera.
 
     Attributes:
-        _name: Stores the string-name of the camera.
-        _camera_id: Stores the numeric camera ID, which is used during connect() method runtime.
+        _id: Stores the unique identifier code of the camera.
+        _camera_index: Stores the index of the camera, which is used during connect() method runtime.
         _camera: Stores the Harvesters ImageAcquirer object that interfaces with the camera.
         _harvester: Stores the Harvester interface object that discovers and manages the list of accessible cameras.
         _fps: Stores the desired Frames Per Second to capture the frames at.
@@ -241,8 +239,8 @@ class HarvestersCamera:
         _height: Stores the desired height of the camera frames to acquire.
     """
 
-    _name: Incomplete
-    _camera_id: Incomplete
+    _id: Incomplete
+    _camera_index: Incomplete
     _camera: Incomplete
     _fps: Incomplete
     _width: Incomplete
@@ -250,23 +248,24 @@ class HarvestersCamera:
     _harvester: Incomplete
     def __init__(
         self,
-        name: str,
+        camera_id: np.uint8,
         cti_path: Path,
-        camera_id: int = 0,
+        camera_index: int = 0,
         fps: float | None = None,
         width: int | None = None,
         height: int | None = None,
     ) -> None: ...
     def __del__(self) -> None:
-        """Ensures that camera is disconnected upon garbage collection."""
+        """Ensures that the camera is disconnected upon garbage collection."""
     def __repr__(self) -> str:
         """Returns a string representation of the HarvestersCamera object."""
     def connect(self) -> None:
         """Initializes the camera ImageAcquirer object and sets the video acquisition parameters.
 
-        This method has to be called prior to calling grab_frames() method. It is used to initialize and prepare the
+        This method has to be called before calling the grab_frames () method. It is used to initialize and prepare the
         camera for image collection. Note, the method does not automatically start acquiring images. Image acquisition
-        starts with the first call to grab_frames() method to make the API consistent across all our camera classes.
+        starts with the first call to the grab_frames () method to make the API consistent across all our camera
+        classes.
 
         Notes:
             While this method passes acquisition parameters, such as fps and frame dimensions, to the camera, there is
@@ -279,7 +278,7 @@ class HarvestersCamera:
         the ImageAcquirer object.
 
         After calling this method, it will be impossible to grab new frames until the camera is (re)connected to via the
-        connect() method. Make sure this method is called during VideoSystem shutdown procedure to properly release
+        connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
         resources.
         """
     @property
@@ -314,8 +313,8 @@ class HarvestersCamera:
         is not connected, this is the desired frame height value that will be passed to the camera during connection.
         """
     @property
-    def name(self) -> str:
-        """Returns the name of the camera."""
+    def camera_id(self) -> np.uint8:
+        """Returns the unique byte identifier of the camera."""
     def grab_frame(self) -> NDArray[Any]:
         """Grabs the first available frame from the camera buffer and returns it to caller as a NumPy array object.
 
@@ -329,7 +328,7 @@ class HarvestersCamera:
             first image available in the buffer and returns it to caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
-            delay up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
+            delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
             the first few frames or have some other form of separating initial frames from the frames extracted as
             part of the post-initialization runtime.
 
@@ -352,7 +351,7 @@ class MockCamera:
     """Simulates (mocks) the API behavior and functionality of the OpenCVCamera and HarvestersCamera classes.
 
     This class is primarily used to test VideoSystem class functionality without using a physical camera, which
-    optimizes testing efficiency and speed. The class mimics the behavior of the 'real' camera classes, but does not
+    optimizes testing efficiency and speed. The class mimics the behavior of the 'real' camera classes but does not
     establish a physical connection with any camera hardware. The class accepts and returns static values that fully
     mimic the 'real' API.
 
@@ -365,8 +364,9 @@ class MockCamera:
         monochrome or RGB color images.
 
     Args:
-        name: The string-name of the camera.
-        camera_id: The simulated numeric ID of the camera.
+        camera_id: The unique ID code of the camera instance. This is used to identify the camera and to mark all
+            frames acquired from this camera.
+        camera_index: The simulated list index of the camera.
         fps: The simulated Frames Per Second of the camera.
         width: The simulated camera frame width.
         height: The simulated camera frame height.
@@ -375,8 +375,8 @@ class MockCamera:
 
     Attributes:
         _color: Determine whether the camera should produce monochrome or RGB images.
-        _name: Stores the string-name of the camera.
-        _camera_id: Stores the numeric camera ID.
+        _id: Stores the unique byte-code identifier for the camera.
+        _camera_index: Stores the simulated index for the camera.
         _camera: A boolean variable used to track whether the camera is 'connected'.
         _fps: Stores the simulated Frames Per Second.
         _width: Stores the simulated camera frame width.
@@ -385,13 +385,15 @@ class MockCamera:
         _frames: Stores the pool of pre-generated frame images used to simulate frame grabbing.
         _current_frame_index: The index of the currently evaluated frame in the pre-generated frame pool. This is used
             to simulate the cyclic buffer used by 'real' camera classes.
+        _timer: After the camera is 'connected', this attribute is used to store the timer class that controls the
+            output fps rate.
         _time_between_frames: Stores the number of milliseconds that has to pass between acquiring new frames. This is
-            used to simulate real camera fps rate.
+            used to simulate the real camera fps rate.
     """
 
     _color: Incomplete
-    _name: Incomplete
-    _camera_id: Incomplete
+    _id: Incomplete
+    _camera_index: Incomplete
     _camera: bool
     _fps: Incomplete
     _width: Incomplete
@@ -403,8 +405,8 @@ class MockCamera:
     _time_between_frames: Incomplete
     def __init__(
         self,
-        name: str = "MockCamera",
-        camera_id: int = 0,
+        camera_id: np.uint8 = ...,
+        camera_index: int = 0,
         fps: float = 30,
         width: int = 600,
         height: int = 600,
@@ -431,8 +433,8 @@ class MockCamera:
     def height(self) -> float:
         """Returns the frame height setting of the camera (in pixels)."""
     @property
-    def name(self) -> str:
-        """Returns the name of the camera."""
+    def camera_id(self) -> np.uint8:
+        """Returns the unique identifier code of the camera."""
     @property
     def frame_pool(self) -> tuple[NDArray[Any], ...]:
         """Returns the tuple that stores the frames that are pooled to produce images during grab_frame() runtime."""
@@ -444,8 +446,8 @@ class MockCamera:
 
         Returns:
             A NumPy array with the outer dimensions matching the preset camera frame dimensions. Depending on whether
-            the camera is simulating 'color' or 'monochrome' mode, the returned frames will either have 1 or 3 color
-            channels.
+            the camera is simulating 'color' or 'monochrome' mode, the returned frames will either have one or three
+            color channels.
 
         Raises:
             RuntimeError: If the method is called for a class not currently 'connected' to a camera.
