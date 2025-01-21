@@ -148,8 +148,8 @@ class VideoSystem:
         This method allows adding Cameras to an initialized VideoSystem instance. Currently, this is the only intended
         way of using Camera classes available through this library. Unlike Saver class instances, which are not
         required for the VideoSystem to function, a valid Camera class must be added to the system before its start()
-        method is called. The only exception to this rule is when using encode_directory() method, which requires a
-        VideoSaver and does not require the start() method to be called.
+        method is called. The only exception to this rule is when using encode_video_from_images() method, which
+        requires a VideoSaver and does not require the start() method to be called.
 
         Notes:
             Calling this method multiple times replaces the existing Camera class instance with a new one.
@@ -171,7 +171,9 @@ class VideoSystem:
                 the native acquisition frame rate. The acquisition frame rate is set via the frames_per_second argument
                 below.
             display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
-                the camera feed in real time.
+                the camera feed in real time. Note, frame displaying may be broken for some macOS versions. This error
+                originates from OpenCV and not this library and is usually fixed in a timely manner by OpenCV
+                developers.
             display_frame_rate: Similar to output_frame_rate, determines the frame rate at which acquired frames are
                 displayed to the user.
             frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
@@ -267,7 +269,8 @@ class VideoSystem:
         intended way of using VideoSaver class available through this library. VideoSavers are not required for the
         VideoSystem to function and, therefore, this method does not need to be called unless you need to save
         the camera frames acquired during the runtime of this VideoSystem as a video. This method can also be used to
-        initialize the VideoSaver that will be used to convert images to a video file via the encode_directory() method.
+        initialize the VideoSaver that will be used to convert images to a video file via the encode_video_from_images()
+        method.
 
         Notes:
             Calling this method multiple times will replace the existing Saver (Image or Video) with the new one.
@@ -548,7 +551,9 @@ class VideoSystem:
         Raises:
             ValueError: If the .npz archive for the VideoSystem instance does not exist.
         """
-    def encode_directory(self, directory: Path, target_fps: int, video_name: str, cleanup: bool = False) -> None:
+    def encode_video_from_images(
+        self, directory: Path, target_fps: int, video_name: str, cleanup: bool = False
+    ) -> None:
         """Converts a set of images acquired via the ImageSaver class into a video file.
 
         Use this method to post-process image frames acquired in real time into a storage-efficient video file.

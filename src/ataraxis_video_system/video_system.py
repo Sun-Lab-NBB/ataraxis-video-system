@@ -266,8 +266,8 @@ class VideoSystem:
         This method allows adding Cameras to an initialized VideoSystem instance. Currently, this is the only intended
         way of using Camera classes available through this library. Unlike Saver class instances, which are not
         required for the VideoSystem to function, a valid Camera class must be added to the system before its start()
-        method is called. The only exception to this rule is when using encode_directory() method, which requires a
-        VideoSaver and does not require the start() method to be called.
+        method is called. The only exception to this rule is when using encode_video_from_images() method, which
+        requires a VideoSaver and does not require the start() method to be called.
 
         Notes:
             Calling this method multiple times replaces the existing Camera class instance with a new one.
@@ -700,7 +700,8 @@ class VideoSystem:
         intended way of using VideoSaver class available through this library. VideoSavers are not required for the
         VideoSystem to function and, therefore, this method does not need to be called unless you need to save
         the camera frames acquired during the runtime of this VideoSystem as a video. This method can also be used to
-        initialize the VideoSaver that will be used to convert images to a video file via the encode_directory() method.
+        initialize the VideoSaver that will be used to convert images to a video file via the encode_video_from_images()
+        method.
 
         Notes:
             Calling this method multiple times will replace the existing Saver (Image or Video) with the new one.
@@ -889,7 +890,7 @@ class VideoSystem:
             message = (
                 f"Unable to start the VideoSystem with id {self._id}. The VideoSystem must be equipped with a Camera "
                 f"before it can be started. Use add_camera() method to add a Camera class to the VideoSystem. If you "
-                f"need to convert a directory of images to video, use the encode_directory() method instead."
+                f"need to convert a directory of images to video, use the encode_video_from_images() method instead."
             )
             console.error(error=RuntimeError, message=message)
 
@@ -913,35 +914,44 @@ class VideoSystem:
             exist_ok=True,  # Automatically recreates the buffer if it already exists
         )  # Instantiation automatically connects the main process to the array.
 
-        # Starts the consumer process first to minimize queue buildup once the producer process is initialized.
-        # Technically, due to saving frames being initially disabled, queue buildup is no longer a major concern, but
-        # this safety-oriented initialization order is still preserved.
-        self._consumer_process = Process(
-            target=self._frame_saving_loop,
-            args=(self._id, self._saver, self._camera, self._image_queue, self._logger_queue, self._terminator_array),
-            daemon=True,
-        )
-        self._consumer_process.start()
+        # Only starts the consumer process if the managed camera is configured to save frames.
+        if self._saver is not None:
+            # Starts the consumer process first to minimize queue buildup once the producer process is initialized.
+            # Technically, due to saving frames being initially disabled, queue buildup is no longer a major concern,
+            # but this safety-oriented initialization order is still preserved.
+            self._consumer_process = Process(
+                target=self._frame_saving_loop,
+                args=(
+                    self._id,
+                    self._saver,
+                    self._camera,
+                    self._image_queue,
+                    self._logger_queue,
+                    self._terminator_array,
+                ),
+                daemon=True,
+            )
+            self._consumer_process.start()
 
-        # Waits for the process to report that it has successfully initialized.
-        initialization_timer.reset()
-        while self._terminator_array.read_data(index=3) != 2:  # pragma: no cover
-            # If the process takes too long to initialize or dies, raises an error.
-            if initialization_timer.elapsed > 10 or not self._consumer_process.is_alive():
-                message = (
-                    f"Unable to start the VideoSystem with id {self._id}. The consumer process has "
-                    f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
-                    f"indicates a problem with initializing one of the managed saver class instances."
-                )
+            # Waits for the process to report that it has successfully initialized.
+            initialization_timer.reset()
+            while self._terminator_array.read_data(index=3) != 2:  # pragma: no cover
+                # If the process takes too long to initialize or dies, raises an error.
+                if initialization_timer.elapsed > 10 or not self._consumer_process.is_alive():
+                    message = (
+                        f"Unable to start the VideoSystem with id {self._id}. The consumer process has "
+                        f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This "
+                        f"likely indicates a problem with initializing one of the managed saver class instances."
+                    )
 
-                # Reclaims all commited resources before terminating with an error.
-                self._terminator_array.write_data(index=0, data=np.uint8(1))
-                self._consumer_process.join()
-                self._mp_manager.shutdown()
-                self._terminator_array.disconnect()
-                self._terminator_array.destroy()
+                    # Reclaims all commited resources before terminating with an error.
+                    self._terminator_array.write_data(index=0, data=np.uint8(1))
+                    self._consumer_process.join()
+                    self._mp_manager.shutdown()
+                    self._terminator_array.disconnect()
+                    self._terminator_array.destroy()
 
-                console.error(error=RuntimeError, message=message)
+                    console.error(error=RuntimeError, message=message)
 
         # Starts the producer process
         self._producer_process = Process(
@@ -971,7 +981,8 @@ class VideoSystem:
 
                 # Reclaims all commited resources before terminating with an error.
                 self._terminator_array.write_data(index=0, data=np.uint8(1))
-                self._consumer_process.join()
+                if self._consumer_process is not None:
+                    self._consumer_process.join()
                 self._producer_process.join()
                 self._mp_manager.shutdown()
                 self._terminator_array.disconnect()
@@ -1543,11 +1554,14 @@ class VideoSystem:
             if error:
                 # Reclaims all commited resources before terminating with an error.
                 self._terminator_array.write_data(index=0, data=np.uint8(1))  # type: ignore
-                self._consumer_process.join()  # type: ignore
-                self._producer_process.join()  # type: ignore
+                if self._consumer_process is not None:
+                    self._consumer_process.join()
+                if self._producer_process is not None:
+                    self._producer_process.join()
                 self._mp_manager.shutdown()
-                self._terminator_array.disconnect()  # type: ignore
-                self._terminator_array.destroy()  # type: ignore
+                if self._terminator_array is not None:
+                    self._terminator_array.disconnect()
+                    self._terminator_array.destroy()
                 self._started = False  # The code above is equivalent to stopping the instance
 
                 if producer:
@@ -1683,7 +1697,9 @@ class VideoSystem:
         # Returns the extracted data
         return tuple(frame_data)
 
-    def encode_directory(self, directory: Path, target_fps: int, video_name: str, cleanup: bool = False) -> None:
+    def encode_video_from_images(
+        self, directory: Path, target_fps: int, video_name: str, cleanup: bool = False
+    ) -> None:
         """Converts a set of images acquired via the ImageSaver class into a video file.
 
         Use this method to post-process image frames acquired in real time into a storage-efficient video file.

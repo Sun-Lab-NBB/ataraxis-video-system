@@ -632,9 +632,11 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
     video_system_1.stop()
     video_system_2.stop()
     video_system_2.stop()  # Ensures that calling stop twice does nothing
-    data_logger.stop()
 
-    # Also test the behavior of the data logger. First, compresses the logs acquired by both systems
+    # Also test the behavior of the data logger. First, compresses the logs acquired by both systems.
+    # Technically, DataLogger needs to be shut before calling compression, but this is not a strict requirement. It is
+    # safer when the logger is not working, but the method will run. The reason for not stopping it is the test below,
+    # that needs a working logger and right now cycling start and stop is not possible.
     data_logger.compress_logs(remove_sources=True, memory_mapping=False)
 
     # Extracts the frame timestamps for each system and confirms they match the expected numbers
@@ -644,9 +646,17 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
     assert len(frame_data_2) == 10  # fps of 5, ran for 2 seconds should have acquired 10 frames
 
     # Finally, verifies converting frames acquired as images to video files
-    video_system_1.encode_directory(
+    video_system_1.encode_video_from_images(
         directory=video_system_2.output_directory, video_name="test_video", cleanup=True, target_fps=5
     )
+
+    # Also test starting video_system without frame saving
+    video_system_1.add_camera(save_frames=False, output_frames=True, camera_backend=CameraBackends.MOCK)
+    video_system_1._saver = None
+    video_system_1.start()
+    timer.delay_noblock(delay=2)  # 2-second delay
+    video_system_1.stop()
+    data_logger.stop()
 
 
 def test_start_errors(video_system, tmp_path) -> None:
@@ -659,7 +669,7 @@ def test_start_errors(video_system, tmp_path) -> None:
     message = (
         f"Unable to start the VideoSystem with id {np.uint8(1)}. The VideoSystem must be equipped with a Camera "
         f"before it can be started. Use add_camera() method to add a Camera class to the VideoSystem. If you "
-        f"need to convert a directory of images to video, use the encode_directory() method instead."
+        f"need to convert a directory of images to video, use the encode_video_from_images() method instead."
     )
     with pytest.raises(RuntimeError, match=error_format(message)):
         video_system.start()
@@ -690,4 +700,4 @@ def test_start_errors(video_system, tmp_path) -> None:
         f"before calling this method()."
     )
     with pytest.raises(TypeError, match=error_format(message)):
-        video_system.encode_directory(directory=tmp_path, target_fps=10, video_name="test")
+        video_system.encode_video_from_images(directory=tmp_path, target_fps=10, video_name="test")
