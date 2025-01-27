@@ -1,10 +1,48 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
+from ataraxis_video_system import VideoSystem
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
+
+
+@pytest.fixture(scope="session")
+def cti_path():
+    _cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
+    return _cti_path
+
+
+@pytest.fixture(scope="session")
+def has_opencv():
+    """Static check for OpenCV camera availability."""
+    try:
+        opencv_id = VideoSystem.get_opencv_ids()
+        if len(opencv_id) > 0:
+            return True
+        else:
+            return False
+    except:
+        return False
+
+
+@pytest.fixture(scope="session")
+def has_harvesters(cti_path):
+    """Static check for Harvesters camera availability."""
+    if not cti_path.exists():
+        return False
+
+    try:
+        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
+        if len(harvesters_id) > 0:
+            return True
+        else:
+            return False
+    except:
+        return False
 
 
 @pytest.mark.parametrize(
@@ -141,7 +179,7 @@ def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height)
         (False, 30, 1280, 720),
     ],
 )
-def test_opencv_camera_grab_frame(has_opencv, color, fps, width, height) -> None:
+def test_opencv_camera_grab_frame(color, fps, width, height, has_opencv) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:

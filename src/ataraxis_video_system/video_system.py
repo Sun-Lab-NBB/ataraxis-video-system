@@ -436,7 +436,7 @@ class VideoSystem:
             # enables fps override. Software correction requires that the native fps is higher than the desired fps,
             # as it relies on discarding excessive frames.
             if acquisition_frame_rate is not None and camera.fps > acquisition_frame_rate:  # type: ignore
-                fps_override = acquisition_frame_rate
+                fps_override = acquisition_frame_rate  # pragma: no cover
             elif acquisition_frame_rate is not None and camera.fps < acquisition_frame_rate:  # type: ignore
                 message = (
                     f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
@@ -838,7 +838,12 @@ class VideoSystem:
         if hardware_encoding:
             try:
                 # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
-                subprocess.run(args=["nvidia-smi"], capture_output=True, text=True, check=True)
+                subprocess.run(
+                    args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             except Exception:  # pragma: no cover
                 message = (
                     f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. The object is "

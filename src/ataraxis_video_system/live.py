@@ -38,8 +38,7 @@ def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
     if value is not None:
         return int(value)
 
-    # pragma: no cover
-    return None
+    return None  # pragma: no cover
 
 
 def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
@@ -50,8 +49,7 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     if value is not None:
         return float(value)
 
-    # pragma: no cover
-    return None
+    return None  # pragma: no cover
 
 
 @click.command()
@@ -190,7 +188,7 @@ def live_run(
             frame_width=width,
             frame_height=height,
             acquisition_frame_rate=fps,
-            color=monochrome,
+            color=not monochrome,
         )
     elif camera_backend == "harvesters":  # pragma: no cover
         video_system.add_camera(
@@ -211,7 +209,7 @@ def live_run(
             frame_width=width,
             frame_height=height,
             acquisition_frame_rate=fps,
-            color=monochrome,
+            color=not monochrome,
         )
 
     # Instantiates the requested saver

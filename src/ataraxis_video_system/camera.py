@@ -204,11 +204,11 @@ class OpenCVCamera:
             # acquisition parameters were not provided, skips setting them and instead retrieves them from the
             # connected camera (see below).
             if self._fps is not None:
-                self._camera.set(cv2.CAP_PROP_FPS, self._fps)
+                self._camera.set(cv2.CAP_PROP_FPS, self._fps)  # pragma: no cover
             if self._width is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))
+                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))  # pragma: no cover
             if self._height is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))
+                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))  # pragma: no cover
 
             # Overwrites class attributes with the current properties of the camera. They may differ from the expected
             # result of setting the properties above!
@@ -642,14 +642,13 @@ class HarvestersCamera:
                 return frame
 
             # If the image has an unsupported data format, raises an error
-            # pragma: no cover
             message = (
                 f"The Harvesters-managed camera with id {self._id} yielded an image "
                 f"with an unsupported data (color) format {data_format}. If possible, re-configure the "
                 f"camera to use one of the supported formats: Monochrome, RGB, RGBA, BGR, BGRA. "
                 f"Otherwise, you may need to implement a custom data reshaper algorithm."
-            )
-            console.error(message=message, error=RuntimeError)
+            )  # pragma: no cover
+            console.error(message=message, error=RuntimeError)  # pragma: no cover
             # This should never be reached, it is here to appease mypy
             raise RuntimeError(message)  # pragma: no cover
 

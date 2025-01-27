@@ -2,6 +2,7 @@
 
 from copy import copy
 from pathlib import Path
+import subprocess
 
 import numpy as np
 import pytest
@@ -20,6 +21,57 @@ from ataraxis_video_system.saver import (
     OutputPixelFormats,
 )
 from ataraxis_video_system.camera import OpenCVCamera, CameraBackends
+
+
+@pytest.fixture(scope="session")
+def cti_path():
+    _cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
+    return _cti_path
+
+
+@pytest.fixture(scope="session")
+def has_opencv():
+    """Static check for OpenCV camera availability."""
+    try:
+        opencv_id = VideoSystem.get_opencv_ids()
+        if len(opencv_id) > 0:
+            return True
+        else:
+            return False
+    except:
+        return False
+
+
+@pytest.fixture(scope="session")
+def has_harvesters(cti_path):
+    """Static check for Harvesters camera availability."""
+    if not cti_path.exists():
+        return False
+
+    try:
+        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
+        if len(harvesters_id) > 0:
+            return True
+        else:
+            return False
+    except:
+        return False
+
+
+@pytest.fixture(scope="session")
+def has_nvidia():
+    """Static check for NVIDIA GPU availability."""
+    try:
+        subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        return True
+    except:
+        return False
 
 
 @pytest.fixture()
@@ -253,8 +305,55 @@ def test_add_camera_errors(video_system) -> None:
         )
         video_system._cti_path = original_cti_path  # Restores the CTI path
 
+    # Invalid camera backend
+    invalid_backend = None
+    message = (
+        f"Unable to instantiate the Camera due to encountering an unsupported "
+        f"camera_backend argument {invalid_backend} of type {type(invalid_backend).__name__}. "
+        f"camera_backend has to be one of the options available from the CameraBackends enumeration."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_camera(save_frames=save_frames, camera_backend=invalid_backend)
 
-@pytest.mark.xdist_group(name="group2")
+    # Invalid output framerate override
+    invalid_output_fr = None
+    message = (
+        f"Unable to instantiate the Camera due to encountering an unsupported "
+        f"output_frame_rate argument {invalid_output_fr} of type {type(invalid_output_fr).__name__}. "
+        f"Output framerate override has to be an integer or floating point number that does not exceed the "
+        f"camera acquisition framerate (30.0)."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_camera(
+            save_frames=save_frames,
+            camera_backend=CameraBackends.MOCK,
+            acquisition_frame_rate=30,
+            output_frames=True,
+            output_frame_rate=invalid_output_fr,
+        )
+
+    # Invalid display framerate override
+    invalid_display_fr = None
+    message = (
+        f"Unable to instantiate the Camera due to encountering an unsupported "
+        f"display_frame_rate argument {invalid_display_fr} of type {type(invalid_display_fr).__name__}. "
+        f"Display framerate override has to be an integer or floating point number that does not exceed the "
+        f"camera acquisition framerate (30.0)."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        # noinspection PyTypeChecker
+        video_system.add_camera(
+            save_frames=save_frames,
+            camera_backend=CameraBackends.MOCK,
+            acquisition_frame_rate=30,
+            display_frames=True,
+            display_frame_rate=invalid_display_fr,
+        )
+
+
+@pytest.mark.xdist_group(name="group1")
 def test_opencvcamera_configuration_errors(video_system, has_opencv) -> None:
     """Verifies that add_camera() method correctly catches errors related to OpenCV camera configuration."""
     # Skips the test if OpenCV-compatible hardware is not available.
@@ -274,6 +373,22 @@ def test_opencvcamera_configuration_errors(video_system, has_opencv) -> None:
     actual_fps = camera.fps
     camera.disconnect()
 
+    # Unsupported frame width
+    frame_width = 3000
+    message = (
+        f"Unable to add the OpenCVCamera to the VideoSystem with id {video_system._id}. "
+        f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, "
+        f"but the camera returned a test frame with width {actual_width}. This indicates that the camera "
+        f"does not support the requested frame height and width combination."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        video_system.add_camera(
+            camera_index=camera_index,
+            save_frames=save_frames,
+            frame_width=frame_width,
+            camera_backend=camera_backend,
+        )
+
     # Unsupported frame height
     frame_height = 3000
     message = (
@@ -287,24 +402,6 @@ def test_opencvcamera_configuration_errors(video_system, has_opencv) -> None:
             camera_index=camera_index,
             save_frames=save_frames,
             frame_height=frame_height,
-            frame_width=actual_width,
-            camera_backend=camera_backend,
-        )
-
-    # Unsupported frame width
-    frame_width = 3000
-    message = (
-        f"Unable to add the OpenCVCamera  to the VideoSystem with id {video_system._id}. "
-        f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, "
-        f"but the camera returned a test frame with width {actual_width}. This indicates that the camera "
-        f"does not support the requested frame height and width combination."
-    )
-    with pytest.raises(ValueError, match=error_format(message)):
-        video_system.add_camera(
-            camera_index=camera_index,
-            save_frames=save_frames,
-            frame_height=actual_height,
-            frame_width=frame_width,
             camera_backend=camera_backend,
         )
 

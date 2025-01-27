@@ -1,6 +1,7 @@
 """Contains tests for classes and methods provided by the saver.py module."""
 
 import time
+import subprocess
 
 import cv2
 import numpy as np
@@ -19,6 +20,22 @@ from ataraxis_video_system.saver import (
     OutputPixelFormats,
 )
 from ataraxis_video_system.camera import MockCamera
+
+
+@pytest.fixture(scope="session")
+def has_nvidia():
+    """Static check for NVIDIA GPU availability."""
+    try:
+        subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        return True
+    except:
+        return False
 
 
 def test_image_saver_repr(tmp_path):
