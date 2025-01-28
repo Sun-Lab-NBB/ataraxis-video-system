@@ -423,7 +423,7 @@ class VideoSystem:
                     f"frames."
                 )
                 console.error(error=ValueError, message=message)
-            elif len(frame.shape) != 2:  # pragma: no cover
+            elif not color and len(frame.shape) != 2:  # pragma: no cover
                 message = (
                     f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
                     f"Attempted configuring the camera to acquire monochrome frames, but the camera returned a test "

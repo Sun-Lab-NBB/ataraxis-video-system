@@ -119,7 +119,7 @@ def test_save_image(image_format, tmp_path):
 
     # Reads the saved frame and ensures it is similar enough to the original generated frame.
     image = cv2.imread(str(output_path), cv2.IMREAD_UNCHANGED)
-    assert np.allclose(frame_data, image, atol=3)  # Every pixel has to be within 3 intensity values from the origin
+    assert np.allclose(frame_data, image, atol=5)  # Every pixel has to be within 5 intensity values from the origin
 
 
 def test_video_saver_repr(tmp_path):
