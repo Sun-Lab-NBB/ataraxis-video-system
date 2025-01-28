@@ -221,12 +221,9 @@ source = ["src/", ".tox/*/lib/python*/site-packages/"]
 [tool.coverage.html]
 directory = "reports/coverage_html"
 
-# Optimizes coverage generation for parallel testing and side-steps early-import axvs coverage warning
+# Optimizes coverage generation for parallel testing
 [tool.coverage.run]
-disable_warnings = ["module-not-measured"]
 parallel = true
-concurrency = ["multiprocessing", "thread"]
-source = ["ataraxis_video_system"]
 
 # Specifies additional ignore directives
 [tool.coverage.report]

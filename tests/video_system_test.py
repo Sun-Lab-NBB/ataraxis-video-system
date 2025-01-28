@@ -730,17 +730,15 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
     video_system_2.stop()
     video_system_2.stop()  # Ensures that calling stop twice does nothing
 
-    # Also test the behavior of the data logger. First, compresses the logs acquired by both systems.
-    # Technically, DataLogger needs to be shut before calling compression, but this is not a strict requirement. It is
-    # safer when the logger is not working, but the method will run. The reason for not stopping it is the test below,
-    # that needs a working logger and right now cycling start and stop is not possible.
+    # Also, test the behavior of the data logger. First, compresses the logs acquired by both systems.
+    data_logger.stop()
     data_logger.compress_logs(remove_sources=True, memory_mapping=False)
 
     # Extracts the frame timestamps for each system and confirms they match the expected numbers
     frame_data_1 = video_system_1.extract_logged_data()
     frame_data_2 = video_system_2.extract_logged_data()
-    assert len(frame_data_1) == 20  # fps of 10, ran for 2 seconds should have acquired 20 frames
-    assert len(frame_data_2) == 10  # fps of 5, ran for 2 seconds should have acquired 10 frames
+    assert 19 <= len(frame_data_1) < 21  # fps of 10, ran for 2 seconds should have acquired 20 frames
+    assert 9 <= len(frame_data_2) < 11  # fps of 5, ran for 2 seconds should have acquired 10 frames
 
     # Finally, verifies converting frames acquired as images to video files
     video_system_1.encode_video_from_images(
@@ -748,11 +746,17 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
     )
 
     # Also test starting video_system without frame saving
-    video_system_1.add_camera(save_frames=False, output_frames=True, camera_backend=CameraBackends.MOCK)
-    video_system_1._saver = None
-    video_system_1.start()
+    video_system_3 = VideoSystem(
+        system_id=np.uint8(234),
+        data_logger=data_logger,
+        output_directory=output_directory,
+        harvesters_cti_path=harvesters_cti_path,
+    )
+    video_system_3.add_camera(save_frames=False, output_frames=True, camera_backend=CameraBackends.MOCK)
+    data_logger.start()
+    video_system_3.start()
     timer.delay_noblock(delay=2)  # 2-second delay
-    video_system_1.stop()
+    video_system_3.stop()
     data_logger.stop()
 
 

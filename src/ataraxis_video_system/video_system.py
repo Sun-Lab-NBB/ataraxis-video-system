@@ -883,12 +883,12 @@ class VideoSystem:
             RuntimeError: If starting the consumer or producer processes stalls or fails. If the camera is configured to
             save frames, but there is no Saver. If there is no Camera to acquire frames.
         """
-        # This timer is used to forcibly terminate processes that stall at initialization.
-        initialization_timer = PrecisionTimer(precision="s")
-
         # Skips re-starting the system if it is already started.
         if self._started:
             return
+
+        # This timer is used to forcibly terminate processes that stall at initialization.
+        initialization_timer = PrecisionTimer(precision="s")
 
         # Prevents starting the system if there is no Camera
         if self._camera is None:
@@ -1557,7 +1557,7 @@ class VideoSystem:
             # If either consumer or producer is dead, ensures proper resource reclamation before terminating with an
             # error
             if error:
-                # Reclaims all commited resources before terminating with an error.
+                # Reclaims all committed resources before terminating with an error.
                 self._terminator_array.write_data(index=0, data=np.uint8(1))  # type: ignore
                 if self._consumer_process is not None:
                     self._consumer_process.join()
