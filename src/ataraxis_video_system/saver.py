@@ -9,6 +9,7 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_saver()' method from the VideoSystem class.
 """
 
+import os
 import re
 from enum import Enum
 from queue import Empty, Queue
@@ -20,7 +21,6 @@ import subprocess
 from subprocess import Popen, TimeoutExpired
 from concurrent.futures import ThreadPoolExecutor
 
-import os
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 from numpy.typing import NDArray

@@ -85,18 +85,23 @@ ___
 ## Usage
 
 ### OS support status
-Unlike other Ataraxis libraries, getting all components of this library to work on all OSes turned out to be 
-surprisingly challenging. Currently, the library is used and most extensively tested on Linux and will likely work for
-all Linux users.
+This library was primarily written on and for Linux systems. It is extensively tested on Linux and performs well under
+all test conditions. It is very likely that Linux users will not experience any issues outside the usual possibility of
+encountering bugs missed during initial testing.
+
+Windows bindings also work as expected, but require additional setup. Make sure FFMPEG is updated to the latest version,
+as we found issues using FFMPEG built in 2023, where it drastically slowed the speed of video encoding to the point 
+where VideoSystem could not operate for prolonged periods of time. We also had to disable the OpenCV MSMF HW 
+transformations, as MSMF took a very long time to establish camera connection with this flag enabled. This latter issue
+is well known to the community.
 
 macOS mostly works as expected except for live frame displaying, which does not work. This is a known 
 issue with the OpenCV backend used to render the frame data. Similar issue is observed for other backends, such as 
 Qt5 and Tkinter that were tested as a potential replacement. Displaying the frames on macOS is disabled until we find
 a working backend.
 
-Windows support is currently experimental. It is extremely unstable, although most library components do to function as
-expected (verified with unit testing). Getting stable Windows support will likely take some time. Users are encouraged 
-to try WSL as a potential alternative while we are working on stable Windows support.
+Overall, the library in its current state should be stable. Most of the outstanding issues should be resolved in the 
+future with updates to OpenCV and other dependencies.
 
 ### Quickstart
 This is a minimal example of how to use this library. It is also available as a [script](examples/quickstart.py).
@@ -216,8 +221,8 @@ vs.encode_video_from_images(directory=image_directory, target_fps=15, video_name
 Like some other Ataraxis libraries, this library relies on the 
 [DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-data-structures#datalogger) class to save frame acquisition 
 timestamps to disk during runtime. The timestamps are serialized and saved as `.npy` files. It is **highly** advised 
-to study the documentation for the class before using this library, in the case that you would need to manually parse 
-logged data.
+to study the documentation for the class before using this library, especially if you want to parse the logged data
+manually instead of using the method exposed by teh VideoSystem class.
 
 The DataLogger may be shared by multiple Ataraxis classes that generate log entries, such as 
 [MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) classes. To support using 
@@ -230,18 +235,17 @@ the following order:
 1. The uint8 id of the data source. For this library, the source ID is the ID code of the VideoSystem that submits the 
    data to be logged. The ID occupies the first byte of each logged array.
 2. The uint64 timestamp that specifies the number of microseconds relative to the **onset** timestamp (see below). The 
-   timestamp occupies **8** bytes following the ID byte. This is the timestamp of the frame that generated the data 
-   entry. 
+   timestamp occupies **8** bytes following the ID byte. This is the frame acquisition timestamp.
 
-Note: Timestamps are generated at frame acquisition but are only submitted to the logger when the corresponding frame
-is saved to disk. Therefore, the timestamps always match the order the saved frames appear in the video file or are 
-saved to disk as image files.
+**Note:** Timestamps are generated at frame acquisition but are only submitted to the logger when the corresponding 
+frame is saved to disk. Therefore, the timestamps always match the order the saved frames appear in the video file or 
+are saved to disk as image files.
 
 #### Onset timestamp:
 Each VideoSystem that logs its data generates an `onset` timestamp as part of its `start()` method runtime.
 This log entry uses a modified data order and stores the current UTC time, accurate to microseconds. All further log 
 entries for the same source use the timestamp section of their payloads to communicate the number of microseconds 
-elapsed since the onset timestamp. The onset log entries follow the following order:
+elapsed since the onset timestamp acquisition. The onset log entries follow the following order:
 1. The uint8 id of the data source.
 2. The uint64 value **0** that occupies 8 bytes following the source id. This is the only time when the timestamp value 
    of a log entry can be set to 0.
@@ -251,7 +255,7 @@ elapsed since the onset timestamp. The onset log entries follow the following or
 #### Starting and stopping logging
 Until the DataLogger is started through its `start()` method, the log entries will be buffered in the multiprocessing 
 queue, which uses the host-computer’s RAM. To avoid running out of buffer space, **make sure** the DataLogger's 
-`start()` method is called before calling the `start()` method of any VideoSystem class. Once all sources
+`start()` method is called before calling the `start()` method of any VideoSystem class. Once ***all*** sources
 using the same DataLogger have finished their runtime, call the `stop()` method to end log saving and then call the
 `compress_logs()` method to compress all individual `.npy` entries into an `.npz` archive. Compressing the logs is 
 required to later parse the frame acquisition timestamps for further analysis (see [quickstart](#quickstart)).

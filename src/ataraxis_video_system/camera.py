@@ -9,11 +9,11 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_camera()' method from the VideoSystem class.
 """
 
+import os
 from enum import Enum
 from typing import Any
 from pathlib import Path
 
-import os
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np

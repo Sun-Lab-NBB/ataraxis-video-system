@@ -9,6 +9,7 @@ runtime performance.
 All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
 
+import os
 import sys
 from queue import Queue
 from types import NoneType
@@ -25,7 +26,6 @@ from multiprocessing import (
 )
 from multiprocessing.managers import SyncManager
 
-import os
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
