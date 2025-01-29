@@ -99,8 +99,8 @@ def test_save_image(image_format, tmp_path):
 
     Notes:
         JPEG images are set to have a jpeg quality of 100 to replicate lossless compression. The difference between the
-        image frames obtained from the mock camera and the saved images is set to have a tolerance of 3 intensity-values
-        for every pixel.
+        image frames obtained from the mock camera and the saved images is set to have a tolerance of three
+        intensity-values for every pixel.
     """
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=True, fps=1000, width=2, height=2)

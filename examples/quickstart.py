@@ -16,12 +16,12 @@ from ataraxis_data_structures import DataLogger
 from ataraxis_video_system import VideoSystem, InputPixelFormats
 
 # Since most classes used in this example use multiprocessing, they have to run inside the __main__ guard
-if __name__ == '__main__':
+if __name__ == "__main__":
     # The directory where to output the recorded frames and the acquisition timestamps
     output_directory = Path("/home/cybermouse/Desktop/vid_test")
 
     # The DataLogger is used to save frame acquisition timestamps to disk. During runtime, it logs frame timestamps as
-    # uncompressed NumPy arrays (.npy) and after runtime it can compress log entries into one .npz archive.
+    # uncompressed NumPy arrays (.npy), and after runtime it can compress log entries into one .npz archive.
     logger = DataLogger(output_directory=output_directory, instance_name="webcam", exist_ok=True)
 
     # DataLogger uses a parallel process to write log entries to disk. It has to be started before it can save any log
@@ -42,20 +42,20 @@ if __name__ == '__main__':
         acquisition_frame_rate=30,
         display_frames=True,
         display_frame_rate=15,
-        color=True,  # Most WebCameras default to using colored output
+        color=False,  # Acquires images in MONOCHROME mode
     )
 
     # To save the frames acquired by the system, we need to add a saver. Here, we demonstrate adding a video saver, but
     # you can also use the add_image_saver() method to output frames as images. The default video saver uses CPU and
     # H265 codec to encode frames as an MP4 video.
-    vs.add_video_saver(input_pixel_format=InputPixelFormats.BGR)  # Colored frames will be acquired with BGR/A format
+    vs.add_video_saver(input_pixel_format=InputPixelFormats.MONOCHROME)
 
     # Calling this method arms the video system and starts frame acquisition. However, the frames are not initially
     # saved to disk.
     vs.start()
 
     timer = PrecisionTimer("s")
-    timer.delay_noblock(delay=2)  # During this delay, camera frames are displayed to the user, but are not saved
+    timer.delay_noblock(delay=2)  # During this delay, camera frames are displayed to the user but are not saved
 
     # Begins saving frames to disk as an MP4 video file
     vs.start_frame_saving()

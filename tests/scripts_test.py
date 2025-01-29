@@ -19,7 +19,7 @@ def test_list_ids() -> None:
     This test only verifies that the host system is able to run the script.
     """
     runner = CliRunner()
-    # Unlike 'harvesters' version, this is guaranteed to run on any supported system.
+    # Unlike the 'harvesters' version, this is guaranteed to run on any supported system.
     args = ["-b", "opencv"]
     # noinspection PyTypeChecker
     result = runner.invoke(list_ids, args)
@@ -38,7 +38,7 @@ def test_live_run() -> None:
         # Prepare arguments
         args = [
             "--camera-backend",
-            "mock",  # Uses mock backend to avoid the need for real camera
+            "mock",  # Uses mock backend to avoid the need for a real camera
             "--camera_index",
             "0",
             "--saver-backend",

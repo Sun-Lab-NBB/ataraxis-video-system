@@ -1,5 +1,6 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
+import sys
 from copy import copy
 from pathlib import Path
 import subprocess
@@ -76,14 +77,14 @@ def has_nvidia():
 
 @pytest.fixture()
 def data_logger(tmp_path) -> DataLogger:
-    """Generates a DataLogger class instance and returns it to caller."""
+    """Generates a DataLogger class instance and returns it to the caller."""
     data_logger = DataLogger(output_directory=tmp_path, exist_ok=True, instance_name=str(tmp_path.stem))
     return data_logger
 
 
 @pytest.fixture
 def video_system(tmp_path, data_logger, has_harvesters) -> VideoSystem:
-    """Creates a VideoSystem instance and returns it to caller."""
+    """Creates a VideoSystem instance and returns it to the caller."""
     system_id = np.uint8(1)
     output_directory = tmp_path.joinpath("test_output_directory")
 
@@ -334,28 +335,30 @@ def test_add_camera_errors(video_system) -> None:
             output_frame_rate=invalid_output_fr,
         )
 
-    # Invalid display framerate override
-    invalid_display_fr = None
-    message = (
-        f"Unable to instantiate the Camera due to encountering an unsupported "
-        f"display_frame_rate argument {invalid_display_fr} of type {type(invalid_display_fr).__name__}. "
-        f"Display framerate override has to be an integer or floating point number that does not exceed the "
-        f"camera acquisition framerate (30.0)."
-    )
-    with pytest.raises(TypeError, match=error_format(message)):
-        # noinspection PyTypeChecker
-        video_system.add_camera(
-            save_frames=save_frames,
-            camera_backend=CameraBackends.MOCK,
-            acquisition_frame_rate=30,
-            display_frames=True,
-            display_frame_rate=invalid_display_fr,
+    # Invalid display framerate override. This is not tested on MacOS as there is currently a static guard against
+    # displaying frames on that OS.
+    if "darwin" not in sys.platform:
+        invalid_display_fr = None
+        message = (
+            f"Unable to instantiate the Camera due to encountering an unsupported "
+            f"display_frame_rate argument {invalid_display_fr} of type {type(invalid_display_fr).__name__}. "
+            f"Display framerate override has to be an integer or floating point number that does not exceed the "
+            f"camera acquisition framerate (30.0)."
         )
+        with pytest.raises(TypeError, match=error_format(message)):
+            # noinspection PyTypeChecker
+            video_system.add_camera(
+                save_frames=save_frames,
+                camera_backend=CameraBackends.MOCK,
+                acquisition_frame_rate=30,
+                display_frames=True,
+                display_frame_rate=invalid_display_fr,
+            )
 
 
 @pytest.mark.xdist_group(name="group1")
 def test_opencvcamera_configuration_errors(video_system, has_opencv) -> None:
-    """Verifies that add_camera() method correctly catches errors related to OpenCV camera configuration."""
+    """Verifies that the add_camera () method correctly catches errors related to OpenCV camera configuration."""
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
@@ -783,7 +786,7 @@ def test_start_errors(video_system, tmp_path) -> None:
     with pytest.raises(RuntimeError, match=error_format(message)):
         video_system.start()
 
-    # Attempting to read non-compressed (non-existent) log archive
+    # Attempting to read a non-compressed (non-existent) log archive
     message = (
         f"Unable to extract frame data for VideoSystem with id {np.uint8(1)} from the log file. "
         f"This likely indicates that the logs have not been compressed via DataLogger's compress_logs() method "

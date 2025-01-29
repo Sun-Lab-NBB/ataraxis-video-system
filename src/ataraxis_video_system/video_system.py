@@ -14,6 +14,7 @@ from queue import Queue
 from types import NoneType
 from typing import Any
 from pathlib import Path
+import warnings
 from threading import Thread
 import subprocess
 from dataclasses import dataclass
@@ -160,6 +161,8 @@ class VideoSystem:
     ):
         # Has to be set first to avoid stop method errors
         self._started: bool = False  # Tracks whether the system has active processes
+        # The manager is created early in the __init__ phase to support del-based cleanup
+        self._mp_manager: SyncManager = multiprocessing.Manager()
 
         # Ensures system_id is a byte-convertible integer
         if not isinstance(system_id, np.uint8):
@@ -212,7 +215,6 @@ class VideoSystem:
 
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
-        self._mp_manager: SyncManager = multiprocessing.Manager()
         self._image_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
         self._output_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
         self._terminator_array: SharedMemoryArray | None = None
@@ -227,6 +229,7 @@ class VideoSystem:
     def __del__(self) -> None:
         """Ensures that all resources are released when the instance is garbage-collected."""
         self.stop()
+        self._mp_manager.shutdown()
 
     def __repr__(self) -> str:
         """Returns a string representation of the VideoSystem class instance."""
@@ -266,7 +269,7 @@ class VideoSystem:
         This method allows adding Cameras to an initialized VideoSystem instance. Currently, this is the only intended
         way of using Camera classes available through this library. Unlike Saver class instances, which are not
         required for the VideoSystem to function, a valid Camera class must be added to the system before its start()
-        method is called. The only exception to this rule is when using encode_video_from_images() method, which
+        method is called. The only exception to this rule is when using the encode_video_from_images() method, which
         requires a VideoSaver and does not require the start() method to be called.
 
         Notes:
@@ -351,6 +354,13 @@ class VideoSystem:
         # Ensures that display_frames is boolean. Does the same for output_frames
         display_frames = False if not isinstance(display_frames, bool) else display_frames
         output_frames = False if not isinstance(output_frames, bool) else output_frames
+
+        # Disables frame displaying on macOS until OpenCV backend issues are fixed
+        if display_frames and "darwin" not in sys.platform:
+            warnings.warn(
+                message=f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details"
+            )
+            display_frames = False
 
         # Pre-initializes the fps override to 0. A 0 value indicates that the override is not used. It is enabled
         # automatically as a fallback when the camera lacks native fps limiting capabilities.
@@ -949,10 +959,9 @@ class VideoSystem:
                         f"likely indicates a problem with the Saver (Video or Image) class managed by the process."
                     )
 
-                    # Reclaims all commited resources before terminating with an error.
+                    # Reclaims all committed resources before terminating with an error.
                     self._terminator_array.write_data(index=0, data=np.uint8(1))
                     self._consumer_process.join()
-                    self._mp_manager.shutdown()
                     self._terminator_array.disconnect()
                     self._terminator_array.destroy()
 
@@ -985,12 +994,11 @@ class VideoSystem:
                     f"display thread."
                 )
 
-                # Reclaims all commited resources before terminating with an error.
+                # Reclaims all committed resources before terminating with an error.
                 self._terminator_array.write_data(index=0, data=np.uint8(1))
                 if self._consumer_process is not None:
                     self._consumer_process.join()
                 self._producer_process.join()
-                self._mp_manager.shutdown()
                 self._terminator_array.disconnect()
                 self._terminator_array.destroy()
 
@@ -1037,11 +1045,6 @@ class VideoSystem:
             # Prevents being stuck in this loop.
             if shutdown_timer.elapsed > 600:
                 break
-
-        # Shuts down the manager. This terminates the Queue and discards any information buffered in the queue if it
-        # is not saved. This has to be executed for the processes to be able to join, but after allowing them to
-        # gracefully empty the queue through the timeout functionality.
-        self._mp_manager.shutdown()
 
         # Joins the producer and consumer processes
         if self._producer_process is not None:
@@ -1299,7 +1302,7 @@ class VideoSystem:
         # Extracts the Camera class from the CameraSystem wrapper
         camera = camera_system.camera
 
-        # if the camera is configured to display frames, creates a worker thread and queue object that handles
+        # If the camera is configured to display frames, creates a worker thread and queue object that handles
         # displaying the frames.
         show_time = None
         show_timer = None
@@ -1564,7 +1567,6 @@ class VideoSystem:
                     self._consumer_process.join()
                 if self._producer_process is not None:
                     self._producer_process.join()
-                self._mp_manager.shutdown()
                 if self._terminator_array is not None:
                     self._terminator_array.disconnect()
                     self._terminator_array.destroy()
@@ -1627,7 +1629,7 @@ class VideoSystem:
         """Extracts the frame acquisition timestamps from the .npz log archive generated by the VideoSystem instance
         during runtime
 
-        This method reads the compressed '.npz' archives generated by the VideoSystem and, if the system saved any
+        This method reads the compressed '.npz' archives generated by the VideoSystem and, if the system saves any
         frames acquired by the camera, extracts a tuple of acquisition timestamps. The order of timestamps in
         the tuple is sequential and matches the order of frame acquisition.
 
@@ -1647,7 +1649,7 @@ class VideoSystem:
         # format before calling this method
         log_path = self._log_directory.joinpath(f"{self._id}_log.npz")
 
-        # If compressed log archive does not exist, raises an error
+        # If a compressed log archive does not exist, raises an error
         if not log_path.exists():
             error_message = (
                 f"Unable to extract frame data for VideoSystem with id {self._id} from the log file. "
@@ -1664,7 +1666,7 @@ class VideoSystem:
 
         # Locates the logging onset timestamp. The onset is used to convert the timestamps for logged frame data into
         # absolute UTC timestamps. Originally, all timestamps other than onset are stored as elapsed time in
-        # microseconds relative to onset timestamp.
+        # microseconds relative to the onset timestamp.
         timestamp_offset = 0
         onset_us = np.uint64(0)
         timestamp: np.uint64
@@ -1710,7 +1712,7 @@ class VideoSystem:
 
         Use this method to post-process image frames acquired in real time into a storage-efficient video file.
         Primarily, this is helpful for runtimes that require the fastest possible saving speed (achieved by saving raw
-        frame data without processing), but still need to optimize acquired data for long-term storage.
+        frame data without processing) but still need to optimize acquired data for long-term storage.
 
         Notes:
             The video is written to the output directory of the VideoSystem class, regardless of where the source images
@@ -1752,7 +1754,7 @@ class VideoSystem:
         """Returns the path to the directory where the Saver managed by the VideoSystem outputs acquired frames as
         images or video file.
 
-        If the VideoSystem does not have a Saver, returns None, to indicate that there is no valid output directory.
+        If the VideoSystem does not have a Saver, it returns None to indicate that there is no valid output directory.
         """
         if self._saver is not None:
             # noinspection PyProtectedMember

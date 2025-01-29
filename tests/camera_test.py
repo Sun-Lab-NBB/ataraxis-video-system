@@ -79,7 +79,7 @@ def test_mock_camera_connect_disconnect():
 
 
 def test_mock_camera_grab_frame():
-    """Verifies the functioning of MockCamera grab_frame() method."""
+    """Verifies the functioning of the MockCamera grab_frame() method."""
     # Setup
     camera = MockCamera(camera_id=np.uint8(222), camera_index=-1, color=False, width=2, height=3)
     camera.connect()
@@ -210,7 +210,7 @@ def test_opencv_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the OpenCVCamera grab_frame() method."""
     # Setup
     camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=-1)  # Uses invalid ID -1
-    camera._backend = -10  # Also invalidates the backend code to trigger some errors below.
+    camera._backend = -10  # Also, invalidates the backend code to trigger some errors below.
 
     # Verifies that retrieving an invalid backend code correctly raises a ValueError
     message = (
@@ -321,7 +321,7 @@ def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_pa
         assert frame.shape[1] == width
 
     # Does not check the color handling, as it is expected that the camera itself is configured to properly handle
-    # monochrome / color conversions on-hardware. Also because we do not have a Harvesters camera that is compatible
+    # monochrome / color conversions on-hardware. Also, because we do not have a Harvesters camera that is compatible
     # with color imaging.
 
     # Deletes the class to test the functioning of the __del__() method.
@@ -348,5 +348,5 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters, cti_path) -> None:
     with pytest.raises(RuntimeError, match=error_format(message)):
         _ = camera.grab_frame()
 
-    # Other GrabFrame errors cannot be readily reproduced under test environment and are likely not possible to
-    # encounter under most real world conditions.
+    # Other GrabFrame errors cannot be readily reproduced under a test environment and are likely not possible to
+    # encounter under most real-world conditions.
