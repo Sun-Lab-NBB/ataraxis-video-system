@@ -25,6 +25,8 @@ from multiprocessing import (
 )
 from multiprocessing.managers import SyncManager
 
+import os
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
 from numpy.typing import NDArray
@@ -356,9 +358,11 @@ class VideoSystem:
         output_frames = False if not isinstance(output_frames, bool) else output_frames
 
         # Disables frame displaying on macOS until OpenCV backend issues are fixed
-        if display_frames and "darwin" not in sys.platform:
+        if display_frames and "darwin" in sys.platform:
             warnings.warn(
-                message=f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details"
+                message=(
+                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details."
+                )
             )
             display_frames = False
 
@@ -1048,13 +1052,13 @@ class VideoSystem:
 
         # Joins the producer and consumer processes
         if self._producer_process is not None:
-            self._producer_process.join()
+            self._producer_process.join(timeout=20)
         if self._consumer_process is not None:
-            self._consumer_process.join()
+            self._consumer_process.join(timeout=20)
 
         # Joins the watchdog thread
         if self._watchdog_thread is not None:
-            self._watchdog_thread.join()
+            self._watchdog_thread.join(timeout=20)
 
         # Disconnects from and destroys the terminator array buffer. This step destroys the shared memory buffer.
         self._terminator_array.disconnect()
@@ -1369,6 +1373,12 @@ class VideoSystem:
                 frame = camera.grab_frame()
                 frame_stamp = stamp_timer.elapsed  # Generates the time-stamp for the acquired frame
 
+                # If the camera is configured to display acquired frames, queues each frame to be displayed. This
+                # does not depend on whether the frame is buffered for saving.
+                if display_queue is not None and show_timer.elapsed >= show_time:
+                    show_timer.reset()  # Resets the display timer
+                    display_queue.put(frame)
+
                 # If the software framerate override is enabled, this loop is further limited to acquire frames at
                 # the specified rate, which is helpful for some cameras that do not have a built-in acquisition
                 # control functionality. If the acquisition timeout has not passed and is enabled, skips the rest
@@ -1397,12 +1407,6 @@ class VideoSystem:
                     # Resets the output timer
                     output_timer.reset()  # type: ignore
                     output_queue.put(frame)
-
-                # If the camera is configured to display acquired frames, queues each frame to be displayed. This
-                # does not depend on whether the frame is buffered for saving.
-                if display_queue is not None and show_timer.elapsed >= show_time:
-                    show_timer.reset()  # Resets the display timer
-                    display_queue.put(frame)
 
         except Exception as e:
             # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal

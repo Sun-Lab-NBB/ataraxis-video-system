@@ -20,6 +20,8 @@ import subprocess
 from subprocess import Popen, TimeoutExpired
 from concurrent.futures import ThreadPoolExecutor
 
+import os
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 from numpy.typing import NDArray
 from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
