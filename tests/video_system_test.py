@@ -730,8 +730,7 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
     video_system_2.stop()
     video_system_2.stop()  # Ensures that calling stop twice does nothing
 
-    # Also, test the behavior of the data logger. First, compresses the logs acquired by both systems.
-    data_logger.stop()
+    # Also, tests log decompression
     data_logger.compress_logs(remove_sources=True, memory_mapping=False)
 
     # Extracts the frame timestamps for each system and confirms they match the expected numbers
@@ -753,7 +752,6 @@ def test_start_stop(data_logger, tmp_path, has_harvesters) -> None:
         harvesters_cti_path=harvesters_cti_path,
     )
     video_system_3.add_camera(save_frames=False, output_frames=True, camera_backend=CameraBackends.MOCK)
-    data_logger.start()
     video_system_3.start()
     timer.delay_noblock(delay=2)  # 2-second delay
     video_system_3.stop()

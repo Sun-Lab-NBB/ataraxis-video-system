@@ -946,7 +946,7 @@ class VideoSystem:
                     message = (
                         f"Unable to start the VideoSystem with id {self._id}. The consumer process has "
                         f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This "
-                        f"likely indicates a problem with initializing one of the managed saver class instances."
+                        f"likely indicates a problem with the Saver (Video or Image) class managed by the process."
                     )
 
                     # Reclaims all commited resources before terminating with an error.
@@ -981,7 +981,8 @@ class VideoSystem:
                 message = (
                     f"Unable to start the VideoSystem with id {self._id}. The producer process has "
                     f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
-                    f"indicates a problem with initializing one of the managed saver class instances."
+                    f"indicates a problem with initializing the Camera class controlled by the process or the frame "
+                    f"display thread."
                 )
 
                 # Reclaims all commited resources before terminating with an error.
