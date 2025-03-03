@@ -222,7 +222,7 @@ Like some other Ataraxis libraries, this library relies on the
 [DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-data-structures#datalogger) class to save frame acquisition 
 timestamps to disk during runtime. The timestamps are serialized and saved as `.npy` files. It is **highly** advised 
 to study the documentation for the class before using this library, especially if you want to parse the logged data
-manually instead of using the method exposed by teh VideoSystem class.
+manually instead of using the method exposed by the VideoSystem class.
 
 The DataLogger may be shared by multiple Ataraxis classes that generate log entries, such as 
 [MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) classes. To support using 
@@ -259,6 +259,14 @@ queue, which uses the host-computer’s RAM. To avoid running out of buffer spac
 using the same DataLogger have finished their runtime, call the `stop()` method to end log saving and then call the
 `compress_logs()` method to compress all individual `.npy` entries into an `.npz` archive. Compressing the logs is 
 required to later parse the frame acquisition timestamps for further analysis (see [quickstart](#quickstart)).
+
+#### Reading timestamps from logs
+The VideoSystem class exposes the `extract_logged_data()` method that allows parsing the timestamps for all frames 
+saved by the class during runtime.
+
+***Note:*** to parse logged data, the VideoSystem has to be initialized and provided with an initialized DataLogger
+class. Overall, it is advised to parse logged data immediately after finishing the acquisition runtime, as the class 
+would be configured correctly for the parsing to work as intended.
 ___
 
 ## API Documentation
