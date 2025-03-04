@@ -267,6 +267,12 @@ saved by the class during runtime.
 ***Note:*** to parse logged data, the VideoSystem has to be initialized and provided with an initialized DataLogger
 class. Overall, it is advised to parse logged data immediately after finishing the acquisition runtime, as the class 
 would be configured correctly for the parsing to work as intended.
+
+***Attention!*** Since version 1.1.0 the library exposes a global, multiprocessing-safe, and instance-independent 
+function `extract_logged_video_system_data()`. This function behaves exactly like the instance-bound log extraction 
+method does, but can be used to parse logged data without the need to have an initialized VideoSystem instance. You can
+use the `log_path` property of an initialized VideoSystem instance to get the path to the .npz archive that stores 
+logged data after compression, which is a required argument for the instance-independent log extraction function.
 ___
 
 ## API Documentation

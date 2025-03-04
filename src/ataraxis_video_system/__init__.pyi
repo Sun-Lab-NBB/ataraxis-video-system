@@ -9,7 +9,10 @@ from .saver import (
     OutputPixelFormats as OutputPixelFormats,
 )
 from .camera import CameraBackends as CameraBackends
-from .video_system import VideoSystem as VideoSystem
+from .video_system import (
+    VideoSystem as VideoSystem,
+    extract_logged_video_system_data as extract_logged_video_system_data,
+)
 
 __all__ = [
     "VideoSystem",
@@ -22,4 +25,5 @@ __all__ = [
     "CPUEncoderPresets",
     "InputPixelFormats",
     "OutputPixelFormats",
+    "extract_logged_video_system_data",
 ]
