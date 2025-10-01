@@ -235,7 +235,6 @@ class VideoSystem:
 
     def __repr__(self) -> str:
         """Returns a string representation of the VideoSystem class instance."""
-
         if self._camera is not None:
             camera_name = str(type(self._camera.camera).__name__)
         else:
@@ -325,7 +324,6 @@ class VideoSystem:
                 Harvesters and the .cti path is not provided. If attempting to set camera framerate or frame dimensions
                 fails for any reason.
         """
-
         if not isinstance(camera_index, int):
             message = (
                 f"Unable to add a Camera to the VideoSystem with id {self._id}. Expected an "
@@ -361,7 +359,7 @@ class VideoSystem:
         if display_frames and "darwin" in sys.platform:
             warnings.warn(
                 message=(
-                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details."
+                    "Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details."
                 )
             )
             display_frames = False
@@ -1385,7 +1383,7 @@ class VideoSystem:
                 # of the processing runtime
                 if camera_system.fps_override != 0 and frame_timer.elapsed >= frame_time:  # type: ignore
                     continue
-                elif camera_system.fps_override != 0:
+                if camera_system.fps_override != 0:
                     # Resets the frame acquisition timer before processing the frame so that the wait time for the next
                     # frame is 'absorbed' into processing the frame.
                     frame_timer.reset()  # type: ignore
@@ -1654,7 +1652,6 @@ class VideoSystem:
         Raises:
             ValueError: If the .npz archive for the VideoSystem instance does not exist.
         """
-
         # Generates the log file path using the video system ID. Assumes that the log has been compressed to the .npz
         # format before calling this method
         log_path = self._log_directory.joinpath(f"{self._id}_log.npz")
@@ -1702,7 +1699,6 @@ class VideoSystem:
             TypeError: If the Saver managed by the VideoSystem is not a VideoSaver.
             Exception: If there are no images with supported file-extensions in the specified directory.
         """
-
         # Prevents running this method if the saver is not a VideoSaver
         if not isinstance(self._saver, VideoSaver):
             message = (
@@ -1727,8 +1723,7 @@ class VideoSystem:
         if self._saver is not None:
             # noinspection PyProtectedMember
             return self._saver._output_directory
-        else:
-            return None
+        return None
 
     @property
     def log_path(self) -> Path:

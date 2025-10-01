@@ -10,7 +10,7 @@ the 'create_camera()' method from the VideoSystem class.
 """
 
 import os
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from pathlib import Path
 
@@ -19,8 +19,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
-from harvesters.core import Harvester, ImageAcquirer  # type: ignore
-from harvesters.util.pfnc import (  # type: ignore
+from harvesters.core import Harvester, ImageAcquirer
+from harvesters.util.pfnc import (
     bgr_formats,
     rgb_formats,
     bgra_formats,
@@ -30,37 +30,23 @@ from harvesters.util.pfnc import (  # type: ignore
 from ataraxis_base_utilities import console
 
 
-class CameraBackends(Enum):
-    """Maps valid literal values used to specify Camera class backend when requesting it from the create_camera ()
-    method of the VideoSystem class to programmatically callable variables.
-
-    Use this enumeration instead of 'hardcoding' Camera backends where possible to automatically adjust to future API
-    changes to this library.
-
-    The backend determines the low-level functioning of the Camera class and is, therefore, very important for
-    optimizing video acquisition. It is generally advised to use the 'harvesters' backend with any GeniCam camera
-    and only use opencv as a 'fallback' for camera that do not support GeniCam standard.
-    """
+class CameraBackends(StrEnum):
+    """Specifies the supported camera interface backends compatible with the VideoSystem class."""
 
     HARVESTERS = "harvesters"
     """
-    This is the preferred backend for all cameras that support the GeniCam standard. This includes most scientific and
-    industrial machine-vision cameras. This backend is based on the 'harvesters' project and it works with any type of
-    GeniCam camera (USB, Ethernet, PCIE). The binding is extremely efficient and can handle large volume of data at a 
-    high framerate.
+    This is the preferred backend for all cameras that support the GeniCam standard, which includes most scientific and
+    industrial machine-vision cameras. This backend is based on the 'Harvesters' library and works with all 
+    GeniCam-compatible interfaces (USB, Ethernet, PCIE).
     """
     OPENCV = "opencv"
     """
-    This is the 'fallback' backend that should be used with cameras that do not support the GeniCam standard. OpenCV is
-    a widely used machine-vision library that offers a flexible camera interface and video-acquisition tools. That said,
-    the publicly available OpenCV bindings differ in efficiency for different platforms and camera types and may require
-    additional project-specific configuration to work optimally. 
+    This is the backend used for all cameras that do not support the GeniCam standard. This backend is based on the 
+    'OpenCV' library and primarily works for consumer-grade cameras that use the USB interface.
     """
     MOCK = "mock"
     """
-    This backend should not be used in production projects. It is used to optimize project testing by providing a 
-    Camera class that is not limited by available hardware. This is primarily used to enable parallel testing of 
-    VideoSystem methods without making them depend on having a working camera.
+    This backend is used exclusively for internal library testing and should not be used in production projects.
     """
 
 
@@ -88,8 +74,6 @@ class OpenCVCamera:
             source. This setting does not control whether the camera acquires colored images. It only controls how
             the class handles the images. Colored images will be saved using the 'BGR' channel order, monochrome
             images will be reduced to using only one channel.
-        backend: The integer-code for the backend to use for the connected VideoCapture object. Generally, it
-            is advised not to change the default value of this argument unless you know what you are doing.
         camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
             available camera, 1 for the second, etc.
         fps: The desired Frames Per Second to capture the frames at. Note, this depends on the hardware capabilities of
@@ -105,7 +89,6 @@ class OpenCVCamera:
     Attributes:
         _id: Stores the string-name of the camera.
         _color: Determines whether the camera acquires colored or monochrome images.
-        _backend: Stores the code for the backend to be used by the connected VideoCapture object.
         _camera_index: Stores the index of the camera, which is used during connect() method runtime.
         _camera: Stores the OpenCV VideoCapture object that interfaces with the camera.
         _fps: Stores the desired Frames Per Second to capture the frames at.
@@ -114,44 +97,12 @@ class OpenCVCamera:
         _acquiring: Stores whether the camera is currently acquiring video frames. This is statically set to 'True'
             the first time grab_frames() is called, as it initializes the camera acquisition thread of the binding
             object. If this attribute is True, some parameters, such as the fps, can no longer be altered.
-        _backends: A dictionary that maps the meaningful backend names to the codes returned by VideoCapture
-            get() method. This is used to convert integer values to meaningful names before returning them to the user.
     """
-
-    # A dictionary that maps backend codes returned by VideoCapture get() method to meaningful names.
-    _backends: dict[str, float] = {
-        "Any": cv2.CAP_ANY,
-        "VFW / V4L (Platform Dependent)": cv2.CAP_VFW,
-        "IEEE 1394 / DC 1394 / CMU 1394 / FIREWIRE": cv2.CAP_FIREWIRE,
-        "QuickTime": cv2.CAP_QT,
-        "Unicap": cv2.CAP_UNICAP,
-        "DirectShow": cv2.CAP_DSHOW,
-        "PvAPI, Prosilica GigE SDK": cv2.CAP_PVAPI,
-        "OpenNI (for Kinect)": cv2.CAP_OPENNI,
-        "OpenNI (for Asus Xtion)": cv2.CAP_OPENNI_ASUS,
-        "XIMEA Camera API": cv2.CAP_XIAPI,
-        "AVFoundation framework iOS": cv2.CAP_AVFOUNDATION,
-        "Smartek Giganetix GigEVisionSDK": cv2.CAP_GIGANETIX,
-        "Microsoft Media Foundation": cv2.CAP_MSMF,
-        "Microsoft Windows Runtime": cv2.CAP_WINRT,
-        "Intel Perceptual Computing SDK": cv2.CAP_INTELPERC,
-        "OpenNI2 (for Kinect)": cv2.CAP_OPENNI2,
-        "OpenNI2 (for Asus Xtion and Occipital Structure sensors)": cv2.CAP_OPENNI2_ASUS,
-        "gPhoto2 connection": cv2.CAP_GPHOTO2,
-        "GStreamer": cv2.CAP_GSTREAMER,
-        "FFMPEG library": cv2.CAP_FFMPEG,
-        "OpenCV Image Sequence": cv2.CAP_IMAGES,
-        "Aravis SDK": cv2.CAP_ARAVIS,
-        "Built-in OpenCV MotionJPEG codec": cv2.CAP_OPENCV_MJPEG,
-        "Intel MediaSDK": cv2.CAP_INTEL_MFX,
-        "XINE engine (Linux)": cv2.CAP_XINE,
-    }
 
     def __init__(
         self,
         camera_id: np.uint8,
         color: bool = True,
-        backend: int = cv2.CAP_ANY,
         camera_index: int = 0,
         fps: float | None = None,
         width: int | None = None,
@@ -163,7 +114,6 @@ class OpenCVCamera:
         # Saves class parameters to class attributes
         self._id: np.uint8 = camera_id
         self._color: bool = color
-        self._backend: int = backend
         self._camera_index: int = camera_index
         self._camera: cv2.VideoCapture | None = None
         self._fps: float | None = fps
@@ -172,140 +122,91 @@ class OpenCVCamera:
         self._acquiring: bool = False
 
     def __del__(self) -> None:
-        """Ensures that the camera is disconnected upon garbage collection."""
+        """Releases the underlying VideoCapture object when the instance is garbage-collection."""
         self.disconnect()
 
     def __repr__(self) -> str:
-        """Returns a string representation of the OpenCVCamera object."""
-        representation_string = (
+        """Returns the string representation of the OpenCVCamera instance."""
+        return (
             f"OpenCVCamera(camera_id={self._id}, camera_index={self._camera_index}, fps={self.fps}, "
             f"width={self.width}, height={self.height}, connected={self._camera is not None}, "
-            f"acquiring={self._acquiring}, backend = {self.backend})"
+            f"acquiring={self._acquiring})"
         )
-        return representation_string
 
     def connect(self) -> None:
-        """Initializes the camera VideoCapture object and sets the video acquisition parameters.
-
-        This method has to be called before calling the grab_frames () method. It is used to initialize and prepare the
-        camera for image collection.
+        """Connects to the managed camera hardware.
 
         Notes:
-            While this method passes acquisition parameters, such as fps and frame dimensions, to the camera, there is
-            no guarantee they will be set. Cameras with a locked aspect ratio, for example, may not use incompatible
-            frame dimensions. Be sure to verify that the desired parameters have been set by using class properties if
-            necessary.
+            While this method attempts to configure the camera using the parameters specified during initialization,
+            there is no guarantee that the camera accepts the parameters. Always verify instance attributes after
+            establishing the connection to ensure that the camera hardware is configured correctly.
         """
-        # Only attempts connection if the camera is not already connected
-        if self._camera is None:
-            # Generates an OpenCV VideoCapture object to acquire images from the camera. Uses the specified backend and
-            # camera ID index.
-            self._camera = cv2.VideoCapture(index=self._camera_index, apiPreference=int(self._backend))
+        # Prevents re-connecting to an already connected camera
+        if self._camera is not None:
+            return
 
-            # Writes image acquisition parameters to the camera via the object generated above. If any of the
-            # acquisition parameters were not provided, skips setting them and instead retrieves them from the
-            # connected camera (see below).
-            if self._fps is not None:
-                self._camera.set(cv2.CAP_PROP_FPS, self._fps)  # pragma: no cover
-            if self._width is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))  # pragma: no cover
-            if self._height is not None:
-                self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))  # pragma: no cover
+        # Generates an OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
+        # (index).
+        self._camera = cv2.VideoCapture(index=self._camera_index, apiPreference=cv2.CAP_ANY)
 
-            # Overwrites class attributes with the current properties of the camera. They may differ from the expected
-            # result of setting the properties above!
-            self._fps = self._camera.get(cv2.CAP_PROP_FPS)
-            self._width = int(self._camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-            self._height = int(self._camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            self._backend = int(self._camera.get(cv2.CAP_PROP_BACKEND))
+        # If necessary, overrides the requested camera acquisition parameters. Note, there is no guarantee that the
+        # camera accepts the requested parameters.
+        if self._fps is not None:
+            self._camera.set(cv2.CAP_PROP_FPS, self._fps)  # pragma: no cover
+        if self._width is not None:
+            self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))  # pragma: no cover
+        if self._height is not None:
+            self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))  # pragma: no cover
+
+        # Queries the current camera acquisition parameters and stores them in class attributes.
+        self._fps = self._camera.get(cv2.CAP_PROP_FPS)
+        self._width = int(self._camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._height = int(self._camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     def disconnect(self) -> None:
-        """Disconnects from the camera by releasing the VideoCapture object.
+        """Disconnects from the camera by releasing the VideoCapture object reference."""
 
-        After calling this method, it will be impossible to grab new frames until the camera is (re)connected to via the
-        connect() method. Make sure this method is called during the VideoSystem shutdown procedure to properly release
-        resources.
-        """
-        # If the camera is already disconnected, returns without doing anything.
-        if self._camera is not None:
-            self._camera.release()
-            self._acquiring = False  # Released camera automatically stops acquiring images
-            self._camera = None
+        if self._camera is None:
+            # If the camera is already disconnected, returns without doing anything.
+            return
+
+        # Otherwise, disconnects from the camera
+        self._camera.release()
+        self._acquiring = False
+        self._camera = None
 
     @property
     def is_connected(self) -> bool:
-        """Returns True if the class is connected to the camera via a VideoCapture instance."""
+        """Returns True if the instance is connected to the camera hardware."""
         return self._camera is not None
 
     @property
     def is_acquiring(self) -> bool:
-        """Returns True if the camera is currently acquiring video frames.
-
-        This concerns the 'asynchronous' behavior of the wrapped camera object which, after grab_frames() class method
-        has been called, continuously acquires and buffers images even if they are not retrieved.
-        """
+        """Returns True if the camera is currently acquiring video frames."""
         return self._acquiring
 
     @property
     def fps(self) -> float | None:
-        """Returns the current frames per second (fps) setting of the camera.
-
-        If the camera is connected, this is the actual fps value the camera is set to produce. If the camera is not
-        connected, this is the desired fps value that will be passed to the camera during connection.
-        """
+        """Returns the acquisition rate of the camera, in frames per second (fps)."""
         return self._fps
 
     @property
     def width(self) -> int | None:
-        """Returns the current frame width setting of the camera (in pixels).
-
-        If the camera is connected, this is the actual frame width value the camera is set to produce. If the camera
-        is not connected, this is the desired frame width value that will be passed to the camera during connection.
-        """
+        """Returns the width of the acquired frames, in pixels."""
         return self._width
 
     @property
     def height(self) -> int | None:
-        """Returns the current frame height setting of the camera (in pixels).
-
-        If the camera is connected, this is the actual frame height value the camera is set to produce. If the camera
-        is not connected, this is the desired frame height value that will be passed to the camera during connection.
-        """
+        """Returns the heights of the acquired frames, in pixels."""
         return self._height
-
-    @property
-    def backend(self) -> str:
-        """Returns the descriptive string-name for the backend being used by the connected VideoCapture object.
-
-        If the camera is connected, this is the actual backend used to interface with the camera. If the camera
-        is not connected, this is the desired backend that will be used to initialize the VideoCapture object.
-
-        Raises:
-            ValueError: If the backend code used to retrieve the backend name is not one of the recognized backend
-                codes.
-        """
-        backend_code = self._backend
-
-        for name, code in self._backends.items():
-            if code == backend_code:
-                return name
-
-        message = (
-            f"Unknown backend code {backend_code} encountered when retrieving the backend name used by the "
-            f"OpenCV-managed camera with id {self._id}. Recognized backend codes are: "
-            f"{(self._backends.values())}"
-        )
-        console.error(message=message, error=ValueError)
-        # Fallback to appease mypy, should not be reachable
-        raise ValueError("Unknown backend code")  # pragma: no cover
 
     @property
     def camera_id(self) -> np.uint8:
         """Returns the unique identifier code of the camera."""
         return self._id
 
-    def grab_frame(self) -> NDArray[Any]:
-        """Grabs the first available frame from the camera buffer and returns it to caller as a NumPy array object.
+    def grab_frame(self) -> NDArray[np.number[Any]]:
+        """Grabs the first available frame from the camera acquisition buffer.
 
         This method has to be called repeatedly to acquire new frames from the camera. The first time the method is
         called, the class is switched into the 'acquisition' mode and remains in this mode until the camera is
@@ -314,7 +215,7 @@ class OpenCVCamera:
         Notes:
             The first time this method is called, the camera initializes image acquisition, which is carried out
             asynchronously. The camera saves the images into its circular buffer (if it supports buffering), and
-            calling this method extracts the first image available in the buffer and returns it to caller.
+            calling this method extracts the first image available in the buffer and returns it to the caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
@@ -559,7 +460,7 @@ class HarvestersCamera:
         Notes:
             The first time this method is called, the camera initializes image acquisition, which is carried out
             asynchronously. The camera saves the images into its circular buffer, and calling this method extracts the
-            first image available in the buffer and returns it to caller.
+            first image available in the buffer and returns it to the caller.
 
             Due to the initial setup of the buffering procedure, the first call to this method will incur a significant
             delay of up to a few seconds. Therefore, it is advised to call this method ahead of time and either discard
@@ -792,7 +693,7 @@ class MockCamera:
         return self._frames
 
     def grab_frame(self) -> NDArray[np.uint8]:
-        """Grabs the first 'available' frame from the camera buffer and returns it to caller as a NumPy array object.
+        """Grabs the first 'available' frame from the camera buffer and returns it to the caller as a NumPy array object.
 
         This method has to be called repeatedly to acquire new frames from the camera. The method is written to largely
         simulate the behavior of the 'real' camera classes.

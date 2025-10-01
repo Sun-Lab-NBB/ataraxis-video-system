@@ -20,15 +20,15 @@ from .camera import CameraBackends
 from .video_system import VideoSystem, extract_logged_video_system_data
 
 __all__ = [
-    "VideoSystem",
+    "CPUEncoderPresets",
     "CameraBackends",
+    "GPUEncoderPresets",
+    "ImageFormats",
+    "InputPixelFormats",
+    "OutputPixelFormats",
     "SaverBackends",
     "VideoCodecs",
     "VideoFormats",
-    "ImageFormats",
-    "GPUEncoderPresets",
-    "CPUEncoderPresets",
-    "InputPixelFormats",
-    "OutputPixelFormats",
+    "VideoSystem",
     "extract_logged_video_system_data",
 ]
