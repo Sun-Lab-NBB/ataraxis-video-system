@@ -1,28 +1,26 @@
-# Defines the build system used for the project. For pure-python projects, uses the hatchling build system, which is
-# used internally by scikit-build for our C-extension projects. Therefore, there is clear continuity between our
-# c-extension and pure-python projects.
+# Defines the build system used for the project.
 [build-system]
-requires = ["hatchling>=1,<2"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 # Project metdata section. Provides the genral ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "1.1.0"
+version = "2.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as images or videos."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11, <3.12"  # Limited to 3.11 until 3.12+ support is added for genicam, a core harvesters package
+requires-python = ">=3.11,<3.14"
 authors = [
-    { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
-    { name = "Jacob Groner", email = "jrg349@cornell.edu" },
-    { name = "Natalie Yeung", email = "nyy4@cornell.edu" },
+    { name = "Ivan Kondratyev" },
+    { name = "Jacob Groner" },
+    { name = "Natalie Yeung" },
 ]
 maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
 ]
 
-keywords = ["OpenCV", "FFMPEG", "video recording", "camera interface", "video transcoding", "ataraxis"]
+keywords = ["OpenCV", "FFMPEG", "GeniCam", "video recording", "camera interface", "video transcoding", "ataraxis"]
 
 classifiers = [
     # Development status
@@ -34,22 +32,24 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     # Supported Python Versions
     "Programming Language :: Python :: 3.11",
-    # "Programming Language :: Python :: 3.12", # Disabled until genicam releases 3.12 binaries
-    # "Programming Language :: Python :: 3.13", # Disabled until genicam releases 3.13 binaries
+     "Programming Language :: Python :: 3.12",
+     "Programming Language :: Python :: 3.13",
     # Supported OS systems
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS :: MacOS X"
+    "Operating System :: MacOS :: MacOS X",
+    # Typing
+    "Typing :: Typed"
 ]
 
-# Runtime project dependencies. This overlaps with the 'condarun' optional list.
+# Runtime project dependencies.
 dependencies = [
     "numpy>=2,<3",
     "opencv-python>=4,<5",
     "harvesters>=1,<2",
-    "ataraxis-time>=3,<4",
-    "ataraxis-base-utilities>=3,<4",
-    "ataraxis-data-structures>=3,<4",
+    "ataraxis-time>=4,<5",
+    "ataraxis-base-utilities>=4,<5",
+    "ataraxis-data-structures>=4,<5",
     "click>=8,<9",
 ]
 
@@ -57,85 +57,29 @@ dependencies = [
 Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
 Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
-# Specifies additional dependencies that can be installed alongside the main library. Also, this is the section that
-# stores conda, condarun, and noconda lists that facilitate setting up dependencies via conda where possible.
+# Specifies additional dependencies that can be installed alongside the main library.
 [project.optional-dependencies]
 
-# Runtime dependencies known to be installable with conda for all development platforms
-# (OSX ARM64, WIN AMD64, LIN AMD64). This specification is used by ataraxis-automation to resolve as many
-# project dependencies with conda over pip as possible.
-condarun = [
-    "numpy>=2,<3",
-    "click>=8,<9",
-]
+# Dependencies that support developing this project.
+dev = [
+    # Tox
+    "tox>=4,<5",
+    "uv>=0,<1",
+    "tox-uv>=1,<2",
 
-# Dependencies known to be installable with conda for all development platforms (OSX ARM64, WIN AMD64, LIN AMD64).
-conda = [
-    # Testing
-    "pytest>=8,<9",
-    "pytest-cov>=6,<7",
-    "pytest-xdist>=3,<4",
-    "pillow>=11,<12",
-
-    # Coverage Reports
-    "coverage[toml]>=7,<8",
-    "junitparser>=3,<4",
-
-    # Documentation
-    "sphinx>=8,<9",
-    "importlib-metadata>=8,<9",
-    "sphinx-rtd-theme>=3,<4",
-    "sphinx-click>=6,<7",
-    "sphinx-autodoc-typehints>=3,<4",
-
-    # Linting and Stub-generation
-    "mypy>=1,<2",
-    "ruff>=0,<1",
+    # Development Automation
+    "ataraxis-automation>=6,<7",
 
     # Types:
     "types-pillow>=10,<11",
-
-    # Building
-    "hatchling>=1,<2",
-
-    # Distribution
-    "twine>=6,<7",
-    "grayskull>=2,<3",
 ]
 
-# Dependencies known to not be installable with conda for at least one supported development platform
-# (OSX ARM64, WIN AMD64, LIN AMD64).
-noconda =[
-    # Tox
-    "tox>=4,<5",
-    "tox-uv>=1,<2",
-    "uv>=0,<1",
-
-    # Documentation
-    "sphinx-rtd-dark-mode>=1,<2",
-
-    # Building
-    "build>=1,<2",
-
-    # Automation
-    "ataraxis-automation>=4,<5",
-]
-
-# A shorthand specification that installs tox and all packages required for development tasks. This specification can
-# be used by developers to quickly install all necessary components for working on this project. Has to be installed
-# from pip.
-dev = [
-    "ataraxis-video-system[conda]",
-    "ataraxis-video-system[noconda]"
-]
-
-# Exposes a cli interface that can directly run the video system in an interactive mode. Primarily, this is used to
-# manually test the system. Also exposes a cli interface that aids discovering interfacable camera IDs.
+# Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
 [project.scripts]
 axvs-live = "ataraxis_video_system.live:live_run"
 axvs-ids = "ataraxis_video_system.list_camera_ids:list_ids"
 
-# Specifies files that should not be included in the source-code distribution but are also not part of gitignore.
+# Specifies files that should not be included in the source-code distribution, but are also not part of gitignore.
 [tool.hatch.build.targets.sdist]
 exclude = [".github", "recipe"]
 
@@ -145,12 +89,12 @@ packages = ["src/ataraxis_video_system", "examples"]
 
 # Ruff Configuration.
 [tool.ruff]
-line-length = 120         # The maximum column length is set to 120 for this project.
+line-length = 120         # The maximum column length is set to 120 for this project
 indent-width = 4          # Same as black, indents are 4 spaces
 target-version = "py311"  # Targets the lowest supported version of python
 src = ["src"]             # The name of the source directory
 
-# Excludes 'service' .py files, such as the sphinx configuration file, from linting.
+# Excludes 'service' .py files, such as the sphinx configuration file from linting.
 extend-exclude = ["conf.py"]
 
 # Checks for all potential violations and uses the exclusions below to target-disable specific ones.
@@ -158,8 +102,10 @@ lint.select = ["ALL"]
 
 # General ignore directives
 lint.ignore = [
+    "W291",    # Conflicts with docstring formatting
     "COM812",  # Conflicts with the formatter
     "ISC001",  # Conflicts with the formatter
+    "TID252",  # Conflicts with library import management strategy
     "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
     "PT023",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
     "D107",    # Project-specific, __init__ is documented inside the main class docstring where applicable
@@ -172,7 +118,7 @@ lint.ignore = [
 quote-style = "double"             # Uses double quotes for strings
 indent-style = "space"             # Uses space for indents
 skip-magic-trailing-comma = false  # Like black, ignores trailing commas
-line-ending = "auto"               # Automatically detects and standardizes line ending character
+line-ending = "auto"               # Automatically detects and standardizes line-ending character
 
 # Docstrings and comments' line length
 [tool.ruff.lint.pycodestyle]
@@ -198,8 +144,27 @@ length-sort = true                 # Places shorter imports first
 
 # MyPy configuration section.
 [tool.mypy]
-disallow_untyped_defs = true # Enforces function annotation
-warn_unused_ignores = true   # Warns against using 'type: ignore' for packages that have type stubs available.
+# Strict mode settings (equivalent to --strict)
+warn_unused_configs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+
+# Extra checks (equivalent to --extra-checks)
+extra_checks = true
+
+# Pretty output (equivalent to --pretty)
+pretty = true
+
 exclude = [
     "ataraxis-video-system-\\d+",   # Ignores temporary folder created by setuptools when building the sdist
     "venv.*/",                      # Ignores virtual environments
@@ -230,9 +195,9 @@ parallel = true
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
+    "def __del__",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "pass",
-    "\\.\\.\\."
 ]
