@@ -11,491 +11,138 @@ the 'create_saver()' method from the VideoSystem class.
 
 import os
 import re
-from enum import Enum
-from queue import Empty, Queue
+from enum import IntEnum, StrEnum
 from typing import Any
 from pathlib import Path
 import threading
-from threading import Thread
 import subprocess
 from subprocess import Popen, TimeoutExpired
-from concurrent.futures import ThreadPoolExecutor
 
-os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"  # Improves OpenCV's performance on Windows.
 import cv2
 from numpy.typing import NDArray
 from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
 
 
-class SaverBackends(Enum):
-    """Maps valid literal values used to specify Saver class backend to programmatically callable variables.
-
-    The backend primarily determines the output of the Saver class. Generally, it is advised to use the 'video'
-    backend where possible to optimize the storage space used by each file. However, the 'image' backend is also
-    available if it is desirable to save frames as images.
-    """
-
-    VIDEO = "video"
-    """
-    This backend is used to instantiate a Saver class that outputs a video-file. All video savers use FFMPEG to write
-    video frames or pre-acquired images as a video-file and require that FFMPEG is installed, and available on the 
-    local system. Saving frames as videos is the most memory-efficient storage mechanism, but it is susceptible to 
-    corruption if the process is interrupted unexpectedly. It is recommended to configure a 'video' saver to use the 
-    GPU hardware acceleration (currently only Nvidia GPUs are supported) to optimize encoding speed.
-    """
-    IMAGE = "image"
-    """
-    This is an alternative backend to the generally preferred 'video' backend. Saver classes using this backend save 
-    video frames as individual images. This method is less memory-efficient than the 'video' backend, but it is 
-    generally more robust to corruption and is typically less lossy compared to the 'video' backend. Additionally, this
-    backend can be configured to do the least 'processing' of frames, making it possible to achieve very high saving 
-    speeds.
-    """
-
-
-class ImageFormats(Enum):
-    """Maps valid literal values for supported image file formats to programmatically callable variables.
-
-    The image format is an instantiation parameter that is unique to the ImageSaver class. It determines the output
-    format the class uses to save incoming camera frames as images.
-    """
-
-    TIFF = "tiff"
-    """
-    Generally, this is the recommended image format for most scientific uses. Tiff is a lossless format (like png) that 
-    is typically more efficient to encode and work with for the purpose of visual data analysis compared to png format.
-    """
-    JPG = "jpg"
-    """
-    This is a lossy format that relies on DCT (Discrete Cosine Transform) compression to encode images. This method of
-    compression is fast and can result in small file sizes, but this comes at the expense of losing image quality. 
-    Depending on your use case and Saver class configuration, this format may be sufficient, but it is generally not 
-    recommended, especially if you plan to re-code the images as a video file.
-    """
-    PNG = "png"
-    """
-    A lossless format (like tiff) that is frequently the default in many cases. Compared to tiff, png has less features
-    and may be slower to encode and decode. That said, this format is widely supported and is perfect for testing and 
-    quick pipeline validation purposes.
-    """
-
-
-class VideoFormats(Enum):
-    """Maps valid literal values for supported video file formats to programmatically callable variables.
-
-    The video format is an instantiation parameter that is unique to VideoSaver classes (GPU and CPU). It determines
-    the output format the class uses to save incoming camera frames as videos.
-    """
-
-    MP4 = "mp4"
-    """
-    This is the most widely supported video container format and it is the recommended format to use. All common video
-    players and video data analysis tools support this format. This container supports all video codecs currently 
-    available through this library.
-    """
-    MKV = "mkv"
-    """
-    A free and open-source format that is less well supported compared to mp4, but is the most flexible of
-    all offered formats. This format is recommended for users with nuanced needs that may need to modify the code of 
-    this library to implement desired features.
-    """
-    AVI = "avi"
-    """
-    An older format that may produce larger file sizes and does not support all available codecs. Generally, it is 
-    advised not to use this format unless saved video data will be used together with a legacy system.
-    """
-
-
-class VideoCodecs(Enum):
-    """Maps valid literal values for supported video codecs (encoders) to programmatically callable variables.
-
-    The video codec is an instantiation parameter that is unique to VideoSaver classes (GPU and CPU). It determines the
-    specific encoder used to compress and encode frames as a video file. All codecs we support come as Software (CPU)
-    and Hardware (GPU) versions. The specific version of the codec (GPU or CPU) depends on the saver backend used!
-    """
+class VideoCodecs(StrEnum):
+    """Stores the supported video codecs used when saving camera frames as videos via VideoSaver instances."""
 
     H264 = "H264"
     """
-    For CPU savers this will use libx264, for GPU savers this will use h264_nvenc. H264 is a widely used video codec 
-    format that is optimized for smaller file sizes. This is an older standard and it will struggle with encoding
-    very high-resolution and high-quality data. Therefore, it is generally recommended to use H265 over H264 for most
-    scientific applications, if your acquisition hardware can handle the additional computation cost.
+    For CPU savers this uses the libx264 codec and for GPU savers this uses the h264_nvenc codec. H264 is a widely used 
+    video codec format that is optimized for encoding lower resolution videos at a fast speed. This is an older 
+    standard that may have performance issues when working with high-resolution and high-quality data. Generally, this 
+    codec is best for the cases where the overall data quality does not need to be very high, the encoding speed is a 
+    critical factor, or the encoding hardware is not very powerful.
     """
     H265 = "H265"
     """
-    For CPU savers this will use libx265, fro GPU savers this will use hevc_nvenc. H265 is the most modern video codec 
-    format, which is slightly less supported compared to H264. This codec has improved compression efficiency without 
-    compromising quality and is better equipped to handle high-volume and high-resolution video recordings. 
-    This comes at the expense of higher computational costs compared to H264 and, therefore, this codec may not work 
-    on older / less powerful systems.
+    For CPU savers this uses the libx265 and for GPU savers this uses the hevc_nvenc codec. H265 is a more modern video 
+    codec format that is slightly less supported compared to H264. This codec achieves improved compression efficiency 
+    without compromising quality and is better equipped to handle high-volume and high-resolution video recordings. 
+    This comes at the expense of higher computational costs and slower encoding speed compared to H264 and, therefore, 
+    this codec may not work on older / less powerful systems.
     """
 
 
-class GPUEncoderPresets(Enum):
-    """Maps valid literal values for supported GPU codec presets to programmatically callable variables.
+class EncoderSpeedPreset(IntEnum):
+    """Stores the supported video encoding speed presets used when saving camera frames as videos via VideoSaver
+    instances.
 
-    Presets balance out encoding speed and resultant video quality. This acts on top of the 'constant quality'
-    setting and determines how much time the codec spends optimizing individual frames. The more time the codec is
-    allowed to spend on each frame, the better the resultant quality. Note, this enumeration is specifically designed
-    for GPU encoders and will not work for CPU encoders.
+    Generally, the faster the encoding speed, the lower is the resultant video quality.
+
+    Notes:
+        It is impossible to perfectly match the encoding presets for the CPU and GPU encoders. The scale defined
+        in this enumeration represents the best-effort to align the preset scale for the two encoders.
     """
 
-    FASTEST = "p1"
+    FASTEST = 1
     """
-    The best encoding speed with the lowest resultant quality of video. Generally, not recommended.
+    For CPU encoders, this matches the 'veryfast' level. For GPU encoders, this matches the 'p1' level.
     """
-    FASTER = "p2"
+    FASTER = 2
     """
-    Lower encoding speed compared to FASTEST, but slightly better video quality.
+    For CPU encoders, this matches the 'faster' level. For GPU encoders, this matches the 'p2' level.
     """
-    FAST = "p3"
+    FAST = 3
     """
-    Fast encoding speed and low video quality.
+    For CPU encoders, this matches the 'fast' level. For GPU encoders, this matches the 'p3' level.
     """
-    MEDIUM = "p4"
+    MEDIUM = 4
     """
-    Intermediate encoding speed and moderate video quality. This is the default preset.
+    For CPU encoders, this matches the 'medium' level. For GPU encoders, this matches the 'p4' level.
     """
-    SLOW = "p5"
+    SLOW = 5
     """
-    Good video quality but slower encoding speed.
+    For CPU encoders, this matches the 'slow' level. For GPU encoders, this matches the 'p5' level.
     """
-    SLOWER = "p6"
+    SLOWER = 6
     """
-    Better video quality, but slower encoding speed compared to SLOW. This preset is recommended for all science 
-    applications if sufficient computational power is available.
+    For CPU encoders, this matches the 'slower' level. For GPU encoders, this matches the 'p6' level.
     """
-    SLOWEST = "p7"
+    SLOWEST = 7
     """
-    Best video quality, but even slower encoding speed than SLOWEST.
-    """
-    LOSSLESS = "lossless"
-    """
-    This is not part of the 'standardized' preset range. This preset is specifically optimized for acquiring lossless
-    videos (not recommended!). Using this preset will result in very large file sizes and very slow encoding speeds, 
-    but will produce maximum video quality with no data loss. This should not be needed outside of clinical research
-    use cases.
+    For CPU encoders, this matches the 'veryslow' level. For GPU encoders, this matches the 'p7' level.
     """
 
 
-class CPUEncoderPresets(Enum):
-    """Maps valid literal values for supported CPU codec presets to programmatically callable variables.
-
-    Presets balance out encoding speed and resultant video quality. This acts on top of the 'constant rate factor'
-    setting and determines how much time the codec spends optimizing individual frames. The more time the codec is
-    allowed to spend on each frame, the better the resultant quality. Note, this enumeration is specifically designed
-    for CPU encoders and will not work for GPU encoders.
-    """
-
-    ULTRAFAST = "ultrafast"
-    """
-    The best encoding speed with the lowest resultant quality of video. Generally, not recommended. Roughly maps to 
-    GPU 'fastest' preset.
-    """
-    SUPERFAST = "superfast"
-    """
-    Lower encoding speed compared to ULTRAFAST, but slightly better video quality.
-    """
-    VERYFAST = "veryfast"
-    """
-    Fast encoding speed and fairly low video quality.
-    """
-    FASTER = "faster"
-    """
-    This is an additional level roughly between GPU 'medium' and 'fast' presets. The video quality is still low, but is 
-    getting better.
-    """
-    FAST = "fast"
-    """
-    This is the same as the 'medium' GPU preset in terms of quality, but the encoding speed is slightly lower.
-    """
-    MEDIUM = "medium"
-    """
-    Intermediate encoding speed and moderate video quality. This is the default preset.
-    """
-    SLOW = "slow"
-    """
-    Better video quality, but slower encoding speed compared to MEDIUM. This preset is recommended for all science 
-    applications if sufficient computational power is available. Roughly maps to GPU 'slower' preset.
-    """
-    SLOWER = "slower"
-    """
-    Best video quality, but even slower encoding speed than SLOWER. This preset is qualitatively between GPU 'slower' 
-    and 'slowest' presets. 
-    """
-    VERYSLOW = "veryslow"
-    """
-    While not exactly lossless, this preset results in minimal video quality loss, very large file size and very slow 
-    encoding speed. This is the slowest 'sane' preset that may be useful in some cases, but is generally advised 
-    against.
-    """
-
-
-class InputPixelFormats(Enum):
-    """Maps valid literal values for supported input pixel formats to programmatically callable variables.
-
-    Setting the input pixel format is necessary to properly transcode the input data to video files. All our videos use
-    the 'yuv' color space format, but many scientific and general cameras acquire data as images in the grayscale or
-    BGR/A format. Therefore, it is necessary for the encoder to know the 'original' color space of images to properly
-    convert them into the output 'yuv' color space format. This enumeration is only used by the CPU and GPU video
-    Savers.
+class InputPixelFormats(StrEnum):
+    """Stores the supported camera frame data (color) formats used when saving camera frames as videos via VideoSaver
+    instances.
     """
 
     MONOCHROME = "gray"
     """
-    The preset for grayscale (monochrome) inputs. This is the typical output for IR cameras and many color cameras can 
-    be configured to image in grayscale to conserve bandwidth.
+    The preset for grayscale (monochrome) images.
     """
     BGR = "bgr24"
     """
-    The preset for color inputs that do not use the alpha-channel. To be consistent with our Camera classes, we only 
-    support BGR channel order for colored inputs.
+    The preset for color images that do not use the alpha-channel.
     """
     BGRA = "bgra"
     """
-    This preset is similar to the BGR preset, but also includes the alpha channel. This is the only 'alternative' 
-    color preset we support at this time and it is fairly uncommon to use BGRA in scientific imaging. 
+    This preset is similar to the BGR preset, but also includes the alpha channel. 
     """
 
 
-class OutputPixelFormats(Enum):
-    """Maps valid literal values for supported output pixel formats to programmatically callable variables.
-
-    The output pixel format primarily determines how the algorithm compresses the chromatic (color) information in the
-    video. This can be a good way of increasing encoding speed and decreasing video file size at the cost of reducing
-    the chromatic range of the video.
-    """
+class OutputPixelFormats(StrEnum):
+    """Stores the supported video color formats used when saving camera frames as videos via VideoSaver instances."""
 
     YUV420 = "yuv420p"
     """
-    The 'standard' video color space format that uses half-bandwidth chrominance (U/V) and full width luminance (Y).
-    Generally, the resultant reduction in chromatic precision is not apparent to the viewer. However, this may be 
-    undesirable for some applications and, in this case, the full-width 'yuv444' format should be used.
+    The 'standard' video color space format that uses half-bandwidth chrominance (U/V) and full-bandwidth luminance (Y).
+    Generally, the resultant reduction in chromatic precision is not apparent to the viewer.
     """
     YUV444 = "yuv444p"
     """
-    While still doing some chroma value reduction, this profile uses most of the chrominance channel-width. This relies 
-    in very little chromatic data loss and may be necessary for some scientific applications. This format is more 
-    computationally expensive compared to the yuv420 format.
+    While still minorly reducing the chromatic precision, this profile uses most of the chrominance channel-width. 
+    This results in minimal chromatic data loss compared to the more common 'yuv420p' format, but increases the 
+    encoding processing time.
     """
 
 
-class ImageSaver:
-    """Saves input video frames as images.
+# Defines the maps used to convert EncoderPresets members to the appropriate preset string for the GPU and CPU encoders.
+# This allows standardizing the preset scale for both types of encoders at the library API level, improving the user
+# experience.
+_gpu_encoder_map: dict[int, str] = {
+    1: "p1",
+    2: "p2",
+    3: "p3",
+    4: "p4",
+    5: "p5",
+    6: "p6",
+    7: "p7",
+}
 
-    This Saver class is designed to use a memory-inefficient approach of saving video frames as individual images.
-    Compared to video-savers, this preserves more of the color-space and visual-data of each frame and can
-    achieve very high saving speeds. However, this method has the least storage-efficiency and can easily produce
-    data archives in the range of TBs.
-
-    Notes:
-        An additional benefit of this method is its robustness. Due to encoding each frame as a discrete image, the data
-        is constantly moved into non-volatile memory. In case of an unexpected shutdown, only a handful of frames are
-        lost. For scientific applications with sufficient NVME or SSD storage space, recording data as images and then
-        transcoding it as videos is likely to be the most robust and flexible approach to saving video data.
-
-        To improve runtime efficiency, the class uses a multithreaded saving approach, where multiple images are saved
-        at the same time due to GIL-releasing C-code. Generally, it is safe to use 5-10 saving threads, but that number
-        depends on the specific system configuration and output image format.
-
-    Args:
-        output_directory: The path to the output directory where the images will be stored. To optimize data flow during
-            runtime, the class pre-creates the saving directory ahead of time and only expects integer IDs to accompany
-            the input frame data. The frames are then saved as 'id.extension' files to the pre-created directory.
-        image_format: The format to use for the output image. Use ImageFormats enumeration to specify the desired image
-            format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
-        tiff_compression: The integer-code that specifies the compression strategy used for Tiff image files. Has to be
-            one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended to use code 1 (None) for
-            lossless and fastest file saving or code 5 (LZW) for a good speed-to-compression balance.
-        jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the JPEG compression. A higher
-            value means better quality, less information loss, bigger file size, and slower processing time.
-        jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image color-space. Has to be one
-            of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended to use code 444 to preserve the
-            full color space of the image for scientific applications.
-        png_compression: An integer value between 0 and 9 that specifies the compression of the PNG file. Unlike JPEG,
-            PNG files are always lossless. This value controls the trade-off between the compression ratio and the
-            processing time.
-        thread_count: The number of writer threads to be used by the class. Since this class uses the c-backed OpenCV
-            library, it can safely process multiple frames at the same time though multithreading. This controls the
-            number of simultaneously saved images the class will support.
-
-    Attributes:
-        _tiff_parameters: A tuple that contains OpenCV configuration parameters for writing .tiff files.
-        _jpeg_parameters: A tuple that contains OpenCV configuration parameters for writing .jpg files.
-        _png_parameters: A tuple that contains OpenCV configuration parameters for writing .png files.
-        _output_directory: Stores the path to the output directory.
-        _thread_count: The number of writer threads to be used by the class.
-        _queue: Local queue that buffer input data until it can be submitted to saver threads. The primary job of this
-            queue is to function as a local buffer given that the class is intended to be used in a multiprocessing
-            context.
-        _executor: A ThreadPoolExecutor for managing the image writer threads.
-        _running: A flag indicating whether the worker thread is running.
-        _worker_thread: A thread that continuously fetches data from the queue and passes it to worker threads.
-        _frame_counter: A monotonic counter used to iteratively generate names for frame images.
-    """
-
-    def __init__(
-        self,
-        output_directory: Path,
-        image_format: ImageFormats = ImageFormats.TIFF,
-        tiff_compression: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
-        jpeg_quality: int = 95,
-        jpeg_sampling_factor: int = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
-        png_compression: int = 1,
-        thread_count: int = 5,
-    ):
-        # Does not contain input-checking. Expects the initializer method of the VideoSystem class to verify all
-        # input parameters before instantiating the class.
-
-        # Saves arguments to class attributes. Builds OpenCV 'parameter sequences' to optimize lower-level processing
-        # and uses tuple for efficiency.
-        self._tiff_parameters: tuple[int, ...] = (int(cv2.IMWRITE_TIFF_COMPRESSION), tiff_compression)
-        self._jpeg_parameters: tuple[int, ...] = (
-            int(cv2.IMWRITE_JPEG_QUALITY),
-            jpeg_quality,
-            int(cv2.IMWRITE_JPEG_SAMPLING_FACTOR),
-            jpeg_sampling_factor,
-        )
-        self._png_parameters: tuple[int, ...] = (int(cv2.IMWRITE_PNG_COMPRESSION), png_compression)
-        self._thread_count: int = thread_count
-
-        # Ensures that the input directory exists.
-        ensure_directory_exists(output_directory)
-
-        # Saves output directory and image format to class attributes
-        self._output_directory: Path = output_directory
-        self._image_format: ImageFormats = image_format
-
-        # Local queue to distribute frames to writer threads
-        self._queue: None | Queue = None  # type: ignore
-        self._running: bool = False  # Tracks whether the threads are running
-
-        # Defines thread management attributes but does not start them.
-        # Executor to manage write operations
-        self._executor: None | ThreadPoolExecutor = None
-        self._worker_thread: None | Thread = None
-
-        # Initializes the input frame counter, which is used to generate frame (image) IDs.
-        self._frame_counter: int = 0
-
-    def __repr__(self) -> str:
-        """Returns a string representation of the ImageSaver object."""
-        representation_string = (
-            f"ImageSaver(output_directory={self._output_directory}, image_format={self._image_format.value},"
-            f"tiff_compression_strategy={self._tiff_parameters[1]}, jpeg_quality={self._jpeg_parameters[1]},"
-            f"jpeg_sampling_factor={self._jpeg_parameters[3]}, png_compression_level={self._png_parameters[1]}, "
-            f"thread_count={self._thread_count})"
-        )
-        return representation_string
-
-    def __del__(self) -> None:
-        """Ensures the class releases all resources before being garbage-collected."""
-        self.terminate_image_saver()
-
-    def create_live_image_saver(self) -> None:
-        """Initializes the saver by starting the saver threads.
-
-        This method works similar to the create_live_video_encoder() method from the VideoSaver class and is responsible
-        for starting the saving infrastructure. Primarily, it is used to make ImageSaver compatible with the
-        VideoSystem class, as some assets used by the saver are not picklable. It has to be called to enable saving
-        input frames as images via the save_frame() method.
-
-        Notes:
-            Each call to this method has to be paired with a call to the terminate_image_saver() method.
-        """
-        if not self._running:
-            self._running = True
-            self._queue = Queue()
-            self._executor = ThreadPoolExecutor(max_workers=self._thread_count)
-            self._worker_thread = Thread(target=self._worker, daemon=True)
-            self._worker_thread.start()
-
-    def _worker(self) -> None:
-        """Fetches frames to save from the queue and sends them to available writer thread(s).
-
-        This thread manages the Queue object and ensures only one thread at a time can fetch the buffered data.
-        It allows decoupling the saving process, which can have any number of worker threads, from the data-flow-control
-        process.
-        """
-        while self._running:
-            # Continuously pops the data from the queue if data is available and sends it to saver threads.
-            try:
-                # Uses a low-delay polling delay strategy to both release the GIL and maximize fetching speed.
-                frame_id, frame_data = self._queue.get(timeout=0.1)  # type: ignore
-                self._executor.submit(self._save_image, frame_id, frame_data)  # type: ignore
-            except Empty:
-                continue
-
-    def _save_image(self, frame_id: str, frame: NDArray[Any]) -> None:
-        """Saves the input frame data as an image using the specified ID and class-stored output parameters.
-
-        This method is passed to the ThreadPoolExecutor for concurrent execution, allowing for efficient saving of
-        multiple images at the same time. The method is written to be as minimal as possible to optimize execution
-        speed.
-
-        Args:
-            frame_id: The zero-padded ID of the image to save, e.g.: '0001'. The IDs have to be unique, as images are
-                saved to the same directory and are only distinguished by the ID. For other library methods to work as
-                expected, the ID must be a digit-convertible string.
-            frame: The data of the frame to save in the form of a Numpy array. Can be monochrome or colored.
-        """
-        # Uses output directory, image ID, and image format to construct the image output path
-        output_path = Path(self._output_directory, f"{frame_id}.{self._image_format.value}")
-
-        # Tiff format
-        if self._image_format.value == "tiff":
-            cv2.imwrite(filename=str(output_path), img=frame, params=self._tiff_parameters)
-
-        # JPEG format
-        elif self._image_format.value == "jpg":
-            cv2.imwrite(filename=str(output_path), img=frame, params=self._jpeg_parameters)
-
-        # PNG format
-        else:
-            cv2.imwrite(filename=str(output_path), img=frame, params=self._png_parameters)
-
-    def save_frame(self, frame: NDArray[Any]) -> None:
-        """Queues the input frame to be saved by one of the writer threads.
-
-        This method functions as the class API entry-point. For a well-configured class to save a frame as an image,
-        only frame data passed to this method is necessary. The class automatically handles everything else, including
-        assigning the appropriate zero-padded frame ID as the name of the output image.
-
-        Args:
-            frame: The data of the frame to save. The frame can be monochrome or colored.
-
-        Raises:
-            RuntimeError: If this method is called before starting the live image saver.
-        """
-        if not self._running:
-            message = (
-                "Unable to submit the frame to the 'live' image saver as teh process does not exist. Call "
-                "create_live_image_saver() method to create a 'live' saver before calling save_frame() method."
-            )
-            console.error(message=message, error=RuntimeError)
-
-        self._frame_counter += 1  # Increments the frame counter for the next image ID
-        frame_id = str(self._frame_counter).zfill(20)  # Generates a zero-padded frame ID based on the processed count
-        # Queues the data to be saved locally
-        self._queue.put((frame_id, frame))  # type: ignore
-
-    def terminate_image_saver(self) -> None:
-        """Stops the live image saver and waits for all pending tasks to complete.
-
-        This method has to be called to properly release class resources during shutdown.
-        """
-        if self._running:
-            self._running = False
-            if self._worker_thread is not None:
-                self._worker_thread.join()
-
-            if self._executor is not None:
-                self._executor.shutdown(wait=True)
-
-    @property
-    def is_live(self) -> bool:
-        """Returns True if the image saver has been started (is ready to save frames)."""
-        return self._running
+_cpu_encoder_map: dict[int, str] = {
+    1: "veryfast",
+    2: "faster",
+    3: "fast",
+    4: "medium",
+    5: "slow",
+    6: "slower",
+    7: "veryslow",
+}
 
 
 class VideoSaver:
@@ -529,8 +176,6 @@ class VideoSaver:
         hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is almost
             always recommended to use the GPU encoding for considerably faster encoding with almost no quality loss.
             GPU encoding is only supported by modern Nvidia GPUs, however.
-        video_format: The container format to use for the output video. Use VideoFormats enumeration to specify the
-            desired container format. Currently, only 'MP4', 'MKV', and 'AVI' are supported.
         video_codec: The codec (encoder) to use for generating the video file. Use VideoCodecs enumeration to specify
             the desired codec. Currently, only 'H264' and 'H265' are supported.
         preset: The encoding preset to use for generating the video file. Use GPUEncoderPresets or CPUEncoderPresets
@@ -555,7 +200,6 @@ class VideoSaver:
 
     Attributes:
         _output_directory: Stores the path to the output directory.
-        _video_format: Stores the desired video container format.
         _input_pixel_format: Stores the pixel format used by the input frames when 'live' saving is used. This is
             necessary to properly 'colorize' binarized image data.
         _ffmpeg_command: The 'base' ffmpeg command. Since most encoding parameters are known during class instantiation,
@@ -580,9 +224,8 @@ class VideoSaver:
         self,
         output_directory: Path,
         hardware_encoding: bool = False,
-        video_format: VideoFormats = VideoFormats.MP4,
         video_codec: VideoCodecs = VideoCodecs.H265,
-        preset: GPUEncoderPresets | CPUEncoderPresets = CPUEncoderPresets.SLOW,
+        preset: EncoderSpeedPreset = EncoderSpeedPreset.SLOW,
         input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
         output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
         quantization_parameter: int = 15,
@@ -592,7 +235,6 @@ class VideoSaver:
         ensure_directory_exists(output_directory)
 
         self._output_directory: Path = output_directory
-        self._video_format: str = str(video_format.value)
         self._input_pixel_format: str = str(input_pixel_format.value)
 
         # Depending on the requested codec type and hardware_acceleration preference, selects the specific codec to
@@ -658,7 +300,7 @@ class VideoSaver:
         # reduce the number of class attributes.
         self._repr_body: str = (
             f"output_directory={self._output_directory}, hardware_encoding{hardware_encoding}, "
-            f"video_format={self._video_format}, input_pixel_format={self._input_pixel_format}, "
+            f"video_format=mp4, input_pixel_format={self._input_pixel_format}, "
             f"video_codec={video_encoder}, encoder_preset={preset.value}, "
             f"quantization_parameter={quantization_parameter}, gpu_index={gpu}"
         )
@@ -676,7 +318,7 @@ class VideoSaver:
         return f"VideoSaver({self._repr_body}, live_encoder={live_encoder})"
 
     def __del__(self) -> None:
-        """Ensures live encoder is terminated when the VideoEncoder object is deleted."""
+        """Ensures that the live encoder is terminated when the VideoEncoder object is deleted."""
         if self._ffmpeg_process is not None:
             self.terminate_live_encoder(timeout=600)
 
@@ -729,7 +371,7 @@ class VideoSaver:
         """Converts a set of existing id-labeled images stored in a folder into a video file.
 
         This method can be used to convert individual images stored inside the input directory into a video file. It
-        uses encoding parameters specified during class initialization and supports encoding tiff, png and jpg images.
+        uses encoding parameters specified during class initialization and supports encoding tiff, png, and jpg images.
         This method expects the frame-images to use integer-convertible IDs (e.g.: "00001.png"), as the method sorts
         images based on the ID, which determines the order they are encoded into the video.
 
@@ -742,7 +384,7 @@ class VideoSaver:
             The dimensions of the video are determined from the first image passed to the encoder.
 
         Args:
-            video_frames_per_second: The framerate of the video to be created.
+            video_frames_per_second: The frame rate of the video to be created.
             image_directory: The directory where the images are saved. The method scans the directory for image files
                 to be used for video creation.
             video_id: The ID or name of the generated video file. The videos will be saved as 'id.extension' format.
@@ -792,7 +434,7 @@ class VideoSaver:
                 file_list.write(f"file 'file:{input_frame}'\n")
 
         # Uses class attributes and input video ID to construct the output video path
-        output_path = Path(self._output_directory, f"{video_id}.{self._video_format}")
+        output_path = Path(self._output_directory, f"{video_id}.mp4")
 
         # Constructs the ffmpeg command, using the 'base' command created during instantiation for video parameters
         ffmpeg_command = (
@@ -856,7 +498,7 @@ class VideoSaver:
             frame_width: The width of the video to be encoded, in pixels.
             frame_height: The height of the video to be encoded, in pixels.
             video_id: The ID or name of the generated video file. The videos will be saved as 'id.extension' format.
-            video_frames_per_second: The framerate of the video to be created.
+            video_frames_per_second: The frame rate of the video to be created.
 
         Raises:
             RuntimeError: If a 'live' FFMPEG encoder process already exists.
@@ -864,7 +506,7 @@ class VideoSaver:
         # If the FFMPEG process does not already exist, creates a new process before encoding the input frame
         if self._ffmpeg_process is None:
             # Uses class attributes and input video ID to construct the output video path
-            output_path = Path(self._output_directory, f"{video_id}.{self._video_format}")
+            output_path = Path(self._output_directory, f"{video_id}.mp4")
 
             # Constructs the ffmpeg command, using the 'base' command created during instantiation for video parameters
             ffmpeg_command = (
@@ -889,7 +531,7 @@ class VideoSaver:
     def save_frame(self, frame: NDArray[Any]) -> None:
         """Sends the input frame to be encoded by the 'live' FFMPEG encoder process.
 
-        This method is used to submit frames to be saved to a precreated FFMPEG process. It expects that the
+        This method is used to submit frames to be saved to a pre-created FFMPEG process. It expects that the
         process has been created by the create_live_video_encoder () method. The frames must have the dimensions and
         color format specified during saver class instantiation and create_live_video_encoder() method runtime.
 

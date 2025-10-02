@@ -226,7 +226,7 @@ def live_run(
             thread_count=10,
         )
     else:  # pragma: no cover
-        video_system.add_video_saver(
+        video_system.add_saver(
             hardware_encoding=False if saver_backend == "video_cpu" else True,
             preset=CPUEncoderPresets.FAST if saver_backend == "video_cpu" else GPUEncoderPresets.FAST,
             input_pixel_format=pixel_color,

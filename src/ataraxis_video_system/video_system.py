@@ -38,13 +38,9 @@ from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
 from ataraxis_time.time_helpers import convert_time, get_timestamp
 
 from .saver import (
-    ImageSaver,
+    EncoderSpeedPreset,
     VideoSaver,
     VideoCodecs,
-    ImageFormats,
-    VideoFormats,
-    CPUEncoderPresets,
-    GPUEncoderPresets,
     InputPixelFormats,
     OutputPixelFormats,
 )
@@ -72,23 +68,12 @@ class _CameraSystem:
     not support real-time frame rate control."""
     fps_override: int | float
 
-    """Determines whether acquired frames need to be piped to other processes via the output queue, in addition to 
-    being sent to the saver process (if any). This is used to additionally process the frames in-parallel with 
-    saving them to disk, for example, to analyze the visual stream data for certain trigger events."""
-    output_frames: bool
-
-    """Allows adjusting the frame rate at which frames are sent to the output_queue. Frequently, real time processing
-    would impose constraints on the input frame rate that will not match the frame acquisition (and saving) frame 
-    rate. This setting allows sub-sampling the saved frames to a frame rate required by the output processing 
-    pipeline."""
-    output_frame_rate: int | float
-
     """Determines whether to display acquired camera frames to the user via a display UI. The frames are always 
     displayed at a 30 fps rate regardless of the actual frame rate of the camera. Note, this does not interfere with 
     frame acquisition (saving)."""
     display_frames: bool
 
-    """Same as output_frame_rate, but allows limiting the framerate at which the frames are displayed to the user if 
+    """Same as output_frame_rate, but allows limiting the frame rate at which the frames are displayed to the user if 
     displaying the frames is enabled. It is highly advise to not set this value above 30 fps."""
     display_frame_rate: int | float
 
@@ -577,125 +562,7 @@ class VideoSystem:
             display_frame_rate=display_frame_rate,
         )
 
-    def add_image_saver(
-        self,
-        image_format: ImageFormats = ImageFormats.TIFF,
-        tiff_compression_strategy: int = cv2.IMWRITE_TIFF_COMPRESSION_LZW,
-        jpeg_quality: int = 95,
-        jpeg_sampling_factor: int = cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
-        png_compression: int = 1,
-        thread_count: int = 5,
-    ) -> None:
-        """Creates an ImageSaver class instance and adds it to the VideoSystem instance.
-
-        This method allows adding an ImageSaver to an initialized VideoSystem instance. Currently, this is the only
-        intended way of using ImageSaver class available through this library. ImageSaver is not required for the
-        VideoSystem to function and, therefore, this method does not need to be called unless you need to save
-        the camera frames acquired during the runtime of this VideoSystem as images.
-
-        Notes:
-            Calling this method multiple times will replace the existing Saver (Image or Video) with the new one.
-
-            This method is specifically designed to add ImageSaver instances. If you need to add a VideoSaver
-            (to save frames as a video), use the add_video_saver() method instead.
-
-            ImageSavers can reach the highest image saving speed at the cost of using considerably more disk space than
-            efficient VideoSavers. Overall, it is highly recommended to use VideoSavers with hardware_encoding where
-            possible to optimize the disk space usage and still benefit from a decent frame saving speed.
-
-        Args:
-            image_format: The format to use for the output images. Use ImageFormats enumeration
-                to specify the desired image format. Currently, only 'TIFF', 'JPG', and 'PNG' are supported.
-            tiff_compression_strategy: The integer-code that specifies the compression strategy used for .tiff image
-                files. Has to be one of the OpenCV 'IMWRITE_TIFF_COMPRESSION_*' constants. It is recommended to use
-                code 1 (None) for lossless and fastest file saving or code 5 (LZW) for a good speed-to-compression
-                balance.
-            jpeg_quality: An integer value between 0 and 100 that controls the 'loss' of the JPEG compression. A higher
-                value means better quality, less data loss, bigger file size, and slower processing time.
-            jpeg_sampling_factor: An integer-code that specifies how JPEG encoder samples image color-space. Has to be
-                one of the OpenCV 'IMWRITE_JPEG_SAMPLING_FACTOR_*' constants. It is recommended to use code 444 to
-                preserve the full color space of the image if your application requires this. Another popular option is
-                422, which results in better compression at the cost of color coding precision.
-            png_compression: An integer value between 0 and 9 that specifies the compression used for .png image files.
-                Unlike JPEG, PNG files are always lossless. This value controls the trade-off between the compression
-                ratio and the processing time. Compression level of 0 means uncompressed and 9 means maximum
-                compression.
-            thread_count: The number of writer threads to be used by the saver class. Since ImageSaver uses the
-                C-backed OpenCV library, it can safely process multiple frames at the same time via multithreading.
-                This controls the number of simultaneously saved images the class instance will support.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-        """
-        if not isinstance(self._output_directory, Path):
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected a valid Path "
-                f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
-                f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
-                f"you intend to save camera frames."
-            )
-            console.error(error=TypeError, message=message)
-            # Fallback to appease mypy, should not be reachable
-            raise TypeError(message)  # pragma: no cover
-        if not isinstance(image_format, ImageFormats):
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an ImageFormats "
-                f"instance for image_format argument, but got {image_format} of type {type(image_format).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(tiff_compression_strategy, int):
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer for "
-                f"tiff_compression_strategy argument, but got {tiff_compression_strategy} of type "
-                f"{type(tiff_compression_strategy).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(jpeg_quality, int) or not 0 <= jpeg_quality <= 100:
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
-                f"between 0 and 100 for jpeg_quality argument, but got {jpeg_quality} of type {type(jpeg_quality)}."
-            )
-            console.error(error=TypeError, message=message)
-        if jpeg_sampling_factor not in [
-            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_411,
-            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_420,
-            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_422,
-            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_440,
-            cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
-        ]:
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected one of the "
-                f"'cv2.IMWRITE_JPEG_SAMPLING_FACTOR_*' constants for jpeg_sampling_factor argument, but got "
-                f"{jpeg_sampling_factor} of type {type(jpeg_sampling_factor).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(png_compression, int) or not 0 <= png_compression <= 9:
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
-                f"between 0 and 9 for png_compression argument, but got {png_compression} of type "
-                f"{type(png_compression).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(thread_count, int) or thread_count <= 0:
-            message = (
-                f"Unable to add the ImageSaver object to the VideoSystem with id {self._id}. Expected an integer "
-                f"greater than 0 for thread_count argument, but got {thread_count} of type "
-                f"{type(thread_count).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Configures, initializes, and adds the ImageSaver object to the saver list.
-        self._saver = ImageSaver(
-            output_directory=self._output_directory,
-            image_format=image_format,
-            tiff_compression=tiff_compression_strategy,
-            jpeg_quality=jpeg_quality,
-            jpeg_sampling_factor=jpeg_sampling_factor,
-            png_compression=png_compression,
-            thread_count=thread_count,
-        )
-
-    def add_video_saver(
+    def add_saver(
         self,
         hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
@@ -1247,7 +1114,6 @@ class VideoSystem:
         video_system_id: np.uint8,
         camera_system: _CameraSystem,
         image_queue: MPQueue,  # type: ignore
-        output_queue: MPQueue,  # type: ignore
         logger_queue: MPQueue,  # type: ignore
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
@@ -1276,8 +1142,6 @@ class VideoSystem:
                 VideoSystem when logging data.
             camera_system: The CameraSystem class that stores the managed camera with some additional parameters.
             image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
-            output_queue: A multiprocessing queue that buffers and pipes acquired frames to other concurrently active
-                processes (not managed by this VideoSystem instance).
             logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
                 This queue is used to buffer and pipe data to be logged to the logger cores.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
@@ -1343,20 +1207,6 @@ class VideoSystem:
             )
             frame_timer = PrecisionTimer("us")
 
-        # Calculates the timeout in microseconds per frame for outputting the frames to other processes if the camera
-        # supports this functionality.
-        output_time = None
-        output_timer = None
-        if camera_system.output_frames:
-            # noinspection PyTypeChecker
-            output_time = convert_time(
-                time=float(1 / camera_system.output_frame_rate),
-                from_units="s",
-                to_units="us",
-                convert_output=True,
-            )
-            output_timer = PrecisionTimer("us")
-
         camera.connect()  # Connects to the hardware of the camera.
 
         # Sets the 3d index value of the terminator_array to 1 to indicate that all CameraSystems have been started.
@@ -1377,7 +1227,7 @@ class VideoSystem:
                     show_timer.reset()  # Resets the display timer
                     display_queue.put(frame)
 
-                # If the software framerate override is enabled, this loop is further limited to acquire frames at
+                # If the software frame rate override is enabled, this loop is further limited to acquire frames at
                 # the specified rate, which is helpful for some cameras that do not have a built-in acquisition
                 # control functionality. If the acquisition timeout has not passed and is enabled, skips the rest
                 # of the processing runtime
@@ -1394,17 +1244,6 @@ class VideoSystem:
                 # (globally) and if the specific Camera instance is configured to save frames at all.
                 if terminator_array.read_data(index=1) == 1 and camera_system.save_frames:
                     image_queue.put((frame, frame_stamp))
-
-                # If the camera is configured to output frame data via the output_queue and the necessary conditions
-                # are fulfilled, sends the frame data to the output_queue.
-                if (
-                    terminator_array.read_data(index=2) == 1
-                    and camera_system.output_frames
-                    and output_timer.elapsed >= output_time  # type: ignore
-                ):
-                    # Resets the output timer
-                    output_timer.reset()  # type: ignore
-                    output_queue.put(frame)
 
         except Exception as e:
             # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
@@ -1430,7 +1269,7 @@ class VideoSystem:
     @staticmethod
     def _frame_saving_loop(
         video_system_id: np.uint8,
-        saver: ImageSaver | VideoSaver,
+        saver: VideoSaver,
         camera_system: _CameraSystem,
         image_queue: MPQueue,  # type: ignore
         logger_queue: MPQueue,  # type: ignore
@@ -1467,21 +1306,13 @@ class VideoSystem:
         # Connects to the terminator array used to manage the loop runtime
         terminator_array.connect()
 
-        # Both saver classes have an additional setup process that has to be carried out before frames can be submitted
-        # for saving,
-        if isinstance(saver, VideoSaver):
-            # For video saver, uses camera data to initialize the video container
-            saver.create_live_video_encoder(
-                frame_width=camera_system.camera.frame_width,  # type: ignore
-                frame_height=camera_system.camera.frame_height,  # type: ignore
-                video_id=f"{video_system_id:03d}",  # Uses the index of the video system with padding
-                video_frames_per_second=camera_system.camera.frame_rate,  # type: ignore
-            )
-
-        # For ImageSavers, the only setup consists of calling the 'live' image saver creation method to initialize
-        # the threads and local queue objects.
-        else:
-            saver.create_live_image_saver()
+        # For video saver, uses camera data to initialize the video container
+        saver.create_live_video_encoder(
+            frame_width=camera_system.camera.frame_width,  # type: ignore
+            frame_height=camera_system.camera.frame_height,  # type: ignore
+            video_id=f"{video_system_id:03d}",  # Uses the index of the video system with padding
+            video_frames_per_second=camera_system.camera.frame_rate,  # type: ignore
+        )
 
         # Sets the 3d index value of the terminator_array to 2 to indicate that all SaverSystems have been started.
         terminator_array.write_data(index=3, data=np.uint8(2))
@@ -1526,10 +1357,7 @@ class VideoSystem:
             terminator_array.disconnect()
 
             # Carries out the necessary shut-down procedures:
-            if isinstance(saver, VideoSaver):
-                saver.terminate_live_encoder()
-            else:
-                saver.terminate_image_saver()
+            saver.terminate_live_encoder()
 
     def _watchdog(self) -> None:  # pragma: no cover
         """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
@@ -1609,109 +1437,6 @@ class VideoSystem:
         if self._started and self._terminator_array is not None:
             # noinspection PyTypeChecker
             self._terminator_array.write_data(index=1, data=1)
-
-    def stop_frame_output(self) -> None:
-        """Disables outputting frame data via the instance output_queue."""
-        if self._started and self._terminator_array is not None:
-            # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=2, data=0)
-
-    def start_frame_output(self) -> None:
-        """Enables outputting frame data via the instance output_queue.
-
-        Some cameras can be configured to additionally share acquired frame data with other concurrently active
-        processes. When the VideoSystem starts, this functionality is not enabled by default and has to be enabled
-        separately via this method.
-        """
-        if self._started and self._terminator_array is not None:
-            # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=2, data=1)
-
-    def extract_logged_data(self) -> tuple[np.uint64, ...]:
-        """Extracts the frame acquisition timestamps from the .npz log archive generated by the VideoSystem instance
-        during runtime
-
-        This method reads the compressed '.npz' archives generated by the VideoSystem and, if the system saves any
-        frames acquired by the camera, extracts a tuple of acquisition timestamps. The order of timestamps in
-        the tuple is sequential and matches the order of frame acquisition.
-
-        Notes:
-            This method should be used as a convenience abstraction for the inner workings of the DataLogger class that
-            decodes frame timestamp data from log files for further user-defined processing.
-
-            Since version 1.1.0 this function is largely a wrapper around the multiprocessing-safe global
-            'extract_logged_video_system_data' function exposed by the library. The extraction logic did not change, but
-            having an instance-independent extraction function helps parallelize the data acquired by many sources that
-            use Ataraxis code.
-
-
-        Returns:
-            A tuple that stores the frame acquisition timestamps, where each timestamp is a 64-bit unsigned numpy
-            integer and specifies the number of microseconds since the UTC epoch onset.
-
-        Raises:
-            ValueError: If the .npz archive for the VideoSystem instance does not exist.
-        """
-        # Generates the log file path using the video system ID. Assumes that the log has been compressed to the .npz
-        # format before calling this method
-        log_path = self._log_directory.joinpath(f"{self._id}_log.npz")
-
-        # If a compressed log archive does not exist, raises an error
-        if not log_path.exists():
-            error_message = (
-                f"Unable to extract frame data for VideoSystem with id {self._id} from the log file. "
-                f"This likely indicates that the logs have not been compressed via DataLogger's compress_logs() method "
-                f"and are not available for processing. Call log compression method before calling this method."
-            )
-            console.error(message=error_message, error=ValueError)
-
-        # After verifying that the compressed log archive exists, it is safe to call the global function that contains
-        # the extraction logic. This makes this method a wrapper for the multiprocessing-safe extraction function that
-        # can be used directly.
-        return extract_logged_video_system_data(log_path=log_path)
-
-    def encode_video_from_images(
-        self, directory: Path, target_fps: int, video_name: str, cleanup: bool = False
-    ) -> None:
-        """Converts a set of images acquired via the ImageSaver class into a video file.
-
-        Use this method to post-process image frames acquired in real time into a storage-efficient video file.
-        Primarily, this is helpful for runtimes that require the fastest possible saving speed (achieved by saving raw
-        frame data without processing) but still need to optimize acquired data for long-term storage.
-
-        Notes:
-            The video is written to the output directory of the VideoSystem class, regardless of where the source images
-            are stored.
-
-            The dimensions of the video are determined automatically from the first image passed to the encoder. The
-            method expects all frames in the directory to have the same dimensions.
-
-        Args:
-            directory: The directory where the images are stored.
-            target_fps: The framerate to use for the created video.
-            video_name: The ID or name to use for the generated video file. Do not include the extension in this name,
-                as it will be resolved and appended automatically, based on the VideoSaver configuration.
-            cleanup: Determines whether to clean up (delete) source images after the video creation. The cleanup is
-                only carried out after the FFMPEG process terminates with a success code. Make sure to test your
-                pipeline before enabling this option, as this method does not verify the encoded video for corruption.
-
-        Raises:
-            TypeError: If the Saver managed by the VideoSystem is not a VideoSaver.
-            Exception: If there are no images with supported file-extensions in the specified directory.
-        """
-        # Prevents running this method if the saver is not a VideoSaver
-        if not isinstance(self._saver, VideoSaver):
-            message = (
-                f"The VideoSystem with ID {self._id} is unable to encode a directory of images as a video file. The "
-                f"VideoSystem requires a VideoSaver class to generate video files. Call the add_video_saver() method "
-                f"before calling this method()."
-            )
-            console.error(message=message, error=TypeError)
-
-        # Calls the conversion method.
-        self._saver.create_video_from_image_folder(  # type: ignore
-            image_directory=directory, video_frames_per_second=target_fps, video_id=video_name, cleanup=cleanup
-        )
 
     @property
     def output_directory(self) -> Path | None:

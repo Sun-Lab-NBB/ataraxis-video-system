@@ -8,27 +8,19 @@ Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 
 from .saver import (
     VideoCodecs,
-    ImageFormats,
-    VideoFormats,
-    SaverBackends,
-    CPUEncoderPresets,
-    GPUEncoderPresets,
     InputPixelFormats,
+    EncoderSpeedPreset,
     OutputPixelFormats,
 )
 from .camera import CameraBackends
 from .video_system import VideoSystem, extract_logged_video_system_data
 
 __all__ = [
-    "CPUEncoderPresets",
     "CameraBackends",
-    "GPUEncoderPresets",
-    "ImageFormats",
+    "EncoderSpeedPreset",
     "InputPixelFormats",
     "OutputPixelFormats",
-    "SaverBackends",
     "VideoCodecs",
-    "VideoFormats",
     "VideoSystem",
     "extract_logged_video_system_data",
 ]
