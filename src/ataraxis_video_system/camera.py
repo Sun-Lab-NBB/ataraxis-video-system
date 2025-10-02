@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import Any
 from pathlib import Path
 
-os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"  # Improves OpenCV realtime frame rendering on Windows.
 import cv2
 import numpy as np
 from numpy.typing import NDArray
@@ -67,8 +67,6 @@ class OpenCVCamera:
         desired values before starting frame-acquisition.
 
     Args:
-        camera_id: The unique ID code of the camera instance. This is used to identify the camera and to mark all
-            frames acquired from this camera.
         color: Specifies if the camera acquires colored or monochrome images. There is no way to get this
             information via OpenCV, and all images read from VideoCapture use BGR colorspace even for the monochrome
             source. This setting does not control whether the camera acquires colored images. It only controls how
@@ -76,24 +74,23 @@ class OpenCVCamera:
             images will be reduced to using only one channel.
         camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
             available camera, 1 for the second, etc.
-        fps: The desired Frames Per Second to capture the frames at. Note, this depends on the hardware capabilities of
+        frame_rate: The desired Frames Per Second to capture the frames at. Note, this depends on the hardware capabilities of
             the camera and is affected by multiple related parameters, such as image dimensions, camera buffer size and
             the communication interface. If not provided (set to None), this parameter will be obtained from the
             connected camera.
-        width: The desired width of the camera frames to acquire, in pixels. This will be passed to the camera and
+        frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the camera and
             will only be respected if the camera has the capacity to alter acquired frame resolution. If not provided
             (set to None), this parameter will be obtained from the connected camera.
-        height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels. If not
+        frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels. If not
             provided (set to None), this parameter will be obtained from the connected camera.
 
     Attributes:
-        _id: Stores the string-name of the camera.
         _color: Determines whether the camera acquires colored or monochrome images.
         _camera_index: Stores the index of the camera, which is used during connect() method runtime.
         _camera: Stores the OpenCV VideoCapture object that interfaces with the camera.
-        _fps: Stores the desired Frames Per Second to capture the frames at.
-        _width: Stores the desired width of the camera frames to acquire.
-        _height: Stores the desired height of the camera frames to acquire.
+        _frame_rate: Stores the desired Frames Per Second to capture the frames at.
+        _frame_width: Stores the desired width of the camera frames to acquire.
+        _frame_height: Stores the desired height of the camera frames to acquire.
         _acquiring: Stores whether the camera is currently acquiring video frames. This is statically set to 'True'
             the first time grab_frames() is called, as it initializes the camera acquisition thread of the binding
             object. If this attribute is True, some parameters, such as the fps, can no longer be altered.
@@ -101,24 +98,20 @@ class OpenCVCamera:
 
     def __init__(
         self,
-        camera_id: np.uint8,
-        color: bool = True,
         camera_index: int = 0,
-        fps: float | None = None,
-        width: int | None = None,
-        height: int | None = None,
+        frame_rate: float = 0.0,
+        frame_width: int = 0,
+        frame_height: int = 0,
+        *,
+        color: bool = True,
     ) -> None:
-        # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
-        # the necessary input filtering.
-
         # Saves class parameters to class attributes
-        self._id: np.uint8 = camera_id
         self._color: bool = color
         self._camera_index: int = camera_index
+        self._frame_rate: float = frame_rate
+        self._frame_width: int = frame_width
+        self._frame_height: int = frame_height
         self._camera: cv2.VideoCapture | None = None
-        self._fps: float | None = fps
-        self._width: int | None = width
-        self._height: int | None = height
         self._acquiring: bool = False
 
     def __del__(self) -> None:
@@ -128,8 +121,8 @@ class OpenCVCamera:
     def __repr__(self) -> str:
         """Returns the string representation of the OpenCVCamera instance."""
         return (
-            f"OpenCVCamera(camera_id={self._id}, camera_index={self._camera_index}, fps={self.fps}, "
-            f"width={self.width}, height={self.height}, connected={self._camera is not None}, "
+            f"OpenCVCamera(camera_index={self._camera_index}, frame_rate={self.frame_rate} frames / second, "
+            f"width={self.frame_width} pixels, height={self.frame_height} pixels, connected={self._camera is not None}, "
             f"acquiring={self._acquiring})"
         )
 
@@ -145,27 +138,26 @@ class OpenCVCamera:
         if self._camera is not None:
             return
 
-        # Generates an OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
+        # Generates the OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
         # (index).
         self._camera = cv2.VideoCapture(index=self._camera_index, apiPreference=cv2.CAP_ANY)
 
         # If necessary, overrides the requested camera acquisition parameters. Note, there is no guarantee that the
         # camera accepts the requested parameters.
-        if self._fps is not None:
-            self._camera.set(cv2.CAP_PROP_FPS, self._fps)  # pragma: no cover
-        if self._width is not None:
-            self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))  # pragma: no cover
-        if self._height is not None:
-            self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))  # pragma: no cover
+        if self._frame_rate != 0.0:
+            self._camera.set(cv2.CAP_PROP_FPS, self._frame_rate)  # pragma: no cover
+        if self._frame_width != 0:
+            self._camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._frame_width))  # pragma: no cover
+        if self._frame_height != 0:
+            self._camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._frame_height))  # pragma: no cover
 
         # Queries the current camera acquisition parameters and stores them in class attributes.
-        self._fps = self._camera.get(cv2.CAP_PROP_FPS)
-        self._width = int(self._camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self._height = int(self._camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._frame_rate = self._camera.get(cv2.CAP_PROP_FPS)
+        self._frame_width = int(self._camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._frame_height = int(self._camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     def disconnect(self) -> None:
         """Disconnects from the camera by releasing the VideoCapture object reference."""
-
         if self._camera is None:
             # If the camera is already disconnected, returns without doing anything.
             return
@@ -186,24 +178,19 @@ class OpenCVCamera:
         return self._acquiring
 
     @property
-    def fps(self) -> float | None:
+    def frame_rate(self) -> float | None:
         """Returns the acquisition rate of the camera, in frames per second (fps)."""
-        return self._fps
+        return self._frame_rate
 
     @property
-    def width(self) -> int | None:
+    def frame_width(self) -> int | None:
         """Returns the width of the acquired frames, in pixels."""
-        return self._width
+        return self._frame_width
 
     @property
-    def height(self) -> int | None:
+    def frame_height(self) -> int | None:
         """Returns the heights of the acquired frames, in pixels."""
-        return self._height
-
-    @property
-    def camera_id(self) -> np.uint8:
-        """Returns the unique identifier code of the camera."""
-        return self._id
+        return self._frame_height
 
     def grab_frame(self) -> NDArray[np.number[Any]]:
         """Grabs the first available frame from the camera acquisition buffer.
@@ -509,8 +496,8 @@ class HarvestersCamera:
 
             # Collects the information necessary to reshape the originally 1-dimensional frame array into the
             # 2-dimensional array using the correct number and order of color channels.
-            width = content.width
-            height = content.height
+            width = content.frame_width
+            height = content.frame_height
             data_format = content.data_format
 
             # For monochrome formats, reshapes the 1D array into a 2D array and returns it to caller.

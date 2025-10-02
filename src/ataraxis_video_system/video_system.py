@@ -398,9 +398,9 @@ class VideoSystem:
                 color=image_color,
                 backend=opencv_backend,
                 camera_index=camera_index,
-                height=frame_height,
-                width=frame_width,
-                fps=acquisition_frame_rate,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                frame_rate=acquisition_frame_rate,
             )
 
             # Connects to the camera. This both verifies that the camera can be connected to and applies the
@@ -447,13 +447,13 @@ class VideoSystem:
             # If the camera failed to set the requested frame rate, but it is possible to correct the fps via software,
             # enables fps override. Software correction requires that the native fps is higher than the desired fps,
             # as it relies on discarding excessive frames.
-            if acquisition_frame_rate is not None and camera.fps > acquisition_frame_rate:  # type: ignore
+            if acquisition_frame_rate is not None and camera.frame_rate > acquisition_frame_rate:  # type: ignore
                 fps_override = acquisition_frame_rate  # pragma: no cover
-            elif acquisition_frame_rate is not None and camera.fps < acquisition_frame_rate:  # type: ignore
+            elif acquisition_frame_rate is not None and camera.frame_rate < acquisition_frame_rate:  # type: ignore
                 message = (
                     f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
                     f"Attempted configuring the camera to acquire frames at the rate of {acquisition_frame_rate} "
-                    f"frames per second, but the camera automatically adjusted the framerate to {camera.fps}. This "
+                    f"frames per second, but the camera automatically adjusted the framerate to {camera.frame_rate}. This "
                     f"indicates that the camera does not support the requested framerate."
                 )
                 console.error(error=ValueError, message=message)
@@ -540,25 +540,25 @@ class VideoSystem:
         # If the output_frame_rate argument is not an integer or floating value, defaults to using the same framerate
         # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
         if output_frames and (
-            not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps  # type: ignore
+            not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.frame_rate  # type: ignore
         ):
             message = (
                 f"Unable to instantiate the Camera due to encountering an unsupported "
                 f"output_frame_rate argument {output_frame_rate} of type {type(output_frame_rate).__name__}. "
                 f"Output framerate override has to be an integer or floating point number that does not exceed the "
-                f"camera acquisition framerate ({camera.fps})."
+                f"camera acquisition framerate ({camera.frame_rate})."
             )
             console.error(error=TypeError, message=message)
 
         # Same as above, but for display frame_rate
         if display_frames and (
-            not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.fps  # type: ignore
+            not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.frame_rate  # type: ignore
         ):
             message = (
                 f"Unable to instantiate the Camera due to encountering an unsupported "
                 f"display_frame_rate argument {display_frame_rate} of type {type(display_frame_rate).__name__}. "
                 f"Display framerate override has to be an integer or floating point number that does not exceed the "
-                f"camera acquisition framerate ({camera.fps})."
+                f"camera acquisition framerate ({camera.frame_rate})."
             )
             console.error(error=TypeError, message=message)
 
@@ -1472,10 +1472,10 @@ class VideoSystem:
         if isinstance(saver, VideoSaver):
             # For video saver, uses camera data to initialize the video container
             saver.create_live_video_encoder(
-                frame_width=camera_system.camera.width,  # type: ignore
-                frame_height=camera_system.camera.height,  # type: ignore
+                frame_width=camera_system.camera.frame_width,  # type: ignore
+                frame_height=camera_system.camera.frame_height,  # type: ignore
                 video_id=f"{video_system_id:03d}",  # Uses the index of the video system with padding
-                video_frames_per_second=camera_system.camera.fps,  # type: ignore
+                video_frames_per_second=camera_system.camera.frame_rate,  # type: ignore
             )
 
         # For ImageSavers, the only setup consists of calling the 'live' image saver creation method to initialize
