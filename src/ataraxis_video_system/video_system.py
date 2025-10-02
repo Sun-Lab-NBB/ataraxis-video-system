@@ -481,9 +481,9 @@ class VideoSystem:
                 camera_id=self._id,
                 cti_path=self._cti_path,
                 camera_index=camera_index,
-                height=frame_height,
-                width=frame_width,
-                fps=acquisition_frame_rate,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                frame_rate=acquisition_frame_rate,
             )
 
             # Connects to the camera. This both verifies that the camera can be connected to and applies the camera
