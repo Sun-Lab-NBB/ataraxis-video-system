@@ -3,12 +3,11 @@ Primarily, these interfaces abstract the necessary procedures to connect to the 
 acquired frames.
 """
 
-import os
 from enum import StrEnum
 from typing import Any
 from pathlib import Path
+from dataclasses import dataclass
 
-os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"  # Improves OpenCV's performance on Windows.
 import cv2
 import numpy as np
 from numpy.typing import NDArray
@@ -17,22 +16,27 @@ from harvesters.core import Harvester, ImageAcquirer
 from harvesters.util.pfnc import (
     bgr_formats,
     rgb_formats,
-    bgra_formats,
-    rgba_formats,
     mono_location_formats,
 )
 from ataraxis_base_utilities import console
 
+from .saver import InputPixelFormats
+
 # Repackages Harvesters color formats into sets to optimize the efficiency of the HarvestersCamera grab_frames() method:
 mono_formats = set(mono_location_formats)
-color_formats = set(bgr_formats) | set(rgb_formats) | set(bgra_formats) | set(rgba_formats)
-all_rgb_formats = set(rgb_formats) | set(rgba_formats)
+color_formats = set(bgr_formats) | set(rgb_formats)
+all_rgb_formats = set(rgb_formats)
 
 # Determines the size of the frame pool used by the MockCamera instances.
 _FRAME_POOL_SIZE = 10
 
+# Determines the maximum number of failed test attempts allowed when running the get_opencv_ids() function before the
+# runtime is terminated. This is used to interrupt the function early when it runs out of valid OpenCV-compatible camera
+# objects to test.
+_MAXIMUM_NON_WORKING_IDS = 5
 
-class CameraBackends(StrEnum):
+
+class CameraInterfaces(StrEnum):
     """Specifies the supported camera interface backends compatible with the VideoSystem class."""
 
     HARVESTERS = "harvesters"
@@ -50,6 +54,138 @@ class CameraBackends(StrEnum):
     """
     This backend is used exclusively for internal library testing and should not be used in production projects.
     """
+
+
+@dataclass()
+class CameraInformation:
+    """Stores descriptive information about a camera discoverable through OpenCV or Harvesters libraries."""
+
+    camera_index: int
+    """The index of the camera in the list of all cameras discoverable through the evaluated interface 
+    (OpenCV or Harvesters)."""
+    interface: CameraInterfaces | str
+    """The interface that discovered the camera."""
+    frame_width: int
+    """The width of the frames acquired by the camera, in pixels."""
+    frame_height: int
+    """The height of the frames acquired by the camera, in pixels."""
+    acquisition_frame_rate: int
+    """The frame rate at which the camera acquires frames, in frames per second."""
+    serial_number: str | None = None
+    """Only for Harvesters-discoverable cameras. Contains the camera's serial number."""
+    model: str | None = None
+    """Only for Harvesters-discoverable cameras. Contains the camera's model name."""
+
+
+def get_opencv_ids() -> tuple[CameraInformation, ...]:
+    """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible through
+    the OpenCV library.
+
+    Notes:
+        Currently, it is impossible to retrieve serial numbers or camera models from OpenCV. Therefore, while this
+        method tries to provide some ID information, it is typically insufficient to identify specific cameras. It is
+        advised to test each discovered camera with the 'axvs run' CLI command to identify the mapping between the
+        discovered indices (IDs) and physical cameras.
+
+    Returns:
+         A tuple of CameraData instances, one for each discovered OpenCV-compatible camera.
+    """
+    # Disables OpenCV error logging to avoid flushing the terminal with failed connection attempts.
+    prev_log_level = cv2.getLogLevel()
+    cv2.setLogLevel(0)
+
+    try:
+        non_working_count = 0
+        working_ids: list[CameraInformation] = []
+
+        # This loop iterates over IDs until it discovers 5 non-working IDs. The loop is designed to evaluate 100 IDs at
+        # maximum to prevent infinite execution.
+        for evaluated_id in range(100):
+            # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension data
+            # from the connected camera (if any was connected).
+            camera = cv2.VideoCapture(evaluated_id)
+
+            # If the evaluated camera can be connected and returns images, it's index is appended to the ID list
+            if camera.isOpened() and camera.read()[0]:
+                frame_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                frame_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                acquisition_rate = int(camera.get(cv2.CAP_PROP_FPS))
+                camera_data = CameraInformation(
+                    camera_index=evaluated_id,
+                    interface=CameraInterfaces.OPENCV,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    acquisition_frame_rate=acquisition_rate,
+                )
+                working_ids.append(camera_data)
+                non_working_count = 0  # Resets non-working count whenever a working camera is found.
+            else:
+                non_working_count += 1
+
+            camera.release()  # Releases the camera object to recreate it above for the next cycle
+
+            # Breaks the loop early if more than 5 non-working IDs are found consecutively
+            if non_working_count >= _MAXIMUM_NON_WORKING_IDS:
+                break
+
+        return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+    finally:
+        # Restores previous log level
+        cv2.setLogLevel(prev_log_level)
+
+
+def get_harvesters_ids(cti_path: Path) -> tuple[CameraInformation, ...]:
+    """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible
+    through the Harvesters library.
+
+    Notes:
+        This method bundles the discovered ID (index) information with the serial number and the model for each camera
+        to support identifying the cameras.
+
+    Args:
+        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
+            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
+            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
+
+    Returns:
+        A tuple of CameraInformation instances, one for each discovered Harvesters-compatible camera.
+    """
+    # Instantiates the class and adds the input .cti file.
+    harvester = Harvester()
+    harvester.add_file(file_path=str(cti_path))
+
+    # Gets the list of accessible cameras
+    harvester.update()
+
+    # Loops over all discovered cameras and retrieves detailed information from each camera
+    working_ids: list[CameraInformation] = []
+    for index, camera_info in enumerate(harvester.device_info_list):
+        # Accesses the remote device node map to get camera properties.
+        node_map = camera_info.node_map
+
+        # Retrieves frame dimensions and acquisition rate from the camera's node map.
+        frame_width = int(node_map["Width"].value)
+        frame_height = int(node_map["Height"].value)
+        acquisition_rate = int(round(number=node_map["AcquisitionFrameRate"].value, ndigits=0))
+
+        # Creates CameraInformation instance with all retrieved data
+        camera_data = CameraInformation(
+            camera_index=index,  # Uses the enumerated index as the camera index
+            interface=CameraInterfaces.HARVESTERS,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            acquisition_frame_rate=acquisition_rate,
+            serial_number=camera_info.serial_number,
+            model=camera_info.model,
+        )
+        working_ids.append(camera_data)
+
+    # Resets the harvester instance after discovering the camera IDs.
+    harvester.remove_file(file_path=str(cti_path))
+    harvester.reset()
+
+    return tuple(working_ids)  # Converts to tuple before returning to caller.
 
 
 class OpenCVCamera:
@@ -122,7 +258,12 @@ class OpenCVCamera:
         )
 
     def connect(self) -> None:
-        """Connects to the managed camera hardware."""
+        """Connects to the managed camera hardware.
+
+        Raises:
+            ValueError: If the instance is configured to override hardware-defined acquisition parameters and the
+                camera rejects the user-defined frame height, width, or acquisition rate parameters.
+        """
         # Prevents re-connecting to an already connected camera
         if self._camera is not None:
             return
@@ -131,19 +272,51 @@ class OpenCVCamera:
         # (index).
         self._camera = cv2.VideoCapture(index=self._camera_index, apiPreference=cv2.CAP_ANY)
 
-        # If necessary, overrides the requested camera acquisition parameters. Note, there is no guarantee that the
-        # camera accepts the requested parameters.
-        if self._frame_rate != 0.0:
-            self._camera.set(propId=cv2.CAP_PROP_FPS, value=float(self._frame_rate))  # pragma: no cover
-        if self._frame_width != 0:
-            self._camera.set(propId=cv2.CAP_PROP_FRAME_WIDTH, value=float(self._frame_width))  # pragma: no cover
-        if self._frame_height != 0:
-            self._camera.set(propId=cv2.CAP_PROP_FRAME_HEIGHT, value=float(self._frame_height))  # pragma: no cover
+        # If necessary, overrides the requested camera acquisition parameters. If the camera does not accept the
+        # requested parameters, terminates with an error message. Otherwise, queries the acquisition parameters from
+        # the connected camera.
+        if self._frame_rate != 0:
+            self._camera.set(propId=cv2.CAP_PROP_FPS, value=float(self._frame_rate))
+            actual_frame_rate = int(self._camera.get(propId=cv2.CAP_PROP_FPS))
+            if actual_frame_rate < self._frame_rate:
+                message = (
+                    f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
+                    f"Attempted configuring the camera to acquire frames at the rate of {self._frame_rate} "
+                    f"frames per second, but the camera automatically adjusted the acquisition rate to "
+                    f"{actual_frame_rate}. This indicates that the camera does not support the requested frame "
+                    f"acquisition rate."
+                )
+                console.error(error=ValueError, message=message)
+        else:
+            self._frame_rate = int(self._camera.get(propId=cv2.CAP_PROP_FPS))
 
-        # Queries the current camera acquisition parameters and stores them in class attributes.
-        self._frame_rate = int(self._camera.get(propId=cv2.CAP_PROP_FPS))
-        self._frame_width = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
-        self._frame_height = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
+        if self._frame_width != 0:
+            self._camera.set(propId=cv2.CAP_PROP_FRAME_WIDTH, value=float(self._frame_width))
+            actual_frame_width = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
+            if actual_frame_width != self._frame_width:
+                message = (
+                    f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
+                    f"Attempted configuring the camera to acquire frames with the width of {self._frame_width} pixels, "
+                    f"but the camera automatically adjusted the frame width to {actual_frame_width}. This indicates "
+                    f"that the camera does not support the requested frame height and width combination."
+                )
+                console.error(error=ValueError, message=message)
+        else:
+            self._frame_width = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
+
+        if self._frame_height != 0:
+            self._camera.set(propId=cv2.CAP_PROP_FRAME_HEIGHT, value=float(self._frame_height))
+            actual_frame_height = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
+            if actual_frame_height != self._frame_height:
+                message = (
+                    f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
+                    f"Attempted configuring the camera to acquire frames with the height of {self._frame_height} "
+                    f"pixels, but the camera automatically adjusted the frame height to {actual_frame_height}. This "
+                    f"indicates that the camera does not support the requested frame height and width combination."
+                )
+                console.error(error=ValueError, message=message)
+        else:
+            self._frame_height = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
@@ -180,6 +353,13 @@ class OpenCVCamera:
     def frame_height(self) -> int:
         """Returns the height of the acquired frames, in pixels."""
         return self._frame_height
+
+    @property
+    def pixel_color_format(self) -> InputPixelFormats:
+        """Returns the pixel color format of the acquired frames."""
+        if self._color:
+            return InputPixelFormats.BGR
+        return InputPixelFormats.MONOCHROME
 
     def grab_frame(self) -> NDArray[np.integer[Any]]:
         """Grabs the first available frame from the managed camera's acquisition buffer.
@@ -245,7 +425,7 @@ class HarvestersCamera:
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
-            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, us also acceptable.
+            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
             See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
         camera_index: The index of the camera in the list of all cameras discoverable by Harvesters, e.g.: 0 for the
             first available camera, 1 for the second, etc. This specifies the camera hardware the instance should
@@ -269,6 +449,7 @@ class HarvestersCamera:
         _harvester: Stores the Harvester interface object that discovers and manages the list of accessible GenTL
             cameras.
         _camera: Stores the Harvesters ImageAcquirer object that interfaces with the camera.
+        _color: Tracks whether the frames are acquired using a monochrome or a colored data format.
     """
 
     def __init__(
@@ -298,6 +479,9 @@ class HarvestersCamera:
 
         # Pre-creates the attribute to store the initialized ImageAcquirer object for the connected camera.
         self._camera: ImageAcquirer | None = None
+
+        # Tracks whether the acquired frames use a monochrome or a colored data format.
+        self._color: bool = False
 
     def __del__(self) -> None:
         """Releases the underlying ImageAcquirer object when the instance is garbage-collected."""
@@ -379,6 +563,13 @@ class HarvestersCamera:
         """Returns the height of the acquired frames, in pixels."""
         return self._frame_height
 
+    @property
+    def pixel_color_format(self) -> InputPixelFormats:
+        """Returns the pixel color format of the acquired frames."""
+        if self._color:
+            return InputPixelFormats.BGR
+        return InputPixelFormats.MONOCHROME
+
     def grab_frame(self) -> NDArray[np.integer[Any]]:
         """Grabs the first available frame from the managed camera's acquisition buffer.
 
@@ -441,6 +632,7 @@ class HarvestersCamera:
                 # Uses copy, which is VERY important. Once the buffer is released, the original 'content' is lost,
                 # so NumPy needs to copy the data instead of using the default referencing behavior.
                 out_array: NDArray[np.integer[Any]] = content.data.reshape(height, width).copy()
+                self._color = False  # Ensures that the color flag is set to False.
                 return out_array
 
             # For color data, evaluates the input format and reshapes the data as necessary.
@@ -456,6 +648,8 @@ class HarvestersCamera:
                 # with the OpenCVCamera API. Note, this is only done if the image data is in the RGB format.
                 if data_format in all_rgb_formats:
                     frame: NDArray[np.integer[Any]] = content[:, :, ::-1].copy()
+
+                self._color = True  # Ensures that the color flag is set to True.
 
                 # Returns the reshaped frame array to the caller
                 return frame
@@ -521,7 +715,7 @@ class MockCamera:
         self._color: bool = color
         self._frame_rate: int = 30 if frame_rate is None else frame_rate
         self._frame_width: int = 600 if frame_width is None else frame_width
-        self._frame_height: int = 600 if frame_height is None else frame_height
+        self._frame_height: int = 400 if frame_height is None else frame_height
         self._camera: bool = False
         self._acquiring: bool = False
 
@@ -596,6 +790,13 @@ class MockCamera:
     def frame_pool(self) -> tuple[NDArray[np.uint8], ...]:
         """Returns the pool of camera frames sampled by the grab_frame() method."""
         return self._frames
+
+    @property
+    def pixel_color_format(self) -> InputPixelFormats:
+        """Returns the pixel color format of the acquired frames."""
+        if self._color:
+            return InputPixelFormats.BGR
+        return InputPixelFormats.MONOCHROME
 
     def grab_frame(self) -> NDArray[np.uint8]:
         """Grabs the first available frame from the managed camera's acquisition buffer.

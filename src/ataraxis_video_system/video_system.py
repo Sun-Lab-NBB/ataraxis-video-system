@@ -9,164 +9,167 @@ runtime performance.
 All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
 
-import os
 import sys
 from queue import Queue
-from types import NoneType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from pathlib import Path
 import warnings
 from threading import Thread
-import subprocess
-from dataclasses import dataclass
-import multiprocessing
 from multiprocessing import (
     Queue as MPQueue,
+    Manager,
     Process,
 )
-from multiprocessing.managers import SyncManager
 
-os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
-from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
-from harvesters.core import Harvester  # type: ignore
-from numpy.lib.npyio import NpzFile
-from ataraxis_base_utilities import console, ensure_directory_exists
+from ataraxis_base_utilities import console
 from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
 from ataraxis_time.time_helpers import convert_time, get_timestamp
 
 from .saver import (
     VideoSaver,
     VideoEncoders,
-    InputPixelFormats,
     OutputPixelFormats,
+    EncoderSpeedPresets,
+    check_gpu_availability,
+    check_ffmpeg_availability,
 )
-from .camera import MockCamera, OpenCVCamera, CameraBackends, HarvestersCamera
+from .camera import MockCamera, OpenCVCamera, CameraInterfaces, HarvestersCamera
+
+if TYPE_CHECKING:
+    from multiprocessing.managers import SyncManager
+
+    from numpy.typing import NDArray
+    from numpy.lib.npyio import NpzFile
 
 
-@dataclass(frozen=True)
-class _CameraSystem:
-    """Stores a Camera class instance managed by the VideoSystem class, alongside additional runtime parameters.
-
-    This class is used as a container that aggregates all objects and parameters required by the VideoSystem to
-    interface with a camera during runtime.
-    """
-
-    """Stores the managed camera interface class."""
-    camera: OpenCVCamera | HarvestersCamera | MockCamera
-
-    """Determines whether to save the frames acquired by this camera to disk. Setting this to True only means that 
-    the frames will be submitted to the saving queue. There has to also be a Saver configured to grab and save these 
-    frames."""
-    save_frames: bool
-
-    """Determines whether to override (sub-sample) the camera's frame acquisition rate. The override has to be smaller 
-    than the camera's native frame rate and can be used to more precisely control the frame rate of cameras that do 
-    not support real-time frame rate control."""
-    fps_override: int | float
-
-    """Determines whether to display acquired camera frames to the user via a display UI. The frames are always 
-    displayed at a 30 fps rate regardless of the actual frame rate of the camera. Note, this does not interfere with 
-    frame acquisition (saving)."""
-    display_frames: bool
-
-    """Same as output_frame_rate, but allows limiting the frame rate at which the frames are displayed to the user if 
-    displaying the frames is enabled. It is highly advise to not set this value above 30 fps."""
-    display_frame_rate: int | float
+# Determines the maximum qp value used when initializing VideoSystem instances.
+_MAXIMUM_QUANTIZATION_VALUE = 51
 
 
 class VideoSystem:
-    """Efficiently combines a Camera and a Saver instance to acquire, display, and save camera frames to disk.
+    """Acquires, displays, and saves camera frames to disk using the requested camera interface and video saver.
 
-    This class controls the runtime of Camera and Saver instances running on independent cores (processes) to maximize
-    the frame throughout. The class achieves two main objectives: It efficiently moves frames acquired by the camera
-    to the saver that writes them to disk and manages runtime behavior of wrapped Camera and Saver classes. To do so,
-    the class initializes and controls multiple subprocesses to ensure frame producer and consumer classes have
-    sufficient computational resources. The class abstracts away all necessary steps to set up, execute, and tear down
-    the processes through an easy-to-use API.
+    This class controls the runtime of a camera interface and a video saver running in independent processes and
+    efficiently moves the frames acquired by the camera to the saver process.
 
     Notes:
-        Due to using multiprocessing to improve efficiency, this class reserves up to two logical cores to run
-        efficiently. Additionally, due to a time-lag of moving frames from the producer process to the
-        consumer process, the class will reserve a variable portion of the RAM to buffer the frames. The reserved
-        memory depends on many factors and can only be established empirically.
+        This class reserves up to two logical cores to support the producer (camera interface) and consumer
+        (video saver) processes. Additionally, it reserves a variable portion of the RAM to buffer the frames as they
+        are moved from the producer to the consumer.
 
-        The class does not initialize cameras or savers at instantiation. Instead, you have to manually use the
-        add_camera() and add_image_saver() or add_video_saver() methods to add camera and saver to the system. To use
-        more than one camera and one saver, create additional VideoSystem instances as necessary.
+        Video saving relies on the third-party software 'FFMPEG' to encode the video frames as an .mp4 file.
+        See https://www.ffmpeg.org/download.html for more information on installing the library.
 
     Args:
-        system_id: A unique byte-code identifier for the VideoSystem instance. This is used to identify the system in
-            log files and generated video files. Therefore, this ID has to be unique across all concurrently
-            active Ataraxis systems that use DataLogger to log data (such as AtaraxisMicroControllerInterface class).
-            Note, this ID is used to identify all frames saved by the same VideoSystem and to name log files generated
-            by the VideoSystem.
+        system_id: The unique value to use for identifying the VideoSystem instance in all output streams (log files,
+            terminal messages, video files).
         data_logger: An initialized DataLogger instance used to log the timestamps for all frames saved by this
-            VideoSystem instance. The DataLogger itself is NOT managed by this instance and will need to be activated
-            separately. This instance only extracts the necessary information to pipe the data to the logger.
-        output_directory: The path to the output directory which will be used by the Saver class to save
-            acquired camera frames as images or videos. This argument is required if you intend to add a Saver instance
-            to this VideoSystem and optional if you do not intend to save frames grabbed by this VideoSystem.
-        harvesters_cti_path: The path to the '.cti' file that provides the GenTL Producer interface. This argument is
-            required if you intend to interface with cameras using 'Harvesters' backend! It is recommended to use the
-            file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire, would work
-            as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
+            VideoSystem instance.
+        output_directory: The path to the output directory where to store the acquired frames as the .mp4 video file.
+            Setting this argument to None disabled video saving functionality.
+        camera_interface: The interface to use for working with the camera hardware. Must be one of the CameraInterfaces
+            enumeration members.
+        camera_index: The index of the camera in the list of all cameras discoverable by the chosen interface, e.g.: 0
+            for the first available camera, 1 for the second, etc. This specifies the camera hardware the instance
+            should interface with at runtime.
+        display_frame_rate: Determines the frame rate at which to display the acquired frames to the user. Setting this
+            argument to None (default) disables frame display functionality. Note, frame displaying is not supported
+            on some macOS versions.
+        frame_rate: The desired rate, in frames per second, at which to capture the frames. Note; whether the requested
+            rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
+            this argument is not explicitly provided, the instance uses the default frame rate of the managed camera.
+        frame_width: The desired width of the acquired frames, in pixels. Note; the requested width must be compatible
+            with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
+            provided, the instance uses the default frame width of the managed camera.
+        frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
+            argument is not explicitly provided, the instance uses the default frame width of the managed camera.
+        color: Specifies whether the camera acquires colored or monochrome images. This determines how to store the
+            acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
+            a single-channel format. This argument is only used by the OpenCV and Mock camera interfaces, the
+            Harvesters interface infers this information directly from the camera's configuration.
+        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
+            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
+            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details. This argument is
+            only used by the Harvesters camera interface.
+        gpu: The index of the GPU to use for video encoding. Setting this argument to a value of -1 (default) configures
+            the instance to use the CPU for encoding. Valid GPU indices can be obtained from the 'nvidia-smi' terminal
+            command.
+        video_encoder: The encoder to use for generating the video file. Must be one of the valid VideoEncoders
+            enumeration members.
+        encoder_speed_preset: The encoding speed preset to use for generating the video file. Must be one of the valid
+            EncoderSpeedPresets enumeration members.
+        output_pixel_format: The pixel format to be used by the output video file. Must be one of the valid
+            OutputPixelFormats enumeration members.
+        quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. This
+            determines how much information to discard from each encoded frame. Lower values produce better video
+            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Setting this
+            argument to a value of -1 uses the default preset for the chosen encoder.
 
     Attributes:
-        _id: Stores the ID code of the VideoSystem instance.
-        _logger_queue: Stores the multiprocessing Queue object used to buffer and pipe data to be logged.
-        _log_directory: Stores the Path to the log folder directory.
-        _output_directory: Stores the path to the output directory.
-        _cti_path: Stores the path to the '.cti' file that provides the GenTL Producer interface.
-        _camera: Stores managed CameraSystem.
-        _saver: Stores managed SaverSystem.
         _started: Tracks whether the system is currently running (has active subprocesses).
-        _mp_manager: Stores a SyncManager class instance from which the image_queue and the log file Lock are derived.
-        _image_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
-            the consumer process.
-        _output_queue: A cross-process Queue class instance used to buffer and pipe acquired frames from the producer to
-            other concurrently active processes.
-        _terminator_array: A SharedMemoryArray instance that provides a cross-process communication interface used to
-            manage runtime behavior of spawned processes.
-        _producer_process: A process that acquires camera frames using managed CameraSystem.
-        _consumer_process: A process that saves the acquired frames using managed SaverSystem.
+        _mp_manager: Stores the SyncManager instance used to control the multiprocessing assets (Queue and Lock
+            instances).
+        _system_id: Stores the unique identifier code of the VideoSystem instance.
+        _output_file: Stores the path to the output .mp4 video file to be generated at runtime or None, if the instance
+            is not configured to save acquired camera frames.
+        _camera: Stores the camera interface class instance used to interface with the camera hardware at runtime.
+        _saver: Stores the video saver instance used to save the acquired camera frames or None, if ths instance is
+            not configured to save acquired camera frames.
+        _logger_queue: Stores the multiprocessing Queue instance used to buffer frame acquisition timestamp data to the
+            logger process.
+        _image_queue: Stores the multiprocessing Queue instance used to buffer and pipe acquired frames from the
+            camera (producer) process to the video saver (consumer) process.
+        _terminator_array: Stores the SharedMemoryArray instance used to manage the runtime behavior of the producer
+            and consumer processes.
+        _producer_process: A process that acquires camera frames using the managed camera interface.
+        _consumer_process: A process that saves the acquired frames using managed video saver.
         _watchdog_thread: A thread used to monitor the runtime status of the remote consumer and producer processes.
 
     Raises:
         TypeError: If any of the provided arguments has an invalid type.
+        ValueError: If any of the provided arguments has an invalid value.
+        RuntimeError: If the host system does not have access to FFMPEG or Nvidia GPU (when the instance is configured
+            to use hardware encoding).
     """
 
     def __init__(
         self,
         system_id: np.uint8,
         data_logger: DataLogger,
-        output_directory: Path | None = None,
-        harvesters_cti_path: Path | None = None,
-    ):
+        output_directory: Path | None,
+        camera_interface: CameraInterfaces | str = CameraInterfaces.OPENCV,
+        camera_index: int = 0,
+        display_frame_rate: int | None = None,
+        frame_width: int | None = None,
+        frame_height: int | None = None,
+        frame_rate: int | None = None,
+        cti_path: Path | None = None,
+        gpu: int = -1,
+        video_encoder: VideoEncoders | str = VideoEncoders.H265,
+        encoder_speed_preset: EncoderSpeedPresets | int = EncoderSpeedPresets.SLOW,
+        output_pixel_format: OutputPixelFormats | str = OutputPixelFormats.YUV444,
+        quantization_parameter: int = -1,
+        *,
+        color: bool | None = None,
+    ) -> None:
         # Has to be set first to avoid stop method errors
         self._started: bool = False  # Tracks whether the system has active processes
+
         # The manager is created early in the __init__ phase to support del-based cleanup
-        self._mp_manager: SyncManager = multiprocessing.Manager()
+        self._mp_manager: SyncManager = Manager()
 
         # Ensures system_id is a byte-convertible integer
-        if not isinstance(system_id, np.uint8):
-            message = (
-                f"Unable to initialize the VideoSystem class instance. Expected a uint8 integer as system_id argument, "
-                f"but encountered {system_id} of type {type(system_id).__name__}."
-            )
-            console.error(message=message, error=TypeError)
+        self._system_id: np.uint8 = np.uint8(system_id)
 
-        # If harvesters_cti_path is provided, checks if it is a valid file path.
-        if harvesters_cti_path is not None and (
-            not harvesters_cti_path.exists() or harvesters_cti_path.suffix != ".cti"
-        ):
+        # If cti_path is provided, checks if it is a valid file path.
+        if cti_path is not None and (not cti_path.exists() or cti_path.suffix != ".cti"):
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected the path to an existing "
-                f"file with a '.cti' suffix or None for harvesters_cti_path, but encountered {harvesters_cti_path} of "
-                f"type {type(harvesters_cti_path).__name__}. If a valid path was provided, this error is likely due to "
-                f"the file not existing or not being accessible."
+                f"file with a '.cti' suffix or None as the 'cti_path' argument value, but encountered "
+                f"{cti_path} of type {type(cti_path).__name__}."
             )
             console.error(message=message, error=TypeError)
 
@@ -174,7 +177,7 @@ class VideoSystem:
         if not isinstance(data_logger, DataLogger):
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected an initialized "
-                f"DataLogger instance for 'data_logger' argument, but encountered {data_logger} of type "
+                f"DataLogger instance as the 'data_logger' argument value, but encountered {data_logger} of type "
                 f"{type(data_logger).__name__}."
             )
             console.error(message=message, error=TypeError)
@@ -183,34 +186,247 @@ class VideoSystem:
         if output_directory is not None and not isinstance(output_directory, Path):
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected a Path instance or None "
-                f"for 'output_directory' argument, but encountered {output_directory} of type "
+                f"as the 'output_directory' argument's value, but encountered {output_directory} of type "
                 f"{type(output_directory).__name__}."
             )
             console.error(message=message, error=TypeError)
 
-        # Saves ID data and the logger queue to class attributes
-        self._id: np.uint8 = system_id
-        self._logger_queue: MPQueue = data_logger.input_queue  # type: ignore
-        self._log_directory: Path = data_logger.output_directory
-        self._output_directory: Path | None = output_directory
-        self._cti_path: Path | None = harvesters_cti_path
+        # If the output directory is provided, resolves the path to the output .mp4 video file to be created during
+        # runtime.
+        self._output_file: Path | None = (
+            None if output_directory is None else output_directory.joinpath(f"{system_id}.mp4")
+        )
 
-        # Initializes placeholder variables that will be filled by add_camera() and add_saver() methods.
-        self._camera: _CameraSystem | None = None
-        self._saver: ImageSaver | VideoSaver | None = None
+        # Initializes the camera interface:
+
+        # Validates camera-related inputs:
+        if not isinstance(camera_index, int) or camera_index < 0:
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
+                f"zero or positive integer as the 'camera_id' argument value, but got {camera_index} of type "
+                f"{type(camera_index).__name__}."
+            )
+            console.error(error=TypeError, message=message)
+        if (frame_rate is not None and not isinstance(frame_rate, int)) or (
+            isinstance(frame_rate, int) and frame_rate <= 0
+        ):
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
+                f"positive integer or None as the 'frame_rate' argument value, but got "
+                f"{frame_rate} of type {type(frame_rate).__name__}."
+            )
+            console.error(error=TypeError, message=message)
+        if (frame_width is not None and not isinstance(frame_width, int)) or (
+            isinstance(frame_width, int) and frame_width <= 0
+        ):
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
+                f"positive integer or None as the 'frame_width' argument value, but got {frame_width} of type "
+                f"{type(frame_width).__name__}."
+            )
+            console.error(error=TypeError, message=message)
+        if (frame_height is not None and not isinstance(frame_height, int)) or (
+            isinstance(frame_height, int) and frame_height <= 0
+        ):
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
+                f"positive integer or None as the 'frame_height' argument value, but got {frame_height} of type "
+                f"{type(frame_height).__name__}."
+            )
+            console.error(error=TypeError, message=message)
+
+        # Presets the variable type
+        self._camera: OpenCVCamera | HarvestersCamera | MockCamera
+
+        # OpenCVCamera
+        if camera_interface == CameraInterfaces.OPENCV:
+            # Instantiates the OpenCVCamera object
+            self._camera = OpenCVCamera(
+                system_id=int(self._system_id),
+                color=False if not isinstance(color, bool) else color,
+                camera_index=camera_index,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                frame_rate=frame_rate,
+            )
+
+        # HarvestersCamera
+        elif camera_interface == CameraInterfaces.HARVESTERS:
+            # Ensures that the CTI file path is provided
+            if cti_path is None:
+                message = (
+                    f"Unable to configure the HarvestersCamera interface for the VideoSystem with id "
+                    f"{self._system_id}. Expected the VideoSystem's 'harvesters_cti_path' argument to be a Path object "
+                    f"pointing to the '.cti' file, but got None instead."
+                )
+                console.error(error=ValueError, message=message)
+                # Fallback to appease mypy, should not be reachable
+                raise ValueError(message)  # pragma: no cover
+
+            # Instantiates the HarvestersCamera object
+            self._camera = HarvestersCamera(
+                system_id=int(self._system_id),
+                cti_path=cti_path,
+                camera_index=camera_index,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                frame_rate=frame_rate,
+            )
+
+        # MockCamera
+        elif camera_interface == CameraInterfaces.MOCK:
+            # Instantiates the MockCamera object
+            self._camera = MockCamera(
+                system_id=int(self._system_id),
+                frame_height=frame_height,
+                frame_width=frame_width,
+                frame_rate=frame_rate,
+                color=False if not isinstance(color, bool) else color,
+            )
+
+        # If the requested camera interface does not match any of the supported interfaces, raises an error
+        else:
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Encountered "
+                f"an unsupported camera_interface argument value {camera_interface} of type "
+                f"{type(camera_interface).__name__}. Use one of the supported CameraInterfaces enumeration members: "
+                f"{', '.join(tuple(camera_interface))}."
+            )
+            console.error(error=ValueError, message=message)
+            # Fallback to appease mypy, should not be reachable
+            raise ValueError(message)  # pragma: no cover
+
+        # Connects to the camera. This both verifies that the camera can be connected to and applies the camera
+        # acquisition parameters.
+        self._camera.connect()
+
+        # Verifies that the frame acquisition works as expected.
+        self._camera.grab_frame()
+
+        # Disconnects from the camera. The camera is re-connected by the remote producer process once it is
+        # instantiated.
+        self._camera.disconnect()
+
+        # Disables frame displaying on macOS until OpenCV backend issues are fixed
+        if display_frame_rate is not None and "darwin" in sys.platform:
+            warnings.warn(
+                message=(
+                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details. "
+                    f"Disabling frame display for the VideoSystem with id {self._system_id}."
+                ),
+                stacklevel=2,
+            )
+            display_frame_rate = None
+
+        # If the system is configured to display the acquired frames to the user, ensures that the display frame rate
+        # is valid and works with the managed camera's frame acquisition rate.
+        if (display_frame_rate is not None and not isinstance(display_frame_rate, int)) or (
+            isinstance(display_frame_rate, int)
+            and (display_frame_rate <= 0 or display_frame_rate > self._camera.frame_rate)
+        ):
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Encountered "
+                f"an unsupported 'display_frame_rate' argument value {display_frame_rate} of type "
+                f"{type(display_frame_rate).__name__}. The display frame rate override has to be None or a positive "
+                f"integer that does not exceed the camera acquisition frame rate ({self._camera.frame_rate})."
+            )
+            console.error(error=TypeError, message=message)
+
+        # Ensures that the display frame rate is stored as an integer and saves it to an attribute.
+        self._display_frame_rate: int = display_frame_rate if display_frame_rate is not None else 0
+
+        # Only adds the video saver if the user intends to save the acquired frames (as indicated by providing a valid
+        # output directory).
+        self._saver: VideoSaver | None = None
+        if output_directory is not None:
+            # Validates the video saver configuration parameters:
+            if not isinstance(gpu, int):
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "
+                    f"integer as the 'gpu' argument value, but got {gpu} of type {type(gpu).__name__}."
+                )
+                console.error(error=TypeError, message=message)
+            if video_encoder not in VideoEncoders:
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Encountered "
+                    f"an unexpected 'video_encoder' argument value {video_encoder} of type "
+                    f"{type(video_encoder).__name__}. Use one of the supported VideoEncoders enumeration members: "
+                    f"{', '.join(tuple(VideoEncoders))}."
+                )
+                console.error(error=ValueError, message=message)
+            if encoder_speed_preset not in EncoderSpeedPresets:
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Encountered "
+                    f"an unexpected 'encoder_speed_preset' argument value {encoder_speed_preset} of type "
+                    f"{type(encoder_speed_preset).__name__}. Use one of the supported EncoderSpeedPresets enumeration "
+                    f"members: {', '.join(tuple(EncoderSpeedPresets))}."
+                )
+                console.error(error=ValueError, message=message)
+            if output_pixel_format not in OutputPixelFormats:
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Encountered "
+                    f"an unexpected 'output_pixel_format' argument value {output_pixel_format} of type "
+                    f"{type(output_pixel_format).__name__}. Use one of the supported OutputPixelFormats enumeration "
+                    f"members: {', '.join(tuple(OutputPixelFormats))}."
+                )
+                console.error(error=ValueError, message=message)
+            if (
+                not isinstance(quantization_parameter, int)
+                or not -1 < quantization_parameter <= _MAXIMUM_QUANTIZATION_VALUE
+            ):
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "
+                    f"integer between -1 and 51 as the 'quantization_parameter' argument value, but got "
+                    f"{quantization_parameter} of type {type(quantization_parameter).__name__}."
+                )
+                console.error(error=TypeError, message=message)
+
+            # VideoSaver relies on the FFMPEG library to be available on the system Path. Ensures that FFMPEG is
+            # available for this runtime.
+            if not check_ffmpeg_availability():
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. VideoSaver "
+                    f"requires a third-party software, FFMPEG, to be available on the system's Path. Make sure FFMPEG "
+                    f"is installed and callable from a Python shell. See https://www.ffmpeg.org/download.html for more "
+                    f"information."
+                )
+                console.error(error=RuntimeError, message=message)
+
+            # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
+            # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
+            if gpu >= 0 and not check_gpu_availability():
+                message = (
+                    f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. The saver is "
+                    f"configured to use the GPU video encoder, which currently only supports NVIDIA GPUs. Calling "
+                    f"'nvidia-smi' to verify the presence of NVIDIA GPUs did not run successfully, indicating "
+                    f"that there are no available NVIDIA GPUs on the host system. Use a CPU encoder or make sure "
+                    f"nvidia-smi is callable from a Python shell."
+                )
+                console.error(error=RuntimeError, message=message)
+
+            # Instantiates the VideoSaver object
+            self._saver = VideoSaver(
+                system_id=int(system_id),
+                output_file=self._output_file,
+                frame_height=self._camera.frame_height,
+                frame_width=self._camera.frame_width,
+                frame_rate=self._camera.frame_rate,
+                gpu=gpu,
+                video_encoder=video_encoder,
+                encoder_speed_preset=encoder_speed_preset,
+                input_pixel_format=self._camera.pixel_color_format,
+                output_pixel_format=output_pixel_format,
+                quantization_parameter=quantization_parameter,
+            )
 
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
-        self._image_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
-        self._output_queue: MPQueue = self._mp_manager.Queue()  # type: ignore
+        self._logger_queue: MPQueue = data_logger.input_queue
+        self._image_queue: MPQueue = self._mp_manager.Queue()
         self._terminator_array: SharedMemoryArray | None = None
         self._producer_process: Process | None = None
         self._consumer_process: Process | None = None
         self._watchdog_thread: Thread | None = None
-
-        # If the output directory path is provided, ensures the directory tree exists
-        if output_directory is not None:
-            ensure_directory_exists(output_directory)
 
     def __del__(self) -> None:
         """Ensures that all resources are released when the instance is garbage-collected."""
@@ -230,520 +446,9 @@ class VideoSystem:
             saver_name = "None"
 
         representation_string: str = (
-            f"VideoSystem(id={self._id}, started={self._started}, camera={camera_name}, saver={saver_name})"
+            f"VideoSystem(id={self._system_id}, started={self._started}, camera={camera_name}, saver={saver_name})"
         )
         return representation_string
-
-    def add_camera(
-        self,
-        save_frames: bool,
-        camera_index: int = 0,
-        camera_backend: CameraBackends = CameraBackends.OPENCV,
-        output_frames: bool = False,
-        output_frame_rate: float = 25,
-        display_frames: bool = False,
-        display_frame_rate: float = 25,
-        frame_width: int | None = None,
-        frame_height: int | None = None,
-        acquisition_frame_rate: float | None = None,
-        opencv_backend: int | None = None,
-        color: bool | None = None,
-    ) -> None:
-        """Creates a Camera class instance and adds it to the VideoSystem instance.
-
-        This method allows adding Cameras to an initialized VideoSystem instance. Currently, this is the only intended
-        way of using Camera classes available through this library. Unlike Saver class instances, which are not
-        required for the VideoSystem to function, a valid Camera class must be added to the system before its start()
-        method is called. The only exception to this rule is when using the encode_video_from_images() method, which
-        requires a VideoSaver and does not require the start() method to be called.
-
-        Notes:
-            Calling this method multiple times replaces the existing Camera class instance with a new one.
-
-        Args:
-            save_frames: Determines whether frames acquired by this camera should be saved to disk as images or video.
-                If this is enabled, there has to be a valid Saver class instance configured to save frames from this
-                Camera.
-            camera_index: The index of the camera, relative to all available video devices, e.g.: 0 for the first
-                available camera, 1 for the second, etc. Usually, the host-system assigns the camera indices
-                based on the order of their connection.
-            camera_backend: The backend to use for the camera class. Currently, all supported backends are derived from
-                the CameraBackends enumeration. The preferred backend is 'Harvesters', but we also support OpenCV for
-                non-GenTL-compatible cameras.
-            output_frames: Determines whether to output acquired frames via the VideoSystem's output_queue. This
-                allows real-time processing of acquired frames by other concurrent processes.
-            output_frame_rate: Allows adjusting the frame rate at which acquired frames are sent to the output_queue.
-                Note, the output framerate cannot exceed the native frame rate of the camera, but it can be lower than
-                the native acquisition frame rate. The acquisition frame rate is set via the frames_per_second argument
-                below.
-            display_frames: Determines whether to display acquired frames to the user. This allows visually monitoring
-                the camera feed in real time. Note, frame displaying may be broken for some macOS versions. This error
-                originates from OpenCV and not this library and is usually fixed in a timely manner by OpenCV
-                developers.
-            display_frame_rate: Similar to output_frame_rate, determines the frame rate at which acquired frames are
-                displayed to the user.
-            frame_width: The desired width of the camera frames to acquire, in pixels. This will be passed to the
-                camera and will only be respected if the camera has the capacity to alter acquired frame resolution.
-                If not provided (set to None), this parameter will be obtained from the connected camera.
-            frame_height: Same as width, but specifies the desired height of the camera frames to acquire, in pixels.
-                If not provided (set to None), this parameter will be obtained from the connected camera.
-            acquisition_frame_rate: How many frames to capture each second (capture speed). Note, this depends on the
-                hardware capabilities of the camera and is affected by multiple related parameters, such as image
-                dimensions, camera buffer size, and the communication interface. If not provided (set to None), this
-                parameter will be obtained from the connected camera. The VideoSystem always tries to set the camera
-                hardware to record frames at the requested rate, but contains a fallback that allows down-sampling the
-                acquisition rate in software. This fallback is only used when the camera uses a higher framerate than
-                the requested value.
-            opencv_backend: Optional. The integer-code for the specific acquisition backend (library) OpenCV should
-                use to interface with the camera. Generally, it is advised not to change the default value of this
-                argument unless you know what you are doing.
-            color: A boolean indicating whether the camera acquires colored or monochrome images. This is
-                used by OpenCVCamera to optimize acquired images depending on the source (camera) color space. It is
-                also used by the MockCamera to enable simulating monochrome and colored images. This option is ignored
-                for HarvesterCamera instances as it expects the colorspace to be configured via the camera's API.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-            ValueError: If the requested camera_backend is not one of the supported backends. If the chosen backend is
-                Harvesters and the .cti path is not provided. If attempting to set camera framerate or frame dimensions
-                fails for any reason.
-        """
-        if not isinstance(camera_index, int):
-            message = (
-                f"Unable to add a Camera to the VideoSystem with id {self._id}. Expected an "
-                f"integer for camera_id argument, but got {camera_index} of type {type(camera_index).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(acquisition_frame_rate, (int, float, NoneType)):
-            message = (
-                f"Unable to add a Camera to the VideoSystem with id {self._id}. Expected an "
-                f"integer, float or None for acquisition_frame_rate argument, but got {acquisition_frame_rate} of type "
-                f"{type(acquisition_frame_rate).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(frame_width, (int, NoneType)):
-            message = (
-                f"Unable to add a Camera to the VideoSystem with id {self._id}. Expected an "
-                f"integer or None for frame_width argument, but got {frame_width} of type {type(frame_width).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(frame_height, (int, NoneType)):
-            message = (
-                f"Unable to add a Camera to the VideoSystem with id {self._id}. Expected an "
-                f"integer or None for frame_height argument, but got {frame_height} of type "
-                f"{type(frame_height).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Ensures that display_frames is boolean. Does the same for output_frames
-        display_frames = False if not isinstance(display_frames, bool) else display_frames
-        output_frames = False if not isinstance(output_frames, bool) else output_frames
-
-        # Disables frame displaying on macOS until OpenCV backend issues are fixed
-        if display_frames and "darwin" in sys.platform:
-            warnings.warn(
-                message=(
-                    "Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details."
-                )
-            )
-            display_frames = False
-
-        # Pre-initializes the fps override to 0. A 0 value indicates that the override is not used. It is enabled
-        # automatically as a fallback when the camera lacks native fps limiting capabilities.
-        fps_override: int | float = 0
-
-        # Converts integer frames_per_second inputs to floats, since the Camera classes expect it to be a float.
-        if isinstance(acquisition_frame_rate, int):
-            acquisition_frame_rate = float(acquisition_frame_rate)
-
-        # Presets the variable type
-        camera: OpenCVCamera | HarvestersCamera | MockCamera
-
-        # OpenCVCamera
-        if camera_backend == CameraBackends.OPENCV:
-            # If the backend preference is None, uses generic preference
-            if opencv_backend is None:
-                opencv_backend = int(cv2.CAP_ANY)
-            # If the backend is not an integer or None, raises an error
-            elif not isinstance(opencv_backend, int):
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Expected an integer or None for opencv_backend argument, but got {opencv_backend} of type "
-                    f"{type(opencv_backend).__name__}."
-                )
-                console.error(error=TypeError, message=message)
-
-            # Ensures that color is either True or False.
-            image_color = False if not isinstance(color, bool) else color
-
-            # Instantiates the OpenCVCamera class object
-            camera = OpenCVCamera(
-                camera_id=self._id,
-                color=image_color,
-                backend=opencv_backend,
-                camera_index=camera_index,
-                frame_height=frame_height,
-                frame_width=frame_width,
-                frame_rate=acquisition_frame_rate,
-            )
-
-            # Connects to the camera. This both verifies that the camera can be connected to and applies the
-            # frame acquisition settings.
-            camera.connect()
-
-            # Grabs a test frame from the camera to verify frame acquisition capabilities.
-            frame = camera.grab_frame()
-
-            # Verifies the dimensions and the colorspace of the acquired frame
-            if frame_height is not None and frame.shape[0] != frame_height:
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Attempted configuring the camera to acquire frames using the provided frame_height "
-                    f"{frame_height}, but the camera returned a test frame with height {frame.shape[0]}. This "
-                    f"indicates that the camera does not support the requested frame height and width combination."
-                )
-                console.error(error=ValueError, message=message)
-            if frame_width is not None and frame.shape[1] != frame_width:
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Attempted configuring the camera to acquire frames using the provided frame_width {frame_width}, "
-                    f"but the camera returned a test frame with width {frame.shape[1]}. This indicates that the camera "
-                    f"does not support the requested frame height and width combination."
-                )
-                console.error(error=ValueError, message=message)
-            if color and frame.shape[2] <= 1:  # pragma: no cover
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Attempted configuring the camera to acquire colored frames, but the camera returned a test frame "
-                    f"with monochrome colorspace. This indicates that the camera does not support acquiring colored "
-                    f"frames."
-                )
-                console.error(error=ValueError, message=message)
-            elif not color and len(frame.shape) != 2:  # pragma: no cover
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Attempted configuring the camera to acquire monochrome frames, but the camera returned a test "
-                    f"frame with BGR colorspace. This likely indicates an OpenCV backend error, since it is unlikely "
-                    f"that the camera does not support monochrome colorspace."
-                )
-                console.error(error=ValueError, message=message)
-
-            # If the camera failed to set the requested frame rate, but it is possible to correct the fps via software,
-            # enables fps override. Software correction requires that the native fps is higher than the desired fps,
-            # as it relies on discarding excessive frames.
-            if acquisition_frame_rate is not None and camera.frame_rate > acquisition_frame_rate:  # type: ignore
-                fps_override = acquisition_frame_rate  # pragma: no cover
-            elif acquisition_frame_rate is not None and camera.frame_rate < acquisition_frame_rate:  # type: ignore
-                message = (
-                    f"Unable to add the OpenCVCamera to the VideoSystem with id {self._id}. "
-                    f"Attempted configuring the camera to acquire frames at the rate of {acquisition_frame_rate} "
-                    f"frames per second, but the camera automatically adjusted the framerate to {camera.frame_rate}. This "
-                    f"indicates that the camera does not support the requested framerate."
-                )
-                console.error(error=ValueError, message=message)
-
-            # Disconnects from the camera to free the resources to be used by the remote producer process, once it is
-            # instantiated.
-            camera.disconnect()
-
-        # HarvestersCamera
-        elif camera_backend == CameraBackends.HARVESTERS:
-            # Ensures that the cti_path is provided
-            if self._cti_path is None:
-                message = (
-                    f"Unable to add HarvestersCamera to the VideoSystem with id {self._id}. "
-                    f"Expected the VideoSystem's cti_path attribute to be a Path object pointing to the '.cti' file, "
-                    f"but got None instead. Make sure you provide a valid '.cti' file as harvesters_cit_file argument "
-                    f"when initializing the VideoSystem instance."
-                )
-                console.error(error=ValueError, message=message)
-                # Fallback to appease mypy, should not be reachable
-                raise ValueError(message)  # pragma: no cover
-
-            # Instantiates and returns the HarvestersCamera class object
-            camera = HarvestersCamera(
-                camera_id=self._id,
-                cti_path=self._cti_path,
-                camera_index=camera_index,
-                frame_height=frame_height,
-                frame_width=frame_width,
-                frame_rate=acquisition_frame_rate,
-            )
-
-            # Connects to the camera. This both verifies that the camera can be connected to and applies the camera
-            # settings.
-            camera.connect()
-
-            # This is only used to verify that the frame acquisition works as expected. Unlike OpenCV, Harvesters
-            # raises errors if the camera does not support any of the input settings.
-            camera.grab_frame()
-
-            # Disconnects from the camera to free the resources to be used by the remote producer process, once it is
-            # instantiated.
-            camera.disconnect()
-
-        # MockCamera
-        elif camera_backend == CameraBackends.MOCK:
-            # Ensures that mock_color is either True or False.
-            mock_color = False if not isinstance(color, bool) else color
-
-            # Unlike real cameras, MockCamera cannot retrieve fps and width / height from hardware memory.
-            # Therefore, if either of these variables is None, it is initialized to hardcoded defaults
-            if frame_height is None:
-                frame_height = 400
-            if frame_width is None:
-                frame_width = 600
-            if acquisition_frame_rate is None:
-                acquisition_frame_rate = 30
-
-            # Instantiates the MockCamera class object
-            camera = MockCamera(
-                camera_id=self._id,
-                camera_index=camera_index,
-                height=frame_height,
-                width=frame_width,
-                fps=acquisition_frame_rate,
-                color=mock_color,
-            )
-
-            # Since MockCamera is implemented in software only, there is no need to check for hardware-dependent
-            # events after camera initialization (such as whether the camera is connectable and can be configured to
-            # use a specific fps).
-
-        # If the input backend does not match any of the supported backends, raises an error
-        else:
-            message = (
-                f"Unable to instantiate the Camera due to encountering an unsupported "
-                f"camera_backend argument {camera_backend} of type {type(camera_backend).__name__}. "
-                f"camera_backend has to be one of the options available from the CameraBackends enumeration."
-            )
-            console.error(error=ValueError, message=message)
-            # Fallback to appease mypy, should not be reachable
-            raise ValueError(message)  # pragma: no cover
-
-        # If the output_frame_rate argument is not an integer or floating value, defaults to using the same framerate
-        # as the camera. This has to be checked after the camera has been verified and its fps has been confirmed.
-        if output_frames and (
-            not isinstance(output_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.frame_rate  # type: ignore
-        ):
-            message = (
-                f"Unable to instantiate the Camera due to encountering an unsupported "
-                f"output_frame_rate argument {output_frame_rate} of type {type(output_frame_rate).__name__}. "
-                f"Output framerate override has to be an integer or floating point number that does not exceed the "
-                f"camera acquisition framerate ({camera.frame_rate})."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Same as above, but for display frame_rate
-        if display_frames and (
-            not isinstance(display_frame_rate, (int, float)) or not 0 <= output_frame_rate <= camera.frame_rate  # type: ignore
-        ):
-            message = (
-                f"Unable to instantiate the Camera due to encountering an unsupported "
-                f"display_frame_rate argument {display_frame_rate} of type {type(display_frame_rate).__name__}. "
-                f"Display framerate override has to be an integer or floating point number that does not exceed the "
-                f"camera acquisition framerate ({camera.frame_rate})."
-            )
-            console.error(error=TypeError, message=message)
-
-        # Ensures that save_frames is either True or False.
-        save_frames = save_frames if isinstance(save_frames, bool) else False
-
-        # If the camera class was successfully instantiated, packages the class alongside additional parameters into a
-        # CameraSystem object and appends it to the camera list.
-        self._camera = _CameraSystem(
-            camera=camera,
-            save_frames=save_frames,
-            fps_override=fps_override,
-            output_frames=output_frames,
-            output_frame_rate=output_frame_rate,
-            display_frames=display_frames,
-            display_frame_rate=display_frame_rate,
-        )
-
-    def add_saver(
-        self,
-        hardware_encoding: bool = False,
-        video_format: VideoFormats = VideoFormats.MP4,
-        video_codec: VideoEncoders = VideoEncoders.H265,
-        preset: GPUEncoderPresets | CPUEncoderPresets = CPUEncoderPresets.SLOW,
-        input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
-        output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
-        quantization_parameter: int = 15,
-        gpu: int = 0,
-    ) -> None:
-        """Creates a VideoSaver class instance and adds it to the VideoSystem instance.
-
-        This method allows adding a VideoSaver to an initialized VideoSystem instance. Currently, this is the only
-        intended way of using VideoSaver class available through this library. VideoSavers are not required for the
-        VideoSystem to function and, therefore, this method does not need to be called unless you need to save
-        the camera frames acquired during the runtime of this VideoSystem as a video. This method can also be used to
-        initialize the VideoSaver that will be used to convert images to a video file via the encode_video_from_images()
-        method.
-
-        Notes:
-            Calling this method multiple times will replace the existing Saver (Image or Video) with the new one.
-
-            VideoSavers rely on third-party software FFMPEG to encode the video frames using GPUs or CPUs. Make sure
-            it is installed on the host system and available from Python shell. See https://www.ffmpeg.org/download.html
-            for more information.
-
-            This method is specifically designed to add VideoSaver instances. If you need to add an ImageSaver (to save
-            frames as standalone images), use the add_image_saver() method instead.
-
-            VideoSavers are the generally recommended saver type to use for most applications. It is also highly advised
-            to use hardware encoding if it is available on the host system (requires Nvidia GPU).
-
-        Args:
-            hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is
-                almost always recommended to use the GPU encoding for considerably faster encoding with almost no
-                quality loss. However, GPU encoding is only supported by modern Nvidia GPUs.
-            video_format: The container format to use for the output video file. Use VideoFormats enumeration to
-                specify the desired container format. Currently, only 'MP4', 'MKV', and 'AVI' are supported.
-            video_codec: The codec (encoder) to use for generating the video file. Use VideoCodecs enumeration to
-                specify the desired codec. Currently, only 'H264' and 'H265' are supported.
-            preset: The encoding preset to use for the video file. Use GPUEncoderPresets or CPUEncoderPresets
-                enumerations to specify the preset. Note, you have to select the correct preset enumeration based on
-                whether hardware encoding is enabled (GPU) or not (CPU)!
-            input_pixel_format: The pixel format used by input data. Use InputPixelFormats enumeration to specify the
-                pixel format of the frame data that will be passed to this saver. Currently, only 'MONOCHROME', 'BGR',
-                and 'BGRA' options are supported. The correct option to choose depends on the configuration of the
-                Camera class(es) that acquires frames for this saver.
-            output_pixel_format: The pixel format to be used by the output video file. Use OutputPixelFormats
-                enumeration to specify the desired pixel format. Currently, only 'YUV420' and 'YUV444' options are
-                supported.
-            quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. The
-                encoder uses 'constant quantization' to discard the same amount of information from each macro-block of
-                the encoded frame, instead of varying the discarded information amount with the complexity of
-                macro-blocks. This allows precisely controlling output video size and distortions introduced by the
-                encoding process, as the changes are uniform across the whole video. Lower values mean better quality
-                (0 is best, 51 is worst). Note, the default value assumes H265 encoder and is likely too low for H264
-                encoder. H264 encoder should default to ~25.
-            gpu: The index of the GPU to use for hardware encoding. Valid GPU indices can be obtained from the
-                'nvidia-smi' command and start with 0 for the first available GPU. This is only used when
-                hardware_encoding is True and is ignored otherwise.
-
-        Raises:
-            TypeError: If the input arguments are not of the correct type.
-            RuntimeError: If the instantiated saver is configured to use GPU video encoding, but the method does not
-                detect any available NVIDIA GPUs. If FFMPEG is not accessible from the Python shell.
-        """
-        if not isinstance(self._output_directory, Path):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a valid Path "
-                f"object to be provided to the VideoSystem's output_directory argument at initialization, but instead "
-                f"encountered None. Make sure the VideoSystem is initialized with a valid output_directory input if "
-                f"you intend to save camera frames."
-            )
-            console.error(error=TypeError, message=message)
-            # Fallback to appease mypy, should not be reachable
-            raise TypeError(message)  # pragma: no cover
-        if not isinstance(hardware_encoding, bool):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a boolean for "
-                f"hardware_encoding argument, but got {hardware_encoding} of type {type(hardware_encoding).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(video_format, VideoFormats):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a VideoFormats "
-                f"instance for video_format argument, but got {video_format} of type {type(video_format).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(video_codec, VideoEncoders):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a VideoCodecs "
-                f"instance for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # The encoding preset depends on whether the saver is configured to use hardware (GPU) video encoding.
-        if hardware_encoding:
-            if not isinstance(preset, GPUEncoderPresets):
-                message = (
-                    f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a "
-                    f"GPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
-                )
-                console.error(error=TypeError, message=message)
-        elif not isinstance(preset, CPUEncoderPresets):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a "
-                f"CPUEncoderPresets instance for preset argument, but got {preset} of type {type(preset).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        if not isinstance(input_pixel_format, InputPixelFormats):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an "
-                f"InputPixelFormats instance for input_pixel_format argument, but got {input_pixel_format} of type "
-                f"{type(input_pixel_format).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-        if not isinstance(output_pixel_format, OutputPixelFormats):
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an "
-                f"OutputPixelFormats instance for output_pixel_format argument, but got {output_pixel_format} of type "
-                f"{type(output_pixel_format).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # While -1 is not explicitly allowed, it is a valid preset to use for 'encoder-default' value. We do not
-        # mention it in docstrings, but those who need to know will know.
-        if not isinstance(quantization_parameter, int) or not -1 < quantization_parameter <= 51:
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected an integer "
-                f"between 0 and 51 for quantization_parameter argument, but got {quantization_parameter} of type "
-                f"{type(quantization_parameter).__name__}."
-            )
-            console.error(error=TypeError, message=message)
-
-        # VideoSavers universally rely on FFMPEG ton be available on the system Path, as FFMPEG is used to encode the
-        # videos. Therefore, does a similar check to the one above to make sure that ffmpeg is callable.
-        try:
-            # Runs ffmpeg version command, uses check to trigger CalledProcessError exception if runtime fails
-            subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError:  # pragma: no cover
-            message = (
-                f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. VideoSavers require a "
-                f"third-party software, FFMPEG, to be available on the system's Path. Please make sure FFMPEG is "
-                f"installed and callable from Python shell. See https://www.ffmpeg.org/download.html for more "
-                f"information."
-            )
-            console.error(error=RuntimeError, message=message)
-
-        # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
-        # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU:
-        if hardware_encoding:
-            try:
-                # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if runtime fails
-                subprocess.run(
-                    args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except Exception:  # pragma: no cover
-                message = (
-                    f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. The object is "
-                    f"configured to use the GPU video encoding backend, which currently only supports NVIDIA GPUs. "
-                    f"Calling 'nvidia-smi' to verify the presence of NVIDIA GPUs did not run successfully, indicating "
-                    f"that there are no available NVIDIA GPUs on the host system. Use a CPU encoder or make sure "
-                    f"nvidia-smi is callable from Python shell."
-                )
-                console.error(error=RuntimeError, message=message)
-
-        # Configures, initializes, and returns a VideoSaver instance
-        self._saver = VideoSaver(
-            output_directory=self._output_directory,
-            hardware_encoding=hardware_encoding,
-            video_format=video_format,
-            video_encoder=video_codec,
-            encoder_speed_preset=preset,
-            input_pixel_format=input_pixel_format,
-            output_pixel_format=output_pixel_format,
-            quantization_parameter=quantization_parameter,
-            gpu=gpu,
-        )
 
     def start(self) -> None:
         """Starts the consumer and producer processes of the VideoSystem instance and begins acquiring camera frames.
@@ -771,7 +476,7 @@ class VideoSystem:
         # Prevents starting the system if there is no Camera
         if self._camera is None:
             message = (
-                f"Unable to start the VideoSystem with id {self._id}. The VideoSystem must be equipped with a Camera "
+                f"Unable to start the VideoSystem with id {self._system_id}. The VideoSystem must be equipped with a Camera "
                 f"before it can be started. Use add_camera() method to add a Camera class to the VideoSystem. If you "
                 f"need to convert a directory of images to video, use the encode_video_from_images() method instead."
             )
@@ -780,7 +485,7 @@ class VideoSystem:
         # If the camera is configured to save frames, ensures it is matched with a Saver class instance.
         elif self._camera.save_frames and self._saver is None:
             message = (
-                f"Unable to start the VideoSystem with id {self._id}. The managed Camera is configured to save frames "
+                f"Unable to start the VideoSystem with id {self._system_id}. The managed Camera is configured to save frames "
                 f"and has to be matched to a Saver instance, but no Saver was added. Use add_image_saver() or "
                 f"add_video_saver() method to add a Saver instance to save camera frames."
             )
@@ -792,7 +497,7 @@ class VideoSystem:
         # Index 2 (element 3) is used to flexibly enable or disable outputting camera frames to other processes.
         # Index 3 (element 4) is used to track VideoSystem initialization status.
         self._terminator_array = SharedMemoryArray.create_array(
-            name=f"{self._id}_terminator_array",  # Uses class id with an additional specifier
+            name=f"{self._system_id}_terminator_array",  # Uses class id with an additional specifier
             prototype=np.zeros(shape=4, dtype=np.uint8),
             exist_ok=True,  # Automatically recreates the buffer if it already exists
         )  # Instantiation automatically connects the main process to the array.
@@ -805,7 +510,7 @@ class VideoSystem:
             self._consumer_process = Process(
                 target=self._frame_saving_loop,
                 args=(
-                    self._id,
+                    self._system_id,
                     self._saver,
                     self._camera,
                     self._image_queue,
@@ -822,7 +527,7 @@ class VideoSystem:
                 # If the process takes too long to initialize or dies, raises an error.
                 if initialization_timer.elapsed > 10 or not self._consumer_process.is_alive():
                     message = (
-                        f"Unable to start the VideoSystem with id {self._id}. The consumer process has "
+                        f"Unable to start the VideoSystem with id {self._system_id}. The consumer process has "
                         f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This "
                         f"likely indicates a problem with the Saver (Video or Image) class managed by the process."
                     )
@@ -839,7 +544,7 @@ class VideoSystem:
         self._producer_process = Process(
             target=self._frame_production_loop,
             args=(
-                self._id,
+                self._system_id,
                 self._camera,
                 self._image_queue,
                 self._output_queue,
@@ -856,7 +561,7 @@ class VideoSystem:
             # If the process takes too long to initialize or dies, raises an error.
             if initialization_timer.elapsed > 10 or not self._producer_process.is_alive():
                 message = (
-                    f"Unable to start the VideoSystem with id {self._id}. The producer process has "
+                    f"Unable to start the VideoSystem with id {self._system_id}. The producer process has "
                     f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
                     f"indicates a problem with initializing the Camera class controlled by the process or the frame "
                     f"display thread."
@@ -938,125 +643,18 @@ class VideoSystem:
     @property
     def system_id(self) -> np.uint8:
         """Returns the unique identifier code assigned to the VideoSystem class instance."""
-        return self._id
+        return self._system_id
 
     @property
-    def output_queue(self) -> MPQueue:  # type: ignore
+    def output_queue(self) -> MPQueue:
         """Returns the multiprocessing Queue object used by the system's producer process to send frames to other
         concurrently active processes.
         """
         return self._output_queue
 
     @staticmethod
-    def get_opencv_ids() -> tuple[str, ...]:
-        """Discovers and reports IDs and descriptive information about cameras accessible through the OpenCV library.
-
-        This method can be used to discover camera IDs accessible through the OpenCV backend. Next, each of the IDs can
-        be used via the add_camera() method to add the specific camera to a VideoSystem instance.
-
-        Notes:
-            Currently, there is no way to get serial numbers or usb port names from OpenCV. Therefore, while this method
-            tries to provide some ID information, it likely will not be enough to identify the cameras. Instead, it is
-            advised to test each of the IDs with the 'interactive-run' CLI command to manually map IDs to cameras based
-            on the produced visual stream.
-
-            This method works by sequentially evaluating camera IDs starting from 0 and up to ID 100. The method
-            connects to each camera and takes a test image to ensure the camera is accessible, and it should ONLY be
-            called when no OpenCVCamera or any other OpenCV-based connection is active. The evaluation sequence will
-            stop early if it encounters more than five non-functional IDs in a row.
-
-        Returns:
-             A tuple of strings. Each string contains camera ID, frame width, frame height, and camera fps value.
-        """
-        # Disables OpenCV error logging temporarily
-        prev_log_level = cv2.getLogLevel()
-        cv2.setLogLevel(0)
-
-        try:
-            non_working_count = 0
-            working_ids = []
-
-            # This loop will keep iterating over IDs until it discovers 5 non-working IDs. The loop is designed to
-            # evaluate 100 IDs at maximum to prevent infinite execution.
-            for evaluated_id in range(100):
-                # Evaluates each ID by instantiating a video-capture object and reading one image and dimension data
-                # from the connected camera (if any was connected).
-                camera = cv2.VideoCapture(evaluated_id)
-
-                # If the evaluated camera can be connected and returns images, it's ID is appended to the ID list
-                if camera.isOpened() and camera.read()[0]:
-                    width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    fps = camera.get(cv2.CAP_PROP_FPS)
-                    descriptive_string = (
-                        f"OpenCV Camera ID: {evaluated_id}, Width: {width}, Height: {height}, FPS: {fps}."
-                    )
-                    working_ids.append(descriptive_string)
-                    non_working_count = 0  # Resets non-working count whenever a working camera is found.
-                else:
-                    non_working_count += 1
-
-                # Breaks the loop early if more than 5 non-working IDs are found consecutively
-                if non_working_count >= 5:
-                    break
-
-                camera.release()  # Releases the camera object to recreate it above for the next cycle
-
-            return tuple(working_ids)  # Converts to tuple before returning to caller.
-
-        finally:
-            # Restores previous log level
-            cv2.setLogLevel(prev_log_level)
-
-    @staticmethod
-    def get_harvesters_ids(cti_path: Path) -> tuple[str, ...]:
-        """Discovers and reports IDs and descriptive information about cameras accessible through the Harvesters
-        library.
-
-        Since Harvesters already supports listing valid IDs available through a given .cti interface, this method
-        uses built-in Harvesters methods to discover and return camera ID and descriptive information.
-        The discovered IDs can later be used via the add_camera() method to add the specific camera to a VideoSystem
-        instance.
-
-        Notes:
-            This method bundles discovered ID (list index) information with the serial number and the camera model to
-            aid identifying physical cameras for each ID.
-
-        Args:
-            cti_path: The path to the '.cti' file that provides the GenTL Producer interface. It is recommended to use
-                the file supplied by your camera vendor if possible, but a general Producer, such as mvImpactAcquire,
-                would work as well. See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more
-                details.
-
-        Returns:
-            A tuple of strings. Each string contains camera ID, serial number, and model name.
-        """
-        # Instantiates the class and adds the input .cti file.
-        harvester = Harvester()
-        harvester.add_file(file_path=str(cti_path))
-
-        # Gets the list of accessible cameras
-        harvester.update()
-
-        # Loops over all discovered cameras and parses basic ID information from each camera to generate a descriptive
-        # string.
-        working_ids = []
-        for num, camera_info in enumerate(harvester.device_info_list):
-            descriptive_string = (
-                f"Harvesters Camera ID: {num}, Serial Number: {camera_info.serial_number}, "
-                f"Model Name: {camera_info.model}."
-            )
-            working_ids.append(descriptive_string)
-
-        # Resets the harvester instance after retrieving discoverable IDs
-        harvester.remove_file(file_path=str(cti_path))
-        harvester.reset()
-
-        return tuple(working_ids)  # Converts to tuple before returning to caller.
-
-    @staticmethod
     def _frame_display_loop(
-        display_queue: Queue,  # type: ignore
+        display_queue: Queue,
         camera_id: int,
     ) -> None:  # pragma: no cover
         """Continuously fetches frame images from display_queue and displays them via the OpenCV imshow () method.
@@ -1112,8 +710,8 @@ class VideoSystem:
     def _frame_production_loop(
         video_system_id: np.uint8,
         camera_system: _CameraSystem,
-        image_queue: MPQueue,  # type: ignore
-        logger_queue: MPQueue,  # type: ignore
+        image_queue: MPQueue,
+        logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
         """Continuously grabs frames from the input camera and queues them up to be saved by the consumer process.
@@ -1156,7 +754,7 @@ class VideoSystem:
 
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all later time
         # readouts.
-        onset: NDArray[np.uint8] = get_timestamp(as_bytes=True)  # type: ignore
+        onset: NDArray[np.uint8] = get_timestamp(as_bytes=True)
         stamp_timer.reset()  # Immediately resets the stamp timer to make it as close as possible to the onset time
 
         # Sends the onset data to the logger queue. The time_stamp of 0 is universally interpreted as the timer
@@ -1230,12 +828,12 @@ class VideoSystem:
                 # the specified rate, which is helpful for some cameras that do not have a built-in acquisition
                 # control functionality. If the acquisition timeout has not passed and is enabled, skips the rest
                 # of the processing runtime
-                if camera_system.fps_override != 0 and frame_timer.elapsed >= frame_time:  # type: ignore
+                if camera_system.fps_override != 0 and frame_timer.elapsed >= frame_time:
                     continue
                 if camera_system.fps_override != 0:
                     # Resets the frame acquisition timer before processing the frame so that the wait time for the next
                     # frame is 'absorbed' into processing the frame.
-                    frame_timer.reset()  # type: ignore
+                    frame_timer.reset()
 
                 # Bundles frame data and acquisition timestamp relative to the onset and passes them
                 # to the multiprocessing Queue that delivers the data to the consumer process that saves it to disk.
@@ -1270,8 +868,8 @@ class VideoSystem:
         video_system_id: np.uint8,
         saver: VideoSaver,
         camera_system: _CameraSystem,
-        image_queue: MPQueue,  # type: ignore
-        logger_queue: MPQueue,  # type: ignore
+        image_queue: MPQueue,
+        logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
         """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
@@ -1306,11 +904,11 @@ class VideoSystem:
         terminator_array.connect()
 
         # For video saver, uses camera data to initialize the video container
-        saver.create_encoder(
-            frame_width=camera_system.camera.frame_width,  # type: ignore
-            frame_height=camera_system.camera.frame_height,  # type: ignore
+        saver.start(
+            frame_width=camera_system.camera.frame_width,
+            frame_height=camera_system.camera.frame_height,
             video_id=f"{video_system_id:03d}",  # Uses the index of the video system with padding
-            video_frames_per_second=camera_system.camera.frame_rate,  # type: ignore
+            video_frames_per_second=camera_system.camera.frame_rate,
         )
 
         # Sets the 3d index value of the terminator_array to 2 to indicate that all SaverSystems have been started.
@@ -1356,7 +954,7 @@ class VideoSystem:
             terminator_array.disconnect()
 
             # Carries out the necessary shut-down procedures:
-            saver.terminate_encoder()
+            saver.stop()
 
     def _watchdog(self) -> None:  # pragma: no cover
         """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
@@ -1368,7 +966,7 @@ class VideoSystem:
         timer = PrecisionTimer(precision="ms")
 
         # The watchdog function will run until the global shutdown command is issued.
-        while not self._terminator_array.read_data(index=0):  # type: ignore
+        while not self._terminator_array.read_data(index=0):
             # Checks process state every 20 ms. Releases the GIL while waiting.
             timer.delay_noblock(delay=20, allow_sleep=True)
 
@@ -1391,7 +989,7 @@ class VideoSystem:
             # error
             if error:
                 # Reclaims all committed resources before terminating with an error.
-                self._terminator_array.write_data(index=0, data=np.uint8(1))  # type: ignore
+                self._terminator_array.write_data(index=0, data=np.uint8(1))
                 if self._consumer_process is not None:
                     self._consumer_process.join()
                 if self._producer_process is not None:
@@ -1403,7 +1001,7 @@ class VideoSystem:
 
                 if producer:
                     message = (
-                        f"The producer process for the VideoSystem with id {self._id} has been prematurely "
+                        f"The producer process for the VideoSystem with id {self._system_id} has been prematurely "
                         f"shut down. This likely indicates that the process has encountered a runtime error that "
                         f"terminated the process."
                     )
@@ -1411,7 +1009,7 @@ class VideoSystem:
 
                 else:
                     message = (
-                        f"The consumer process for the VideoSystem with id {self._id} has been prematurely "
+                        f"The consumer process for the VideoSystem with id {self._system_id} has been prematurely "
                         f"shut down. This likely indicates that the process has encountered a runtime error that "
                         f"terminated the process."
                     )
@@ -1448,16 +1046,6 @@ class VideoSystem:
             # noinspection PyProtectedMember
             return self._saver._output_directory
         return None
-
-    @property
-    def log_path(self) -> Path:
-        """Returns the path to the compressed .npz log archive that would be generated for the VideoSystem by the
-        DataLogger instance given to the class at initialization.
-
-        Primarily, this path should be used as an argument to the instance-independent
-        'extract_logged_video_system_data' data extraction function.
-        """
-        return self._log_directory.joinpath(f"{self._id}_log.npz")
 
 
 def extract_logged_video_system_data(log_path: Path) -> tuple[np.uint64, ...]:

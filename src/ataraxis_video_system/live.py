@@ -26,7 +26,7 @@ from .saver import (
     GPUEncoderPresets,
     InputPixelFormats,
 )
-from .camera import CameraBackends
+from .camera import CameraInterfaces
 from .video_system import VideoSystem
 
 
@@ -175,15 +175,15 @@ def live_run(
         system_id=np.uint8(111),
         data_logger=logger,
         output_directory=Path(output_directory),
-        harvesters_cti_path=Path(cti_path) if cti_path is not None else None,
+        cti_path=Path(cti_path) if cti_path is not None else None,
     )
 
     # Adds the requested camera to the VideoSystem
     if camera_backend == "mock":
-        video_system.add_camera(
+        video_system._add_camera(
             save_frames=True,
             display_frames=display_frames,
-            camera_backend=CameraBackends.MOCK,
+            camera_backend=CameraInterfaces.MOCK,
             camera_index=camera_index,
             frame_width=width,
             frame_height=height,
@@ -191,20 +191,20 @@ def live_run(
             color=not monochrome,
         )
     elif camera_backend == "harvesters":  # pragma: no cover
-        video_system.add_camera(
+        video_system._add_camera(
             save_frames=True,
             display_frames=display_frames,
-            camera_backend=CameraBackends.HARVESTERS,
+            camera_backend=CameraInterfaces.HARVESTERS,
             camera_index=camera_index,
             frame_width=width,
             frame_height=height,
             acquisition_frame_rate=fps,
         )
     else:  # pragma: no cover
-        video_system.add_camera(
+        video_system._add_camera(
             save_frames=True,
             display_frames=display_frames,
-            camera_backend=CameraBackends.OPENCV,
+            camera_backend=CameraInterfaces.OPENCV,
             camera_index=camera_index,
             frame_width=width,
             frame_height=height,
