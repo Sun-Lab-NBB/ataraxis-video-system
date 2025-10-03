@@ -60,6 +60,7 @@ class OpenCVCamera:
         interface instances.
 
     Args:
+        system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         color: Specifies whether the camera acquires colored or monochrome images. This determines how to store the
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
             a single-channel format.
@@ -76,6 +77,7 @@ class OpenCVCamera:
             argument is not explicitly provided, the instance uses the default frame width of the connected camera.
 
     Attributes:
+        _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
         _color: Specifies whether the camera acquires colored or monochrome images.
         _camera_index: Stores the index of the camera hardware in the list of all OpenCV-discoverable cameras connected
             to the host-machine.
@@ -88,6 +90,7 @@ class OpenCVCamera:
 
     def __init__(
         self,
+        system_id: int,
         camera_index: int = 0,
         frame_rate: int | None = None,
         frame_width: int | None = None,
@@ -96,6 +99,7 @@ class OpenCVCamera:
         color: bool = True,
     ) -> None:
         # Saves class parameters to class attributes
+        self._system_id: int = system_id
         self._color: bool = color
         self._camera_index: int = camera_index
         self._frame_rate: int = 0 if frame_rate is None else frame_rate
@@ -111,9 +115,10 @@ class OpenCVCamera:
     def __repr__(self) -> str:
         """Returns the string representation of the OpenCVCamera instance."""
         return (
-            f"OpenCVCamera(camera_index={self._camera_index}, frame_rate={self.frame_rate} frames / second, "
-            f"frame_width={self.frame_width} pixels, frame_height={self.frame_height} pixels, "
-            f"connected={self._camera is not None}, acquiring={self._acquiring})"
+            f"OpenCVCamera(system_id={self._system_id}, camera_index={self._camera_index}, "
+            f"frame_rate={self.frame_rate} frames / second, frame_width={self.frame_width} pixels, "
+            f"frame_height={self.frame_height} pixels, connected={self._camera is not None}, "
+            f"acquiring={self._acquiring})"
         )
 
     def connect(self) -> None:
@@ -202,8 +207,9 @@ class OpenCVCamera:
         # Prevents calling this method before connecting to the camera's hardware
         if self._camera is None:
             message = (
-                "The OpenCVCamera instance is not connected to the camera hardware, and cannot acquire images. "
-                "Call the connect() method prior to calling the grab_frame() method."
+                f"The OpenCVCamera instance for the VideoSystem with id {self._system_id} is not connected to the "
+                f"camera hardware, and cannot acquire images. Call the connect() method prior to calling the "
+                f"grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
             # Fallback to appease mypy, should not be reachable
@@ -216,8 +222,9 @@ class OpenCVCamera:
         success, frame = self._camera.read()
         if not success:
             message = (
-                "The OpenCVCamera instance has failed to grab a frame image from the camera hardware, "
-                "which is not expected. This indicates initialization or connectivity issues."
+                f"The OpenCVCamera instance for the VideoSystem with id {self._system_id} has failed to grab a frame "
+                f"image from the camera hardware, which is not expected. This indicates initialization or connectivity "
+                f"issues."
             )
             console.error(message=message, error=BrokenPipeError)
 
@@ -236,6 +243,7 @@ class HarvestersCamera:
         interface instances.
 
     Args:
+        system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
             file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, us also acceptable.
             See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
@@ -252,6 +260,7 @@ class HarvestersCamera:
             argument is not explicitly provided, the instance uses the default frame width of the connected camera.
 
     Attributes:
+        _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
         _camera_index: Stores the index of the camera hardware in the list of all OpenCV-discoverable cameras connected
             to the host-machine.
         _frame_rate: Stores the camera's frame acquisition rate.
@@ -264,6 +273,7 @@ class HarvestersCamera:
 
     def __init__(
         self,
+        system_id: int,
         cti_path: Path,
         camera_index: int = 0,
         frame_rate: int | None = None,
@@ -274,6 +284,7 @@ class HarvestersCamera:
         # the necessary input filtering.
 
         # Saves class parameters to class attributes
+        self._system_id: int = system_id
         self._camera_index: int = camera_index
         self._frame_rate: int = 0 if frame_rate is None else frame_rate
         self._frame_width: int = 0 if frame_width is None else frame_width
@@ -296,9 +307,10 @@ class HarvestersCamera:
     def __repr__(self) -> str:
         """Returns the string representation of the HarvestersCamera instance."""
         return (
-            f"HarvestersCamera(camera_index={self._camera_index}, frame_rate={self.frame_rate} frames / second, "
-            f"frame_width={self.frame_width} pixels, frame_height={self.frame_height} pixels, "
-            f"connected={self._camera is not None}, acquiring={self.is_acquiring})"
+            f"HarvestersCamera(system_id={self._system_id}, camera_index={self._camera_index}, "
+            f"frame_rate={self.frame_rate} frames / second, frame_width={self.frame_width} pixels, "
+            f"frame_height={self.frame_height} pixels, connected={self._camera is not None}, "
+            f"acquiring={self.is_acquiring})"
         )
 
     def connect(self) -> None:
@@ -392,8 +404,9 @@ class HarvestersCamera:
         """
         if not self._camera:
             message = (
-                "The HarvestersCamera instance is not connected to the camera hardware and cannot acquire images. "
-                "Call the connect() method prior to calling the grab_frame() method."
+                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} is not connected to the "
+                f"camera hardware and cannot acquire images. Call the connect() method prior to calling the "
+                f"grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
             # Fallback to appease mypy, should not be reachable
@@ -408,8 +421,9 @@ class HarvestersCamera:
         with self._camera.fetch() as buffer:
             if buffer is None:  # pragma: no cover
                 message = (
-                    "The HarvestersCamera instance has failed to grab a frame image from the camera hardware, "
-                    "which is not expected. This indicates initialization or connectivity issues."
+                    f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has failed to grab "
+                    f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
+                    f"connectivity issues."
                 )
                 console.error(message=message, error=BrokenPipeError)
 
@@ -448,9 +462,9 @@ class HarvestersCamera:
 
             # If the image has an unsupported data format, raises an error
             message = (
-                f"The HarvestersCamera instance has acquired an image with an unsupported data (color) format "
-                f"{data_format}. Currently, only the following unpacked families of color formats are supported: "
-                f"Monochrome, RGB, RGBA, BGR, and BGRA."
+                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has acquired an image "
+                f"with an unsupported data (color) format {data_format}. Currently, only the following unpacked "
+                f"families of color formats are supported: Monochrome, RGB, RGBA, BGR, and BGRA."
             )  # pragma: no cover
             console.error(message=message, error=ValueError)  # pragma: no cover
             # This should never be reached, it is here to appease mypy
@@ -469,6 +483,7 @@ class MockCamera:
         interface instances.
 
     Args:
+        system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         frame_rate: The simulated frame acquisition rate of the camera, in frames per second.
         frame_width: The simulated camera frame width, in pixels.
         frame_height: The simulated camera frame height, in pixels.
@@ -476,6 +491,7 @@ class MockCamera:
             False, the frames are generated using the grayscale (monochrome) color mode.
 
     Attributes:
+        _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
         _color: Determines whether to simulate monochrome or RGB frame images.
         _camera: Tracks whether the camera is 'connected'.
         _frame_rate: Stores the camera's frame acquisition rate.
@@ -493,6 +509,7 @@ class MockCamera:
 
     def __init__(
         self,
+        system_id: int,
         frame_rate: float | None = None,
         frame_width: int | None = None,
         frame_height: int | None = None,
@@ -500,6 +517,7 @@ class MockCamera:
         color: bool = True,
     ) -> None:
         # Saves class parameters to class attributes
+        self._system_id: int = system_id
         self._color: bool = color
         self._frame_rate: int = 30 if frame_rate is None else frame_rate
         self._frame_width: int = 600 if frame_width is None else frame_width
@@ -595,8 +613,9 @@ class MockCamera:
         # Prevents calling this method before connecting to the camera's hardware
         if not self._camera:
             message = (
-                "The MockCamera instance is not currently simulating connection to the camera hardware, and cannot "
-                "simulate image acquisition. Call the connect() method prior to calling the grab_frame() method."
+                f"The MockCamera instance for the VideoSystem with id {self._system_id} is not currently simulating "
+                f"connection to the camera hardware, and cannot simulate image acquisition. Call the connect() method "
+                f"prior to calling the grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
             # Fallback to appease mypy, should not be reachable

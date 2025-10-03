@@ -7,20 +7,20 @@ Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 """
 
 from .saver import (
-    VideoCodecs,
+    VideoEncoders,
     InputPixelFormats,
-    EncoderSpeedPreset,
     OutputPixelFormats,
+    EncoderSpeedPresets,
 )
 from .camera import CameraBackends
 from .video_system import VideoSystem, extract_logged_video_system_data
 
 __all__ = [
     "CameraBackends",
-    "EncoderSpeedPreset",
+    "EncoderSpeedPresets",
     "InputPixelFormats",
     "OutputPixelFormats",
-    "VideoCodecs",
+    "VideoEncoders",
     "VideoSystem",
     "extract_logged_video_system_data",
 ]

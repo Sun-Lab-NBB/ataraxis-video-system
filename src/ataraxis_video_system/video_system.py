@@ -38,9 +38,8 @@ from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
 from ataraxis_time.time_helpers import convert_time, get_timestamp
 
 from .saver import (
-    EncoderSpeedPreset,
     VideoSaver,
-    VideoCodecs,
+    VideoEncoders,
     InputPixelFormats,
     OutputPixelFormats,
 )
@@ -566,7 +565,7 @@ class VideoSystem:
         self,
         hardware_encoding: bool = False,
         video_format: VideoFormats = VideoFormats.MP4,
-        video_codec: VideoCodecs = VideoCodecs.H265,
+        video_codec: VideoEncoders = VideoEncoders.H265,
         preset: GPUEncoderPresets | CPUEncoderPresets = CPUEncoderPresets.SLOW,
         input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
         output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
@@ -651,7 +650,7 @@ class VideoSystem:
                 f"instance for video_format argument, but got {video_format} of type {type(video_format).__name__}."
             )
             console.error(error=TypeError, message=message)
-        if not isinstance(video_codec, VideoCodecs):
+        if not isinstance(video_codec, VideoEncoders):
             message = (
                 f"Unable to add the VideoSaver object to the VideoSystem with id {self._id}. Expected a VideoCodecs "
                 f"instance for video_codec argument, but got {video_codec} of type {type(video_codec).__name__}."
@@ -738,8 +737,8 @@ class VideoSystem:
             output_directory=self._output_directory,
             hardware_encoding=hardware_encoding,
             video_format=video_format,
-            video_codec=video_codec,
-            preset=preset,
+            video_encoder=video_codec,
+            encoder_speed_preset=preset,
             input_pixel_format=input_pixel_format,
             output_pixel_format=output_pixel_format,
             quantization_parameter=quantization_parameter,
@@ -1307,7 +1306,7 @@ class VideoSystem:
         terminator_array.connect()
 
         # For video saver, uses camera data to initialize the video container
-        saver.create_live_video_encoder(
+        saver.create_encoder(
             frame_width=camera_system.camera.frame_width,  # type: ignore
             frame_height=camera_system.camera.frame_height,  # type: ignore
             video_id=f"{video_system_id:03d}",  # Uses the index of the video system with padding
@@ -1357,7 +1356,7 @@ class VideoSystem:
             terminator_array.disconnect()
 
             # Carries out the necessary shut-down procedures:
-            saver.terminate_live_encoder()
+            saver.terminate_encoder()
 
     def _watchdog(self) -> None:  # pragma: no cover
         """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive

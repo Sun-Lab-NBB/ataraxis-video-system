@@ -9,43 +9,30 @@ The classes from this module are not meant to be instantiated or used directly. 
 the 'create_saver()' method from the VideoSystem class.
 """
 
-import os
-import re
 from enum import IntEnum, StrEnum
 from typing import Any
 from pathlib import Path
-import threading
 import subprocess
 from subprocess import Popen, TimeoutExpired
 
-os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"  # Improves OpenCV's performance on Windows.
-import cv2
 from numpy.typing import NDArray
-from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
+from ataraxis_base_utilities import console, ensure_directory_exists
 
 
-class VideoCodecs(StrEnum):
-    """Stores the supported video codecs used when saving camera frames as videos via VideoSaver instances."""
+class VideoEncoders(StrEnum):
+    """Stores the supported video encoders used when saving camera frames as videos via VideoSaver instances."""
 
     H264 = "H264"
     """
-    For CPU savers this uses the libx264 codec and for GPU savers this uses the h264_nvenc codec. H264 is a widely used 
-    video codec format that is optimized for encoding lower resolution videos at a fast speed. This is an older 
-    standard that may have performance issues when working with high-resolution and high-quality data. Generally, this 
-    codec is best for the cases where the overall data quality does not need to be very high, the encoding speed is a 
-    critical factor, or the encoding hardware is not very powerful.
+    For CPU savers this is the libx264 encoder and for GPU savers this is the h264_nvenc encoder.
     """
     H265 = "H265"
     """
-    For CPU savers this uses the libx265 and for GPU savers this uses the hevc_nvenc codec. H265 is a more modern video 
-    codec format that is slightly less supported compared to H264. This codec achieves improved compression efficiency 
-    without compromising quality and is better equipped to handle high-volume and high-resolution video recordings. 
-    This comes at the expense of higher computational costs and slower encoding speed compared to H264 and, therefore, 
-    this codec may not work on older / less powerful systems.
+    For CPU savers this is the libx265 encoder and for GPU savers this is the hevc_nvenc encoder.
     """
 
 
-class EncoderSpeedPreset(IntEnum):
+class EncoderSpeedPresets(IntEnum):
     """Stores the supported video encoding speed presets used when saving camera frames as videos via VideoSaver
     instances.
 
@@ -146,162 +133,107 @@ _cpu_encoder_map: dict[int, str] = {
 
 
 class VideoSaver:
-    """Saves input video frames as a video file.
+    """Interfaces with an FFMPEG process to continuously save the input camera frames as an MP4 video file.
 
-    This Saver class is designed to use a memory-efficient approach of saving acquired video frames as
-    a video file. To do so, it uses FFMPEG library and either Nvidia hardware encoding or CPU software encoding.
-    Generally, this is the most storage-space-efficient approach available through this library. The only downside of
-    this approach is that if the process is interrupted unexpectedly, all acquired data may be lost.
+    This class uses the FFMPEG library and either Nvidia GPU or CPU to continuously encode and append the input stream
+    of camera frames to an MP4 video file stored in non-volatile memory (on disk).
 
     Notes:
-        Since hardware acceleration relies on Nvidia GPU hardware, it will only work on systems with an Nvidia GPU that
-        supports hardware encoding. Most modern Nvidia GPUs come with one or more dedicated software encoder, which
-        frees up CPU and 'non-encoding' GPU hardware to carry out other computations. This makes it optimal in the
-        context of scientific experiments, where CPU and GPU may be involved in running the experiment, in addition to
-        data saving.
-
-        This class supports both GPU and CPU encoding. If you do not have a compatible Nvidia GPU, be sure to set the
-        'hardware_encoding' parameter to False.
-
-        The class is statically configured to operate in the constant_quantization mode. That is, every frame will be
-        encoded using the same quantization, discarding the same amount of information for each frame. The lower the
-        quantization parameter, the less information is discarded and the larger the file size. It is very likely that
-        the default parameters of this class will need to be adjusted for your specific use-case.
+        Every processed frame is encoded using the same quantization, discarding the same amount of information for
+        each frame. The lower the quantization parameter, the less information is discarded and the larger the file
+        size.
 
     Args:
-        output_directory: The path to the output directory where the video file will be stored. To optimize data flow
-            during runtime, the class pre-creates the saving directory ahead of time and only expects integer ID(s) to
-            be passed as argument to video-writing commands. The videos are then saved as 'id.extension' files to the
-            output directory.
-        hardware_encoding: Determines whether to use GPU (hardware) encoding or CPU (software) encoding. It is almost
-            always recommended to use the GPU encoding for considerably faster encoding with almost no quality loss.
-            GPU encoding is only supported by modern Nvidia GPUs, however.
-        video_codec: The codec (encoder) to use for generating the video file. Use VideoCodecs enumeration to specify
-            the desired codec. Currently, only 'H264' and 'H265' are supported.
-        preset: The encoding preset to use for generating the video file. Use GPUEncoderPresets or CPUEncoderPresets
-            enumerations to specify the preset. Note, you have to select the correct preset enumeration based on whether
-            hardware encoding is enabled!
-        input_pixel_format: The pixel format used by input data. This only applies when encoding simultaneously
-            acquired frames. When encoding pre-acquire images, FFMPEG will resolve color formats automatically.
-            Use InputPixelFormats enumeration to specify the desired pixel format. Currently, only 'MONOCHROME' and
-            'BGR' and 'BGRA' options are supported. The option to choose depends on the configuration of the Camera
-            class that was used for frame acquisition.
-        output_pixel_format: The pixel format to be used by the output video. Use OutputPixelFormats enumeration to
-            specify the desired pixel format. Currently, only 'YUV420' and 'YUV444' options are supported.
-        quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder.
-            The encoder uses 'constant quantization' to discard the same amount of information from each macro-block of
-            the frame, instead of varying the discarded information amount with the complexity of macro-blocks. This
-            allows precisely controlling output video size and distortions introduced by the encoding process, as the
-            changes are uniform across the whole video. Lower values mean better quality (0 is best, 51 is worst).
-            Note, the default assumes H265 encoder and is likely too low for H264 encoder. H264 encoder should default
-            to ~25.
-        gpu: The index of the GPU to use for encoding. Valid GPU indices can be obtained from the 'nvidia-smi' command.
-            This is only used when hardware_encoding is True.
+        output_directory: The path to the output directory where to store the generated video file.
+        gpu: The index of the GPU to use for encoding. Setting this argument to a value of -1 (default) configures the
+            instance to instead use the CPU for encoding. Valid GPU indices can be obtained from the 'nvidia-smi'
+            terminal command.
+        video_encoder: The encoder to use for generating the video file. Must be one of the valid VideoEncoders
+            enumeration members.
+        encoder_speed_preset: The encoding speed preset to use for generating the video file. Must be one of the valid
+            EncoderSpeedPresets enumeration members.
+        input_pixel_format: The pixel format used by input frame data. This argument depends on the configuration of
+            the camera used to acquire the frames. Must be one of the valid InputPixelFormats enumeration members.
+        output_pixel_format: The pixel format to be used by the output video file. Must be one of the valid
+            OutputPixelFormats enumeration members.
+        quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. This
+            determines how much information to discard from each encoded frame. Lower values mean better video quality:
+            0 is best, 51 is worst. Note, the default value is calibrated for the H265 encoder and is likely too low for
+            the H264 encoder.
 
     Attributes:
         _output_directory: Stores the path to the output directory.
-        _input_pixel_format: Stores the pixel format used by the input frames when 'live' saving is used. This is
-            necessary to properly 'colorize' binarized image data.
-        _ffmpeg_command: The 'base' ffmpeg command. Since most encoding parameters are known during class instantiation,
-            the class generates the main command body with all parameters set to the desired values at instantiation.
-            Subsequently, when video-creation methods are called, they pre-pend the necessary input stream information
-            and append the output file information before running the command.
-        _repr_body: Stores the 'base' of the class representation string. This is used to save static class parameters
-            as a string that is then used by the _repr_() method to construct an accurate representation of the class
-            instance.
-        _supported_image_formats: Statically stores the supported image file-extensions. This is used when creating
-            videos from pre-acquired images to automatically extract source images from the input directory.
-        _ffmpeg_process: Stores the Popen object that controls the FFMPEG process. This is used for 'live' frame
-            acquisition to instantiate the encoding process once and then 'feed' the images into the stdin pipe to be
-            encoded.
+        _input_pixel_format: Stores the pixel format used by the input camera frames.
+        _ffmpeg_command: Stores the main body of the FFMPEG command used to start the video encoding process.
+        _repr_body: Stores the main body of the class representation string.
+        _ffmpeg_process: Stores the Popen object that controls the FFMPEG's video encoding process. This is used during
+            camera frame encoding to continuously feed the input camera frames to the encoding process.
     """
-
-    # Lists supported image input extensions. This is used for transcoding folders of images as videos to filter out
-    # possible inputs.
-    _supported_image_formats: set[str] = {".png", ".tiff", ".tif", ".jpg", ".jpeg"}
 
     def __init__(
         self,
         output_directory: Path,
-        hardware_encoding: bool = False,
-        video_codec: VideoCodecs = VideoCodecs.H265,
-        preset: EncoderSpeedPreset = EncoderSpeedPreset.SLOW,
-        input_pixel_format: InputPixelFormats = InputPixelFormats.BGR,
-        output_pixel_format: OutputPixelFormats = OutputPixelFormats.YUV444,
+        gpu: int = -1,
+        video_encoder: VideoEncoders | str = VideoEncoders.H265,
+        encoder_speed_preset: EncoderSpeedPresets | int = EncoderSpeedPresets.SLOW,
+        input_pixel_format: InputPixelFormats | str = InputPixelFormats.BGR,
+        output_pixel_format: OutputPixelFormats | str = OutputPixelFormats.YUV420,
         quantization_parameter: int = 15,
-        gpu: int = 0,
-    ):
+    ) -> None:
         # Ensures that the output directory exists
         ensure_directory_exists(output_directory)
 
         self._output_directory: Path = output_directory
-        self._input_pixel_format: str = str(input_pixel_format.value)
-
-        # Depending on the requested codec type and hardware_acceleration preference, selects the specific codec to
-        # use for video encoding.
-        video_encoder: str
-        if video_codec == VideoCodecs.H264 and hardware_encoding:
-            video_encoder = "h264_nvenc"
-        elif video_codec == VideoCodecs.H265 and hardware_encoding:
-            video_encoder = "hevc_nvenc"
-        elif video_codec == VideoCodecs.H264 and not hardware_encoding:
-            video_encoder = "libx264"
-        else:
-            video_encoder = "libx265"
-
-        # Depending on the desired output pixel format and the selected video codec, resolves the appropriate profile
-        # to support chromatic coding.
-        encoder_profile: str
-        if video_encoder == "h264_nvenc":
-            if output_pixel_format.value == "yuv444p":
-                encoder_profile = "high444p"  # The only profile capable of 444p encoding.
-            else:
-                encoder_profile = "main"  # 420p falls here
-        elif video_encoder == "hevc_nvenc":
-            if output_pixel_format.value == "yuv444p":
-                encoder_profile = "rext"  # The only profile capable of 444p encoding.
-            else:
-                encoder_profile = "main"  # Same as above, 420p works with the main profile
-        elif video_encoder == "libx265":
-            if output_pixel_format.value == "yuv444p":
-                encoder_profile = "main444-8"  # 444p requires this profile
-            else:
-                encoder_profile = "main"  # 420p requires at least this profile
-        elif output_pixel_format.value == "yuv444p":
-            encoder_profile = "high444"  # 444p requires this profile
-        else:
-            encoder_profile = "high420"  # 420p requires at least this profile
-
-        # This is unique to CPU codecs. Resolves the 'parameter' specifier based on the codec name. This is used to
-        # force CPU encoders to use the QP control mode.
-        parameter_specifier: str
-        if video_encoder == "libx264":
-            parameter_specifier = "-x264-params"
-        else:
-            parameter_specifier = "-x265-params"
+        self._input_pixel_format: str = input_pixel_format.value()
 
         # Constructs the main body of the ffmpeg command that will be used to generate video file(s). This block
         # lacks the input header and the output file path, which is added by other methods of this class when they
         # are called.
         self._ffmpeg_command: str
-        if hardware_encoding:
+
+
+        if gpu >= 0:
+            # Depending on the requested encoder type and gpu acceleration, selects the specific encoder library to use
+            # for video encoding.
+            video_encoder = "h264_nvenc" if video_encoder == VideoEncoders.H264 else "hevc_nvenc"
+
+            # Depending on the desired output pixel format and the selected video codec, resolves the appropriate profile
+            # to support chromatic coding.
+            if video_encoder == "h264_nvenc":
+                encoder_profile = "high444p" if output_pixel_format.value == "yuv444p" else "main"
+            else:
+                encoder_profile = "rext" if output_pixel_format.value == "yuv444p" else "main"
+
             self._ffmpeg_command = (
-                f"-vcodec {video_encoder} -qp {quantization_parameter} -preset {preset.value} "
+                f"-vcodec {video_encoder} -qp {quantization_parameter} -preset {encoder_speed_preset.value} "
                 f"-profile:v {encoder_profile} -pixel_format {output_pixel_format.value} -gpu {gpu} -rc constqp"
             )
+
         else:
+            video_encoder = "libx264" if video_encoder == VideoEncoders.H264 else "libx265"
+
+            if video_encoder == "libx265":
+                encoder_profile = "main444-8" if output_pixel_format.value == "yuv444p" else "main"
+            else:
+                encoder_profile = "high444" if output_pixel_format.value == "yuv444p" else "high420"
+
+            # This is unique to CPU codecs. Resolves the 'parameter' specifier based on the codec name. This is used to
+            # force CPU encoders to use the QP control mode.
+            parameter_specifier = "-x264-params" if video_encoder == "libx264" else "-x265-params"
+
             # Note, the qp has to be preceded by the '-parameter' specifier for the desired h265 / h265 codec
             self._ffmpeg_command = (
-                f"-vcodec {video_encoder} {parameter_specifier} qp={quantization_parameter} -preset {preset.value} "
-                f"-profile {encoder_profile} -pixel_format {output_pixel_format.value}"
+                f"-vcodec {video_encoder} {parameter_specifier} qp={quantization_parameter} "
+                f"-preset {encoder_speed_preset.value} -profile {encoder_profile} -pixel_format "
+                f"{output_pixel_format.value}"
             )
 
         # Also generates the body for the representation string to be used by the repr method. This is done here to
         # reduce the number of class attributes.
         self._repr_body: str = (
-            f"output_directory={self._output_directory}, hardware_encoding{hardware_encoding}, "
+            f"output_directory={self._output_directory}, hardware_encoding={gpu >= 0}, "
             f"video_format=mp4, input_pixel_format={self._input_pixel_format}, "
-            f"video_codec={video_encoder}, encoder_preset={preset.value}, "
+            f"video_encoder={video_encoder}, encoding_speed_preset={encoder_speed_preset.value}, "
             f"quantization_parameter={quantization_parameter}, gpu_index={gpu}"
         )
 
@@ -320,7 +252,7 @@ class VideoSaver:
     def __del__(self) -> None:
         """Ensures that the live encoder is terminated when the VideoEncoder object is deleted."""
         if self._ffmpeg_process is not None:
-            self.terminate_live_encoder(timeout=600)
+            self.terminate_encoder(timeout=600)
 
     @property
     def is_live(self) -> bool:
@@ -329,154 +261,7 @@ class VideoSaver:
             return False
         return True
 
-    @staticmethod
-    def _report_encoding_progress(process: Popen[bytes], video_id: str) -> None:
-        """Reports FFMPEG's video encoding progress to the user via ataraxis console.
-
-        This reads stderr output from the process used to call FFMPEG and transfers encoding progress information
-        to the file log or terminal window via console class.
-
-        Notes:
-            This is only used when encoding pre-acquired images, as that process can run for a long time with no
-            sign that encoding is running. Encoding 'live' frames does not need a reported process as that
-            functionality is taken care of by the VideoSystem class.
-
-        Args:
-            process: The Popen object representing the ffmpeg process.
-            video_id: The identifier for the video being encoded.
-        """
-        # Initial message to notify the user that encoding is in progress
-        console.echo(message=f"Started encoding video: {video_id}", level=LogLevel.INFO)
-
-        # Specifies the regular expression pattern used by FFMPEG to report encoding progress. This is used to
-        # extract this information from the stderr output.
-        pattern = re.compile(r"time=(\d{2}:\d{2}:\d{2}.\d{2})")
-
-        # Loops until the FFMPEG is done encoding the requested video:
-        while process.poll() is None:
-            # If new lines are available from stderr, reads each line and determines whether it contains progress
-            # information
-            if process.stderr:
-                stderr_line = process.stderr.readline().decode("utf-8").strip()
-                match = pattern.search(stderr_line)
-
-                # If progress information is found, passes it to the console for handling
-                if match:
-                    progress_time = match.group(1)
-                    console.echo(f"Video {video_id} encoding progress: {progress_time}", level=LogLevel.INFO)
-
-    def create_video_from_image_folder(
-        self, video_frames_per_second: float, image_directory: Path, video_id: str, *, cleanup: bool = False
-    ) -> None:
-        """Converts a set of existing id-labeled images stored in a folder into a video file.
-
-        This method can be used to convert individual images stored inside the input directory into a video file. It
-        uses encoding parameters specified during class initialization and supports encoding tiff, png, and jpg images.
-        This method expects the frame-images to use integer-convertible IDs (e.g.: "00001.png"), as the method sorts
-        images based on the ID, which determines the order they are encoded into the video.
-
-        Notes:
-            FFMPEG automatically resolves image color-space. This method does not make use of the class
-            'input_pixel_format' attribute.
-
-            The video is written to the output directory of the class and uses the provided video_id as a name.
-
-            The dimensions of the video are determined from the first image passed to the encoder.
-
-        Args:
-            video_frames_per_second: The frame rate of the video to be created.
-            image_directory: The directory where the images are saved. The method scans the directory for image files
-                to be used for video creation.
-            video_id: The ID or name of the generated video file. The videos will be saved as 'id.extension' format.
-            cleanup: Determines whether to clean up (delete) source images after the video creation. The cleanup is
-                only carried out after the FFMPEG process terminates with a success code. Make sure to test your
-                pipeline before enabling this option, as this method does not verify the encoded video for corruption.
-
-        Raises:
-            Exception: If there are no images with supported file-extensions in the specified directory.
-        """
-        # First, crawls the image directory and extracts all image files (based on the file extension). Also, only keeps
-        # images whose names are convertible to integers (the format used by VideoSystem class). This process also
-        # sorts the images based on their integer IDs (this is why they have to be integers).
-        images = sorted(
-            [
-                img
-                for img in image_directory.iterdir()
-                if img.is_file() and img.suffix.lower() in self._supported_image_formats and img.stem.isdigit()
-            ],
-            key=lambda x: int(x.stem),
-        )
-
-        # If the process above did not discover any images, raises an error:
-        if len(images) == 0:
-            message = (
-                f"Unable to create video {video_id} from images. No valid image candidates discovered when crawling "
-                f"the image directory ({image_directory}). Valid candidates are images using one of the supported "
-                f"file-extensions ({sorted(self._supported_image_formats)}) with "
-                f"digit-convertible names (e.g: 0001.jpg)."
-            )
-            console.error(error=RuntimeError, message=message)
-
-        # Reads the first image using OpenCV to get image dimensions. Assumes image dimensions are consistent across
-        # all images.
-        frame_height, frame_width, _ = cv2.imread(filename=str(images[0])).shape
-
-        # Generates a temporary file to serve as the image roster fed into ffmpeg. The list is saved to the image
-        # source folder.
-        file_list_path: Path = image_directory.joinpath("source_images.txt")
-        with open(file_list_path, "w") as file_list:
-            for input_frame in images:
-                # NOTE!!! It is MANDATORY to include 'file:' when the file_list.txt itself is located inside the root
-                # source folder and each image path is given as an absolute path. Otherwise, ffmpeg appends the root
-                # path to the text file in addition to each image path, resulting in an incompatible path.
-                # Also, quotation (single) marks are necessary to ensure ffmpeg correctly processes special
-                # characters and spaces.
-                file_list.write(f"file 'file:{input_frame}'\n")
-
-        # Uses class attributes and input video ID to construct the output video path
-        output_path = Path(self._output_directory, f"{video_id}.mp4")
-
-        # Constructs the ffmpeg command, using the 'base' command created during instantiation for video parameters
-        ffmpeg_command = (
-            f"ffmpeg -y -f concat -safe 0 -r {video_frames_per_second} -i {file_list_path} {self._ffmpeg_command} "
-            f"{output_path}"
-        )
-
-        # Starts the ffmpeg process
-        ffmpeg_process: Popen[bytes] = subprocess.Popen(
-            ffmpeg_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-
-        # Instantiates and starts a thread that monitors stderr pipe of the FFMPEG process and reports progress
-        # information to the user
-        progress_thread = threading.Thread(target=self._report_encoding_progress, args=(ffmpeg_process, video_id))
-        progress_thread.start()
-
-        # Waits for the encoding process to complete
-        stdout, stderr = ffmpeg_process.communicate()
-
-        # Waits for the progress reporting thread to terminate
-        progress_thread.join()
-
-        # Removes the temporary image source file after encoding is complete
-        file_list_path.unlink(missing_ok=True)
-
-        # Checks for encoding errors. If there were no errors, reports successful encoding to the user
-        if ffmpeg_process.returncode != 0:  # pragma: no cover
-            error_output = stderr.decode("utf-8")
-            message = f"FFmpeg process failed to encode video {video_id} with error: {error_output}"
-            console.error(error=RuntimeError, message=message)
-        else:
-            console.echo(f"Successfully encoded video {video_id}.", level=LogLevel.SUCCESS)
-
-            # If cleanup is enabled, deletes all source images used to encode the video
-            if cleanup:
-                for image in images:
-                    image.unlink(missing_ok=True)
-
-                console.echo(f"Removed source images used to encode video {video_id}.", level=LogLevel.SUCCESS)
-
-    def create_live_video_encoder(
+    def create_encoder(
         self,
         frame_width: int,
         frame_height: int,
@@ -562,7 +347,7 @@ class VideoSaver:
             message = f"FFMPEG process failed to process the input frame with error: {e}"
             console.error(message=message, error=RuntimeError)
 
-    def terminate_live_encoder(self, timeout: float | None = None) -> None:
+    def terminate_encoder(self, timeout: float | None = None) -> None:
         """Terminates the 'live' FFMPEG encoder process if it exists.
 
         This method has to be called to properly release FFMPEG resources once the process is no longer necessary. Only
