@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ataraxis-video-system"
 version = "2.0.0"
-description = "Interfaces with a wide range of cameras to flexibly record visual stream data as images or videos."
+description = "Interfaces with a wide range of cameras to flexibly record visual stream data as videos."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
@@ -106,6 +106,8 @@ lint.ignore = [
     "COM812",  # Conflicts with the formatter
     "ISC001",  # Conflicts with the formatter
     "TID252",  # Conflicts with library import management strategy
+    "S602",    # Conflicts with the librarie's approach to interfacing with the FFMPEG library
+    "BLE001",  # Conflicts with the approach for intercepting and reformatting exceptions related to Python-FFMPEG pipe
     "C901",    # Sometimes complex functions are necessary
     "PLR0913", # Sometimes complex functions are necessary
     "PLR0912", # Sometimes complex functions are necessary
