@@ -9,16 +9,16 @@ Video System
    :undoc-members:
    :show-inheritance:
 
-Cameras
-=======
+Camera
+======
 
 .. automodule:: ataraxis_video_system.camera
    :members:
    :undoc-members:
    :show-inheritance:
 
-Savers
-======
+Saver
+=====
 
 .. automodule:: ataraxis_video_system.saver
    :members:

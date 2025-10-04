@@ -26,7 +26,7 @@ from .saver import (
     check_ffmpeg_availability,
 )
 from .camera import CameraInterfaces, CameraInformation, get_opencv_ids, get_harvesters_ids
-from .video_system import VideoSystem, extract_logged_video_system_data
+from .video_system import VideoSystem, extract_logged_camera_timestamps
 
 __all__ = [
     "CameraInformation",
@@ -38,7 +38,7 @@ __all__ = [
     "VideoSystem",
     "check_ffmpeg_availability",
     "check_gpu_availability",
-    "extract_logged_video_system_data",
+    "extract_logged_camera_timestamps",
     "get_harvesters_ids",
     "get_opencv_ids",
 ]

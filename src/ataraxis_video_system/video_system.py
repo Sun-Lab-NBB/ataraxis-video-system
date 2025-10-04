@@ -1,16 +1,10 @@
 """This module provides the main VideoSystem class that contains methods for setting up, running, and tearing down
-interactions between Camera and Saver classes.
-
-While Camera and Saver classes provide an interface for cameras and saver backends, VideoSystem connects cameras to
-savers and manages the flow of frames between them. Each VideoSystem is a self-contained entity that provides a simple
-API for recording data from a wide range of cameras as images or videos. The class is written in a way that maximizes
-runtime performance.
-
-All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
+interactions between camera interfaces and video saver instances. All user-oriented functionality of this library is
+available through the public methods of the VideoSystem class.
 """
 
 import sys
-from queue import Queue
+from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 import warnings
@@ -19,14 +13,17 @@ from multiprocessing import (
     Queue as MPQueue,
     Manager,
     Process,
+    cpu_count,
 )
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cv2
+from tqdm import tqdm
 import numpy as np
 from ataraxis_time import PrecisionTimer
-from ataraxis_base_utilities import console
+from ataraxis_base_utilities import console, chunk_iterable
 from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
-from ataraxis_time.time_helpers import convert_time, get_timestamp, TimestampFormats
+from ataraxis_time.time_helpers import TimestampFormats, convert_time, get_timestamp
 
 from .saver import (
     VideoSaver,
@@ -42,11 +39,24 @@ if TYPE_CHECKING:
     from multiprocessing.managers import SyncManager
 
     from numpy.typing import NDArray
-    from numpy.lib.npyio import NpzFile
 
 
 # Determines the maximum qp value used when initializing VideoSystem instances.
 _MAXIMUM_QUANTIZATION_VALUE = 51
+
+# The maximum number of seconds to wait for the consumer and producer processes to initialize.
+_PROCESS_INITIALIZATION_TIME = 20
+
+# The maximum number of seconds to wait for the consumer and producer processes to shut down.
+_PROCESS_SHUTDOWN_TIME = 600
+
+# Specifies the size of the frame timestamp log message, in bytes. This is used during log message parsing to extract
+# the acquisition timestamps for all saved frames.
+_FRAME_TIMESTAMP_LOG_MESSAGE_SIZE = 9
+
+# The minimum number of messages that must be contained in the camera frame timestamp .npz archive for it to be
+# processed in parallel.
+_MINIMUM_LOG_SIZE_FOR_PARALLELIZATION = 2000
 
 
 class VideoSystem:
@@ -116,11 +126,11 @@ class VideoSystem:
         _output_file: Stores the path to the output .mp4 video file to be generated at runtime or None, if the instance
             is not configured to save acquired camera frames.
         _camera: Stores the camera interface class instance used to interface with the camera hardware at runtime.
-        _saver: Stores the video saver instance used to save the acquired camera frames or None, if ths instance is
+        _saver: Stores the video saver instance used to save the acquired camera frames or None, if the instance is
             not configured to save acquired camera frames.
         _logger_queue: Stores the multiprocessing Queue instance used to buffer frame acquisition timestamp data to the
             logger process.
-        _image_queue: Stores the multiprocessing Queue instance used to buffer and pipe acquired frames from the
+        _saver_queue: Stores the multiprocessing Queue instance used to buffer and pipe acquired frames from the
             camera (producer) process to the video saver (consumer) process.
         _terminator_array: Stores the SharedMemoryArray instance used to manage the runtime behavior of the producer
             and consumer processes.
@@ -422,7 +432,7 @@ class VideoSystem:
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
         self._logger_queue: MPQueue = data_logger.input_queue
-        self._image_queue: MPQueue = self._mp_manager.Queue()
+        self._saver_queue: MPQueue = self._mp_manager.Queue()
         self._terminator_array: SharedMemoryArray | None = None
         self._producer_process: Process | None = None
         self._consumer_process: Process | None = None
@@ -437,72 +447,46 @@ class VideoSystem:
         """Returns the string representation of the VideoSystem instance."""
         return (
             f"VideoSystem(system_id={self._system_id}, started={self._started}, "
-            f"camera={str(type(self._camera).__name__)}, frame_saving={self._saver is not None})"
+            f"camera={type(self._camera).__name__!s}, frame_saving={self._saver is not None})"
         )
 
     def start(self) -> None:
-        """Starts the consumer and producer processes of the VideoSystem instance and begins acquiring camera frames.
-
-        This process starts acquiring frames but does not save them! To enable saving acquired frames, call the
-        start_frame_saving() method. A call to this method should always be paired with a call to the stop() method to
-        properly release the resources allocated to the class.
+        """Starts the instance's producer (camera interface) and consumer (video saver) processes and begins acquiring
+        camera frames.
 
         Notes:
-            By default, this method does not enable saving camera frames to non-volatile memory. This is intentional, as
-            in some cases the user may want to see the camera feed but only record the frames after some initial
-            setup. To enable saving camera frames, call the start_frame_saving() method.
+            Calling this method does not enable saving camera frames to non-volatile memory. To enable saving camera
+            frames, call the start_frame_saving() method.
 
         Raises:
-            RuntimeError: If starting the consumer or producer processes stalls or fails. If the camera is configured to
-            save frames, but there is no Saver. If there is no Camera to acquire frames.
+            RuntimeError: If starting the consumer or producer processes stalls or fails.
         """
-        # Skips re-starting the system if it is already started.
+        # Prevents restarting an already started VideoSystem instance.
         if self._started:
             return
 
         # This timer is used to forcibly terminate processes that stall at initialization.
         initialization_timer = PrecisionTimer(precision="s")
 
-        # Prevents starting the system if there is no Camera
-        if self._camera is None:
-            message = (
-                f"Unable to start the VideoSystem with id {self._system_id}. The VideoSystem must be equipped with a Camera "
-                f"before it can be started. Use add_camera() method to add a Camera class to the VideoSystem. If you "
-                f"need to convert a directory of images to video, use the encode_video_from_images() method instead."
-            )
-            console.error(error=RuntimeError, message=message)
-
-        # If the camera is configured to save frames, ensures it is matched with a Saver class instance.
-        elif self._camera.save_frames and self._saver is None:
-            message = (
-                f"Unable to start the VideoSystem with id {self._system_id}. The managed Camera is configured to save frames "
-                f"and has to be matched to a Saver instance, but no Saver was added. Use add_image_saver() or "
-                f"add_video_saver() method to add a Saver instance to save camera frames."
-            )
-            console.error(error=RuntimeError, message=message)
-
-        # Instantiates an array shared between all processes. This array is used to control all child processes.
-        # Index 0 (element 1) is used to issue global process termination command
+        # Instantiates a SharedMemoryArray used to control the runtime of the child processes.
+        # Index 0 (element 1) is used to issue the global process termination command.
         # Index 1 (element 2) is used to flexibly enable or disable saving camera frames.
-        # Index 2 (element 3) is used to track VideoSystem initialization status.
+        # Index 2 (element 3) is used to track the producer process initialization status.
+        # Index 3 (element 4) is used to track the consumer process initialization status.
         self._terminator_array = SharedMemoryArray.create_array(
             name=f"{self._system_id}_terminator_array",  # Uses class id with an additional specifier
-            prototype=np.zeros(shape=3, dtype=np.uint8),
+            prototype=np.zeros(shape=4, dtype=np.uint8),
             exists_ok=True,  # Automatically recreates the buffer if it already exists
-        )  # Instantiation automatically connects the main process to the array.
+        )
 
         # Only starts the consumer process if the managed camera is configured to save frames.
         if self._saver is not None:
-            # Starts the consumer process first to minimize queue buildup once the producer process is initialized.
-            # Technically, due to saving frames being initially disabled, queue buildup is no longer a major concern,
-            # but this safety-oriented initialization order is still preserved.
             self._consumer_process = Process(
                 target=self._frame_saving_loop,
                 args=(
                     self._system_id,
                     self._saver,
-                    self._camera,
-                    self._image_queue,
+                    self._saver_queue,
                     self._logger_queue,
                     self._terminator_array,
                 ),
@@ -510,33 +494,14 @@ class VideoSystem:
             )
             self._consumer_process.start()
 
-            # Waits for the process to report that it has successfully initialized.
-            initialization_timer.reset()
-            while self._terminator_array.read_data(index=3) != 2:  # pragma: no cover
-                # If the process takes too long to initialize or dies, raises an error.
-                if initialization_timer.elapsed > 10 or not self._consumer_process.is_alive():
-                    message = (
-                        f"Unable to start the VideoSystem with id {self._system_id}. The consumer process has "
-                        f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This "
-                        f"likely indicates a problem with the Saver (Video or Image) class managed by the process."
-                    )
-
-                    # Reclaims all committed resources before terminating with an error.
-                    self._terminator_array.write_data(index=0, data=np.uint8(1))
-                    self._consumer_process.join()
-                    self._terminator_array.disconnect()
-                    self._terminator_array.destroy()
-
-                    console.error(error=RuntimeError, message=message)
-
         # Starts the producer process
         self._producer_process = Process(
             target=self._frame_production_loop,
             args=(
                 self._system_id,
                 self._camera,
-                self._image_queue,
-                self._output_queue,
+                self._display_frame_rate,
+                self._saver_queue,
                 self._logger_queue,
                 self._terminator_array,
             ),
@@ -544,49 +509,73 @@ class VideoSystem:
         )
         self._producer_process.start()
 
-        # Waits for the process to report that it has successfully initialized.
+        # Connects to the shared memory array to receive control signals. It is important for this to be done after
+        # both processes have been started.
+        self._terminator_array.connect()
+        # Ensures the buffer is destroyed if the instance is garbage-collected to prevent memory leaks.
+        self._terminator_array.enable_buffer_destruction()
+
+        # Waits for the processes to report that they have been successfully initialized.
         initialization_timer.reset()
-        while self._terminator_array.read_data(index=3) != 1:  # pragma: no cover
-            # If the process takes too long to initialize or dies, raises an error.
-            if initialization_timer.elapsed > 10 or not self._producer_process.is_alive():
+        while self._terminator_array[2] != 1 and self._terminator_array[3] != 1:  # pragma: no cover
+            # If the processes take too long to initialize or die, raises an error.
+            error = False
+            message: str = ""  # Pre-initialization to appease mypy
+            if (
+                initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[2] != 1
+            ) or not self._producer_process.is_alive():
                 message = (
                     f"Unable to start the VideoSystem with id {self._system_id}. The producer process has "
-                    f"unexpectedly shut down or stalled for more than 10 seconds during initialization. This likely "
-                    f"indicates a problem with initializing the Camera class controlled by the process or the frame "
-                    f"display thread."
+                    f"unexpectedly shut down or stalled for more than {_PROCESS_INITIALIZATION_TIME} seconds "
+                    f"during initialization. This likely indicates a problem with the camera interface instance "
+                    f"managed by the process."
                 )
+                error = True
+            elif (
+                initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[3] != 1
+            ) or not self._consumer_process.is_alive():
+                message = (
+                    f"Unable to start the VideoSystem with id {self._system_id}. The consumer process has "
+                    f"unexpectedly shut down or stalled for more than {_PROCESS_INITIALIZATION_TIME} seconds "
+                    f"during initialization. This likely indicates a problem with the VideoSaver instance managed "
+                    f"by the process."
+                )
+                error = True
 
-                # Reclaims all committed resources before terminating with an error.
-                self._terminator_array.write_data(index=0, data=np.uint8(1))
+            # Reclaims all committed resources before terminating with an error.
+            if error:
+                # Emits the process termination command
+                self._terminator_array[0] = 1
+
+                # Waits for any active processes to finish their execution
                 if self._consumer_process is not None:
                     self._consumer_process.join()
                 self._producer_process.join()
+
+                # Disconnects from and destroys the shared memory array buffer
                 self._terminator_array.disconnect()
                 self._terminator_array.destroy()
 
                 console.error(error=RuntimeError, message=message)
 
-        # Creates ands tarts the watchdog thread
+        # Creates and starts the watchdog thread
         self._watchdog_thread = Thread(target=self._watchdog, daemon=True)
         self._watchdog_thread.start()
 
-        # Sets the _started flag, which also activates watchdog monitoring.
+        # Sets the _started flag, which also activates the watchdog monitoring.
         self._started = True
 
     def stop(self) -> None:
-        """Stops the producer and consumer processes and releases all resources.
-
-        The instance will be kept alive until all frames buffered to the image_queue are saved. This is an intentional
-        security feature that prevents information loss.
+        """Stops the instance's producer (camera interface) and consumer (video saver) processes and releases all
+        reserved resources.
 
         Notes:
-            This method waits for at most 10 minutes for the output_queue and the image_queue to become empty. If the
-            queues are not empty by that time, the method forcibly terminates the instance and discards any unprocessed
-            data.
+            The consumer process is kept alive until all frames buffered to the saver_queue are saved. However, if the
+            saver_queue does not become empty within 10 minutes from calling this method, it forcibly terminates the
+            consumer process and discards any unprocessed data.
         """
-        # Ensures that the stop procedure is only executed if the class is running
+        # Prevents stopping an already stopped VideoSystem instance.
         if not self._started or self._terminator_array is None:
-            # Terminator array cannot be None if the process has started, so this check is to appease mypy.
             return
 
         # This timer is used to forcibly terminate the process that gets stuck in the shutdown sequence.
@@ -595,17 +584,15 @@ class VideoSystem:
         # This inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
         self._started = False
 
-        # Sets the global shutdown flag to true
-        self._terminator_array.write_data(index=0, data=np.uint8(1))
+        # Emits the process shutdown signal.
+        self._terminator_array[0] = 1
 
         # Delays for 2 seconds to allow the consumer process to terminate its runtime
-        shutdown_timer.delay_noblock(delay=2)
+        shutdown_timer.delay(delay=2, allow_sleep=True, block=False)
 
-        # Waits until both multiprocessing queues made by the instance are empty. This is aborted if the shutdown
-        # stalls at this step for 10+ minutes
-        while not self._image_queue.empty() or self._output_queue.empty():
-            # Prevents being stuck in this loop.
-            if shutdown_timer.elapsed > 600:
+        # Waits until the saver_queue is empty. This is aborted if the shutdown stalls at this step for 10+ minutes.
+        while not self._saver_queue.empty():
+            if shutdown_timer.elapsed > _PROCESS_SHUTDOWN_TIME:
                 break
 
         # Joins the producer and consumer processes
@@ -618,14 +605,14 @@ class VideoSystem:
         if self._watchdog_thread is not None:
             self._watchdog_thread.join(timeout=20)
 
-        # Disconnects from and destroys the terminator array buffer. This step destroys the shared memory buffer.
+        # Disconnects from and destroys the terminator array buffer.
         self._terminator_array.disconnect()
         self._terminator_array.destroy()
 
     @staticmethod
     def _frame_display_loop(
         display_queue: Queue,
-        system_id: int,
+        system_id: np.uint8,
     ) -> None:  # pragma: no cover
         """Continuously fetches frame images from the display_queue and displays them via the OpenCV's imshow()
         function.
@@ -657,7 +644,8 @@ class VideoSystem:
             cv2.imshow(winname=window_name, mat=frame)
 
             # Manual termination is done through the window GUI
-            if cv2.waitKey(1) & 0xFF == 27:
+            escape_key = 27  # The code for the ESC key in ASCII
+            if cv2.waitKey(1) & 0xFF == escape_key:
                 display_queue.task_done()  # If the thread is terminated, ensures join() works as expected
                 break
 
@@ -673,18 +661,18 @@ class VideoSystem:
         system_id: np.uint8,
         camera: OpenCVCamera | HarvestersCamera | MockCamera,
         display_frame_rate: int,
-        image_queue: MPQueue,
+        saver_queue: MPQueue,
         logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
-        """Continuously grabs frames from the input camera and queues them up to be saved by the consumer process.
+        """Continuously grabs frames from the managed camera and queues them up to be saved by the consumer process.
+
+        If the VideoSystem instance is configured to display acquired frame data, this method also uses a separate
+        thread to render the acquired frames into and display them to the user in real time.
 
         Notes:
             This method should be executed by the producer Process. It is not intended to be executed by the main
             process where the VideoSystem is instantiated.
-
-            This method displays the acquired frames in a separate display thread if the instance is configured to
-            display acquired frame data.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -692,7 +680,7 @@ class VideoSystem:
             camera: The camera interface instance for the camera from which to acquire frames.
             display_frame_rate: The desired rate, in frames per second, at which to display (visualize) the acquired
                 frame stream to the user. Setting this argument to 0 disables frame display functionality.
-            image_queue: A multiprocessing Queue that buffers and pipes acquired frames to the consumer process.
+            saver_queue: The multiprocessing Queue that buffers and pipes acquired frames to the consumer process.
             logger_queue: The multiprocessing Queue that buffers and pipes log entries to the DataLogger's logger
                 process.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
@@ -728,12 +716,7 @@ class VideoSystem:
             # Converts the frame display rate from frames per second to microseconds per frame. This gives the delay
             # between displaying any two consecutive frames, which is used to limit how frequently the displayed image
             # updates.
-            show_time = convert_time(
-                time=1 / display_frame_rate,
-                from_units="s",
-                to_units="us",
-                as_float=True
-            )
+            show_time = convert_time(time=1 / display_frame_rate, from_units="s", to_units="us", as_float=True)
             show_timer = PrecisionTimer("us")
 
         camera.connect()  # Connects to the hardware of the camera.
@@ -744,7 +727,6 @@ class VideoSystem:
         try:
             # The loop runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 1
             while not terminator_array[0]:
-
                 # Grabs the first available frame as a numpy array. For Harvesters and Mock interfaces, this method
                 # blocks until the frame is available if it is called too early. For OpenCV interface, this method
                 # returns the same frame as grabbed during the previous call.
@@ -760,7 +742,7 @@ class VideoSystem:
                 # If frame saving is enabled, sends the acquired frame data and the acquisition timestamp to the
                 # consumer (video saver) process.
                 if terminator_array[1] == 1:
-                    image_queue.put((frame, frame_stamp))
+                    saver_queue.put((frame, frame_stamp))
 
         # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
         # before re-raising the exception to terminate the process.
@@ -771,7 +753,6 @@ class VideoSystem:
 
         # Ensures that local assets are always properly terminated
         finally:
-
             # Releases camera and shared memory assets.
             terminator_array.disconnect()
             camera.disconnect()
@@ -786,38 +767,34 @@ class VideoSystem:
 
     @staticmethod
     def _frame_saving_loop(
-        video_system_id: np.uint8,
+        system_id: np.uint8,
         saver: VideoSaver,
-        image_queue: MPQueue,
+        saver_queue: MPQueue,
         logger_queue: MPQueue,
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
-        """Continuously grabs frames from the image_queue and saves them as standalone images or video file, depending
-        on the input saver instance.
-
-        This method loops while the first element in terminator_array (index 0) is nonzero. It continuously grabs
-        frames from image_queue and uses the saver instance to write them to disk.
+        """Continuously grabs the frames from the image_queue and saves them as an .mp4 video file.
 
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
 
         Notes:
-            This method's main loop will be kept alive until the image_queue is empty. This is an intentional security
+            This method should be executed by the consumer Process. It is not intended to be executed by the main
+            process where the VideoSystem is instantiated.
+
+            This method's main loop is kept alive until the image_queue is empty. This is an intentional security
             feature that ensures all buffered images are processed before the saver is terminated. To override this
             behavior, you will need to use the process kill command, but it is strongly advised not to tamper
             with this feature.
 
-            This method expects that image_queue buffers 2-element tuples that include frame data and frame acquisition
-            time relative to the onset point in microseconds.
-
         Args:
-            video_system_id: The unique byte-code identifier of the VideoSystem instance. This is used to identify the
-                VideoSystem when logging data.
-            saver: The VideoSaver or ImageSaver instance to use for saving frames.
-            image_queue: A multiprocessing queue that buffers and pipes acquired frames to the consumer process.
-            logger_queue: The multiprocessing Queue object exposed by the DataLogger class (via 'input_queue' property).
-                This queue is used to buffer and pipe data to be logged to the logger cores.
+            system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
+                VideoSystem in data log entries.
+            saver: The VideoSaver instance to use for saving the input frames as an .mp4 video file.
+            saver_queue: The multiprocessing Queue that buffers and pipes acquired frames to the consumer process.
+            logger_queue: The multiprocessing Queue that buffers and pipes log entries to the DataLogger's logger
+                process.
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
-                and terminate it during global shutdown.
+                and terminate it during the global shutdown.
         """
         # Connects to the terminator array used to manage the loop runtime.
         terminator_array.connect()
@@ -826,36 +803,35 @@ class VideoSystem:
         saver.start()
 
         # Indicates that the video saver has started successfully.
-        terminator_array[2] = 2
+        terminator_array[3] = 1
 
-        # Precreates the placeholder array used to log frame acquisition timestamps.
+        # Pre-creates the placeholder array used to log frame acquisition timestamps.
         data_placeholder = np.array([], dtype=np.uint8)
 
         try:
             # This loop runs until the global shutdown command is issued (via the variable under index 0) and until the
             # image_queue is empty.
-            while not terminator_array[0] or not image_queue.empty():
-                # Grabs the image bundled with its acquisition time from the queue and passes it to the video saver
-                # instance.
+            while not terminator_array[0] or not saver_queue.empty():
+                # Grabs the frame data and its acquisition timestamp from the queue
                 try:
                     frame: NDArray[np.integer[Any]]
                     frame_time: int
-                    frame, frame_time = image_queue.get_nowait()
-                except Exception:
+                    frame, frame_time = saver_queue.get_nowait()
+                except Empty:
                     # Cycles the loop if the queue is empty
                     continue
 
                 # Sends the frame to be saved by the saver
-                saver.save_frame(frame)  # Same API for Image and Video savers.
+                saver.save_frame(frame)
 
-                # Logs frame acquisition data. For this, uses an empty numpy array as payload, as we only care about the
-                # acquisition timestamps at this time.
-                package = LogPackage(
-                    video_system_id,
-                    acquisition_time=np.uint64(frame_time),
-                    serialized_data=np.array(object=data_placeholder, dtype=np.uint8),
+                # Logs the saved frame's acquisition timestamp
+                logger_queue.put(
+                    LogPackage(
+                        system_id,
+                        acquisition_time=np.uint64(frame_time),
+                        serialized_data=np.array(object=data_placeholder, dtype=np.uint8),
+                    )
                 )
-                logger_queue.put(package)
 
         # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
         # before re-raising the exception to terminate the process.
@@ -864,40 +840,45 @@ class VideoSystem:
             sys.stderr.flush()
             raise
 
-        # Ensures proper resource cleanup even during error shutdowns
+        # Ensures that local assets are always properly terminated
         finally:
             # Disconnects from the shared memory array
             terminator_array.disconnect()
 
-            # Carries out the necessary shut-down procedures:
+            # Stops the encoder process
             saver.stop()
 
     def _watchdog(self) -> None:  # pragma: no cover
-        """This function should be used by the watchdog thread to ensure the producer and consumer processes are alive
+        """This method is used by the watchdog thread to ensure that the producer and consumer processes are alive
         during runtime.
 
-        This function will raise a RuntimeError if it detects that a monitored process has prematurely shut down. It
-        will verify process states every ~20 ms and will release the GIL between checking the states.
+        This method raises RuntimeErrors if it detects that any of the processes has prematurely shut down. It verifies
+        the process state in 20-millisecond cycles and releases the GIL between state verifications.
+
+        Notes:
+            If the method detects that the consumer or producer process has terminated prematurely, it carries out the
+            necessary resource cleanup steps before raising the error and terminating the overall runtime.
         """
+        # Initializes the timer used to space out the process state checks.
         timer = PrecisionTimer(precision="ms")
 
-        # The watchdog function will run until the global shutdown command is issued.
-        while not self._terminator_array.read_data(index=0):
+        # The watchdog function runs until the global shutdown signal is emitted.
+        while not self._terminator_array[0]:
             # Checks process state every 20 ms. Releases the GIL while waiting.
-            timer.delay_noblock(delay=20, allow_sleep=True)
+            timer.delay(delay=20, allow_sleep=True, block=False)
 
             # The watchdog functionality only kicks-in after the VideoSystem has been started
             if not self._started:
                 continue
 
-            # Checks if producer is alive
+            # Checks if the producer is alive
             error = False
             producer = False
             if self._producer_process is not None and not self._producer_process.is_alive():
                 error = True
                 producer = True
 
-            # Checks if Consumer is alive
+            # Checks if the consumer is alive
             if self._consumer_process is not None and not self._consumer_process.is_alive():
                 error = True
 
@@ -905,16 +886,32 @@ class VideoSystem:
             # error
             if error:
                 # Reclaims all committed resources before terminating with an error.
-                self._terminator_array.write_data(index=0, data=np.uint8(1))
+                self._terminator_array[0] = 1
+
+                # If the consumer process is alive, gives it time to finish processing any remaining frames.
+                while (
+                    self._consumer_process is not None
+                    and not self._saver_queue.empty()
+                    and self._producer_process.is_alive()
+                ):
+                    if timer.elapsed > _PROCESS_SHUTDOWN_TIME * 1000:
+                        break
+
+                # Joins all processes
                 if self._consumer_process is not None:
                     self._consumer_process.join()
                 if self._producer_process is not None:
                     self._producer_process.join()
+
+                # Disconnects from the shared memory array and destroys the shared memory buffer.
                 if self._terminator_array is not None:
                     self._terminator_array.disconnect()
                     self._terminator_array.destroy()
-                self._started = False  # The code above is equivalent to stopping the instance
 
+                # The code above is equivalent to stopping the instance
+                self._started = False
+
+                # Raises the error.
                 if producer:
                     message = (
                         f"The producer process for the VideoSystem with id {self._system_id} has been prematurely "
@@ -931,28 +928,23 @@ class VideoSystem:
                     )
                     console.error(message=message, error=RuntimeError)
 
-    def stop_frame_saving(self) -> None:
-        """Disables saving acquired camera frames.
-
-        Does not interfere with grabbing and displaying the frames to the user, this process is only stopped when the
-        main stop() method is called.
-        """
-        if self._started and self._terminator_array is not None:
-            # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=1, data=0)
-
     def start_frame_saving(self) -> None:
-        """Enables saving acquired camera frames.
+        """Enables saving acquired camera frames to disk as an .mp4 video file."""
+        if self._started and self._terminator_array is not None:
+            self._terminator_array[1] = 1
 
-        The frames are grabbed and (optionally) displayed to the user after the main start() method is called, but they
-        are not initially saved to disk. The call to this method additionally enables saving the frames to disk
+    def stop_frame_saving(self) -> None:
+        """Disables saving acquired camera frames to disk as an .mp4 video file.
+
+        Notes:
+            Calling this method does not stop the frame acquisition process. It only prevents the acquired frames from
+            being sent to the consumer process, which prevents them from being saved to disk.
         """
         if self._started and self._terminator_array is not None:
-            # noinspection PyTypeChecker
-            self._terminator_array.write_data(index=1, data=1)
+            self._terminator_array[1] = 0
 
     @property
-    def video_file(self) -> Path | None:
+    def video_file_path(self) -> Path | None:
         """Returns the path to the output video file if the instance is configured to save acquired camera frames and
         None otherwise.
         """
@@ -969,92 +961,153 @@ class VideoSystem:
         return self._system_id
 
 
-def extract_logged_video_system_data(log_path: Path) -> tuple[np.uint64, ...]:
-    """Extracts the frame acquisition timestamps from the .npz log archive generated by the VideoSystem instance
-    during runtime.
+def _process_frame_message_batch(log_path: Path, file_names: list[str], onset_us: np.uint64) -> list[np.uint64]:
+    """Processes the target batch of VideoSystem-generated messages stored in the .npz log file.
 
-    This function reads the '.npz' archive generated by the DataLogger 'compress_logs' method for a VideoSystem
-    instance and, if the system saved any frames acquired by the camera, extracts the tuple of frame timestamps.
-    The order of timestamps in the tuple is sequential and matches the order of frame acquisition, and the timestamps
-    are given as microseconds elapsed since the UTC epoch onset.
-
-    This function is process- and thread-safe and can be pickled. It is specifically designed to be executed in-parallel
-    for many concurrently used VideoSystems, but it can also be used standalone. If you have an initialized
-    VideoSystem instance, it is recommended to use its 'extract_logged_data' method instead, as it automatically
-    resolves the log_path argument.
-
-    Notes:
-        This function should be used as a convenience abstraction for the inner workings of the DataLogger class that
-        decodes frame timestamp data from log files for further user-defined processing.
-
-        The function assumes that it is given an .npz archive generated for a VideoSystem instance and WILL behave
-        unexpectedly if it is instead given an archive generated by another Ataraxis class, such as
-        MicroControllerInterface.
+    This worker function is used by the _extract_camera_timestamps() function to process multiple message batches in
+    parallel to speed up the overall camera timestamp data processing.
 
     Args:
-        log_path: The path to the .npz archive file that stores the logged data generated by the VideoSystem
-            instance during runtime.
+        log_path: The path to the processed .npz log file.
+        file_names: The names of the individual message .npy files stored in the target archive.
+        onset_us: The onset of the frame data acquisition, in microseconds elapsed since UTC epoch onset.
 
     Returns:
-        A tuple that stores the frame acquisition timestamps, where each timestamp is a 64-bit unsigned numpy
-        integer and specifies the number of microseconds since the UTC epoch onset.
+        The list of frame acquisition timestamps for all frames whose messages have been processed as part of the
+        batch, stored as microseconds since UTC epoch onset.
+    """
+    # Opens the processed log archive using memory mapping. If frame processing is performed in parallel, all processes
+    # interact with the archive concurrently.
+    with np.load(log_path, allow_pickle=False, fix_imports=False, mmap_mode="r") as archive:
+        frame_timestamps = []
+
+        # Loops over the batch of frame messages and extracts frame acquisition timestamps.
+        for item in file_names:
+            message = archive[item]
+
+            # Frame timestamp messages do not have a payload, they only contain the source ID and the acquisition
+            # timestamp. This gives them the length of 9 bytes.
+            if len(message) == _FRAME_TIMESTAMP_LOG_MESSAGE_SIZE:
+                # Extracts the number of microseconds elapsed since acquisition onset and uses it to calculate the
+                # global timestamp for the message, in microseconds since UTC epoch onset.
+                elapsed_microseconds = message[1:9].view(np.uint64).item()
+                frame_timestamps.append(onset_us + elapsed_microseconds)
+
+    return frame_timestamps
+
+
+def extract_logged_camera_timestamps(
+    log_path: Path,
+    n_workers: int = -1,
+) -> tuple[np.uint64, ...]:
+    """Extracts the video camera frame acquisition timestamps from the target .npz log file generated by a VideoSystem
+    instance during runtime.
+
+    This function reads the '.npz' archive generated by the DataLogger 'compress_logs' method for a VideoSystem
+    instance and, if the system saved any frames acquired by the managed camera, extracts the tuple of frame timestamps.
+    The order of timestamps in the tuple is sequential and matches the order in which the frames were appended to the
+    .mp4 video file.
+
+    Notes:
+        The timestamps are given as microseconds elapsed since the UTC epoch onset.
+
+        If the target .npz archive contains fewer than 2000 messages, the processing is carried out sequentially
+        regardless of the specified worker-count.
+
+    Args:
+        log_path: The path to the .npz log file that stores the logged data generated by the VideoSystem
+            instance during runtime.
+        n_workers: The number of parallel worker processes (CPU cores) to use for processing. Setting this to a value
+            below 1 uses all available CPU cores. Setting this to a value of 1 conducts the processing sequentially.
+
+    Returns:
+        A tuple that stores the frame acquisition timestamps. Each timestamp is stored as the number of microseconds
+        elapsed since the UTC epoch onset.
 
     Raises:
-        ValueError: If the .npz archive for the VideoSystem instance does not exist.
+        ValueError: If the target .npz archive does not exist.
     """
-    # If a compressed log archive does not exist, raises an error
+    # Ensures that the target .npz log archive exists.
     if not log_path.exists() or log_path.suffix != ".npz" or not log_path.is_file():
         error_message = (
-            f"Unable to extract VideoSystem frame timestamp data from the log file {log_path}. "
-            f"This likely indicates that the logs have not been compressed via DataLogger's compress_logs() method "
-            f"and are not available for processing. Call log compression method before calling this method. Valid "
-            f"'log_path' arguments must point to an .npz archive file."
+            f"Unable to extract camera frame timestamp data from the log file {log_path}, as it does not exist or does "
+            f"not point to a valid .npz archive."
         )
         console.error(message=error_message, error=ValueError)
 
-    # Loads the archive into RAM
-    archive: NpzFile = np.load(file=log_path)
+    # Memory-maps the processed archive to conserve RAM. The first processing pass is designed to find the onset
+    # timestamp value.
+    with np.load(log_path, allow_pickle=False, fix_imports=False, mmap_mode="r") as archive:
+        # Locates the logging onset timestamp. The onset is used to convert the relative timestamps for logged frame
+        # data into absolute UTC timestamps. Originally, all timestamps other than onset are stored as elapsed time in
+        # microseconds relative to the onset timestamp.
+        onset_us = np.uint64(0)
+        timestamp_offset = 0
+        message_list = list(archive.files)
+        for number, item in enumerate(message_list):
+            message: NDArray[np.uint8] = archive[item]  # Extracts message payload from the compressed .npy file
 
-    # Precreates the list to store the extracted data.
-    frame_data = []
+            # Recovers the uint64 timestamp value from each message. The timestamp occupies 8 bytes of each logged
+            # message starting at index 1. If the timestamp value is 0, the message contains the onset timestamp value
+            # stored as an 8-byte payload. Index 0 stores the source ID (uint8 value).
+            timestamp_value = message[1:9].view(np.uint64).item()
+            if timestamp_value == 0:
+                # Extracts the byte-serialized UTC timestamp stored as microseconds since epoch onset.
+                onset_us = np.uint64(message[9:].view(np.int64).item())
 
-    # Locates the logging onset timestamp. The onset is used to convert the timestamps for logged frame data into
-    # absolute UTC timestamps. Originally, all timestamps other than onset are stored as elapsed time in
-    # microseconds relative to the onset timestamp.
-    timestamp_offset = 0
-    onset_us = np.uint64(0)
-    timestamp: np.uint64
-    for number, item in enumerate(archive.files):
-        message: NDArray[np.uint8] = archive[item]  # Extracts message payload from the compressed .npy file
+                # Breaks the loop once the onset is found. Generally, the onset is expected to be found very early into
+                # the loop.
+                timestamp_offset = number  # Records the item number at which the onset value was found.
+                break
 
-        # Recovers the uint64 timestamp value from each message. The timestamp occupies 8 bytes of each logged
-        # message starting at index 1. If timestamp value is 0, the message contains the onset timestamp value
-        # stored as 8-byte payload. Index 0 stores the source ID (uint8 value)
-        if np.uint64(message[1:9].view(np.uint64)[0]) == 0:
-            # Extracts the byte-serialized UTC timestamp stored as microseconds since epoch onset.
-            onset_us = np.uint64(message[9:].view("<i8")[0].copy())
+    # Builds the list of files to process after discovering the timestamp (the list of remaining messages)
+    messages_to_process = message_list[timestamp_offset + 1 :]
 
-            # Breaks the loop onc the onset is found. Generally, the onset is expected to be found very early into
-            # the loop
-            timestamp_offset = number  # Records the item number at which the onset value was found.
-            break
+    # If there are no leftover messages to process, return an empty tuple
+    if not messages_to_process:
+        return ()
 
-    # Once the onset has been discovered, loops over all remaining messages and extracts frame data.
-    for item in archive.files[timestamp_offset + 1 :]:
-        message = archive[item]
+    # Small archives are processed sequentially to avoid the unnecessary overhead of setting up the multiprocessing
+    # runtime. This is also done for large files if the user explicitly requests to use a single worker process.
+    if n_workers == 1 or len(messages_to_process) < _MINIMUM_LOG_SIZE_FOR_PARALLELIZATION:
+        return tuple(_process_frame_message_batch(log_path, messages_to_process, onset_us))
 
-        # Extracts the elapsed microseconds since timestamp and uses it to calculate the global timestamp for the
-        # message, in microseconds since epoch onset.
-        elapsed_microseconds = np.uint64(message[1:9].view(np.uint64)[0].copy())
-        timestamp = onset_us + elapsed_microseconds
+    # If the user enabled using all available cores, configures the runtime to use all available CPUs
+    if n_workers < 0:
+        n_workers = cpu_count()
 
-        # Iteratively fills the list with data. Frame stamp messages do not have a payload, they only contain the
-        # source ID and the acquisition timestamp. This gives them the length of 9 bytes.
-        if len(message) == 9:
-            frame_data.append(timestamp)
+    # Creates batches of messages to process during runtime. Uses a fairly high batch multiplier to create many smaller
+    # batches, which leads to a measurable increase in the processing speed, especially for large archives. The optimal
+    # multiplier value (4) was determined experimentally.
+    batches = []
+    batch_indices = []  # Keeps track of batch order
+    for i, batch in enumerate(chunk_iterable(messages_to_process, n_workers * 4)):
+        if batch:
+            batches.append((log_path, list(batch), onset_us))
+            batch_indices.append(i)
 
-    # Closes the archive to free up memory
-    archive.close()
+    # Processes batches using ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        # Submits all tasks
+        future_to_index = {
+            executor.submit(_process_frame_message_batch, *batch_args): idx
+            for idx, batch_args in zip(batch_indices, batches, strict=False)
+        }
 
-    # Returns the extracted data
-    return tuple(frame_data)
+        # Collects results while maintaining frame order. This also propagates processing errors to the caller process.
+        results: list[list[np.uint64] | None] = [None] * len(batches)
+
+        # Creates a progress bar for batch processing
+        with tqdm(total=len(batches), desc="Extracting camera frame timestamps", unit="batch") as pbar:
+            for future in as_completed(future_to_index):
+                results[future_to_index[future]] = future.result()
+                pbar.update(1)  # Updates the progress bar after each batch completes
+
+    # Combines processing results in order
+    all_timestamps: list[np.uint64] = []
+    for batch_timestamps in results:
+        # noinspection PyUnreachableCode
+        if batch_timestamps is not None:  # Skips None results
+            all_timestamps.extend(batch_timestamps)
+
+    return tuple(all_timestamps)
