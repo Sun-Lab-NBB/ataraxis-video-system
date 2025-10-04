@@ -1,16 +1,3 @@
-"""This module contains a CLI script that can be used to instantiate a VideoSystem from the command-line interface and
-manually control its runtime.
-
-Primarily, this is helpful for manual and semi-automated evaluation of class performance that benefits from the ability
-to manually control the system. This is also helpful for mapping available camera IDs to physical cameras, as this CLI
-command can be configured to display visual stream from a camera without saving frames.
-
-For production applications, it is highly recommended to use the VideoSystem API, instead of the CLI command available
-through this module. Primarily, this is because the API allows fine-tuning the behavior of the Saver class, which is
-not possible through this CLI script. Almost every use-case will benefit from using an optimally tuned Saver class.
-"""
-
-from typing import Any
 from pathlib import Path
 
 import click
@@ -18,41 +5,63 @@ import numpy as np
 from ataraxis_base_utilities import LogLevel, console
 from ataraxis_data_structures import DataLogger
 
-from .saver import (
-    ImageSaver,
-    VideoSaver,
-    ImageFormats,
-    CPUEncoderPresets,
-    GPUEncoderPresets,
-    InputPixelFormats,
-)
-from .camera import CameraInterfaces
+from .saver import InputPixelFormats
+from .camera import CameraInterfaces, get_opencv_ids, get_harvesters_ids
 from .video_system import VideoSystem
 
+console.enable()  # Enables console output
 
-def _validate_positive_int(_ctx: Any, _param: Any, value: Any) -> int | None:
-    """Ensures that the provided integer value is positive."""
-    if value is not None and value <= 0:  # pragma: no cover
-        raise click.BadParameter("Must be a positive integer.")
-
-    if value is not None:
-        return int(value)
-
-    return None  # pragma: no cover
+# Ensures that displayed CLICK help messages are formatted according to the lab standard.
+CONTEXT_SETTINGS = dict(max_content_width=120)  # or any width you want
 
 
-def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None:
-    """Ensures that the provided float value is positive."""
-    if value is not None and value <= 0:  # pragma: no cover
-        raise click.BadParameter("Must be a positive number (integer or float).")
-
-    if value is not None:
-        return float(value)
-
-    return None  # pragma: no cover
+@click.group("axvs", context_settings=CONTEXT_SETTINGS)
+def axvs_cli() -> None:
+    """This Command-Line Interface (CLI) functions as the entry-point for interfacing with all interactive components
+    of the ataraxis-video-system (AXVS) library.
+    """
 
 
-@click.command()
+@axvs_cli.command("id")
+@click.option(
+    "-i",
+    "--interface",
+    type=click.Choice(["opencv", "harvesters"]),
+    default="opencv",
+    required=True,
+    help="The camera interface for which to discover and list compatible camera IDs. Note, the 'harvesters' interface "
+    "also requires the path to the .cti file to be provided through -cti argument.",
+)
+@click.option(
+    "-cti",
+    "--cti-path",
+    required=False,
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
+    help="The path to the .cti file that stores the GenTL producer interface. This is required to discover "
+    "'harvesters' camera ids.",
+)
+def list_ids(interface: str, cti_path: str) -> None:
+    """Lists ids for the cameras available through the selected interface. Subsequently, the IDs from this list can be
+    used when instantiating Camera class through API or as ain input to 'live-run' CLI script.
+
+    This method is primarily intended to be used on systems where the exact camera layout is not known. This is
+    especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
+    """
+    # Depending on the interface, calls the appropriate ID-discovery command and lists discovered IDs.
+    if interface == "opencv":
+        opencv_ids = get_opencv_ids()
+        console.echo("Available OpenCV camera IDs:")
+        for num, id_string in enumerate(opencv_ids, start=1):
+            console.echo(f"{num}: {id_string}")
+
+    elif interface == "harvesters":  # pragma: no cover
+        harvester_ids = get_harvesters_ids(Path(cti_path))
+        console.echo("Available Harvesters camera IDs:")
+        for num, id_string in enumerate(harvester_ids, start=1):
+            console.echo(f"{num}: {id_string}")
+
+
+@click.command("run")
 @click.option(
     "-c",
     "--camera-backend",
@@ -120,7 +129,6 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     type=int,
     default=600,
     show_default=True,
-    callback=_validate_positive_int,
     help="The width of the camera frames to acquire, in pixels. Must be a positive integer.",
 )
 @click.option(
@@ -129,7 +137,6 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     type=int,
     default=400,
     show_default=True,
-    callback=_validate_positive_int,
     help="The height of the camera frames to acquire, in pixels. Must be a positive integer.",
 )
 @click.option(
@@ -138,7 +145,6 @@ def _validate_positive_float(_ctx: Any, _param: Any, value: Any) -> float | None
     type=float,
     default=30.0,
     show_default=True,
-    callback=_validate_positive_float,
     help="The frames per second (FPS) to use for the camera. Must be a positive number.",
 )
 def live_run(
@@ -275,7 +281,3 @@ def live_run(
         f"Live VideoSystem: terminated. Saved frames (if any) are available from the {output_directory} directory."
     )
     console.echo(message=message, level=LogLevel.SUCCESS)
-
-
-if __name__ == "__main__":  # pragma: no cover
-    live_run()
