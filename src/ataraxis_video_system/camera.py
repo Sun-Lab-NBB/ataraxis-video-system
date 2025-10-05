@@ -13,8 +13,8 @@ import numpy as np
 import appdirs
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
-from harvesters.core import Harvester, ImageAcquirer
-from harvesters.util.pfnc import (
+from harvesters.core import Harvester, ImageAcquirer  # type: ignore[import-untyped]
+from harvesters.util.pfnc import (  # type: ignore[import-untyped]
     bgr_formats,
     rgb_formats,
     mono_location_formats,
@@ -136,7 +136,7 @@ def get_opencv_ids() -> tuple[CameraInformation, ...]:
         cv2.setLogLevel(prev_log_level)
 
 
-def get_harvesters_ids(cti_path: Path) -> tuple[CameraInformation, ...]:
+def get_harvesters_ids() -> tuple[CameraInformation, ...]:
     """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible
     through the Harvesters library.
 
@@ -144,17 +144,12 @@ def get_harvesters_ids(cti_path: Path) -> tuple[CameraInformation, ...]:
         This method bundles the discovered ID (index) information with the serial number and the model for each camera
         to support identifying the cameras.
 
-    Args:
-        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
-            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
-            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
-
     Returns:
         A tuple of CameraInformation instances, one for each discovered Harvesters-compatible camera.
     """
     # Instantiates the class and adds the input .cti file.
     harvester = Harvester()
-    harvester.add_file(file_path=str(cti_path))
+    harvester.add_file(file_path=str(_get_cti_path()))
 
     # Gets the list of accessible cameras
     harvester.update()
@@ -183,7 +178,7 @@ def get_harvesters_ids(cti_path: Path) -> tuple[CameraInformation, ...]:
         working_ids.append(camera_data)
 
     # Resets the harvester instance after discovering the camera IDs.
-    harvester.remove_file(file_path=str(cti_path))
+    harvester.remove_file(file_path=str(_get_cti_path()))
     harvester.reset()
 
     return tuple(working_ids)  # Converts to tuple before returning to caller.
@@ -428,7 +423,7 @@ class OpenCVCamera:
             return InputPixelFormats.BGR
         return InputPixelFormats.MONOCHROME
 
-    def grab_frame(self) -> NDArray[np.integer[Any]]:
+    def grab_frame(self) -> NDArray[np.floating[Any] | np.integer[Any]]:
         """Grabs the first available frame from the managed camera's acquisition buffer.
 
         This method has to be called repeatedly (cyclically) to fetch the newly acquired frames from the camera.
@@ -466,6 +461,7 @@ class OpenCVCamera:
         if not self._acquiring:
             self._acquiring = True
 
+        frame: NDArray[np.floating[Any] | np.integer[Any]]
         success, frame = self._camera.read()
         if not success:
             message = (
@@ -767,7 +763,7 @@ class MockCamera:
     def __init__(
         self,
         system_id: int,
-        frame_rate: float | None = None,
+        frame_rate: int | None = None,
         frame_width: int | None = None,
         frame_height: int | None = None,
         *,
@@ -791,7 +787,10 @@ class MockCamera:
         for _ in range(10):
             if self._color:
                 frame = rng.integers(0, 256, size=(self._frame_height, self._frame_width, 3), dtype=np.uint8)
-                bgr_frame = cv2.cvtColor(src=frame, code=cv2.COLOR_RGB2BGR)  # Ensures the order of the colors is BGR
+                # Ensures the order of the colors is BGR
+                bgr_frame: NDArray[np.uint8] = cv2.cvtColor(  # type: ignore[assignment]
+                    src=frame, code=cv2.COLOR_RGB2BGR
+                )
                 frames_list.append(bgr_frame)
             else:
                 # grayscale frames have only one channel, so order does not matter

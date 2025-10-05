@@ -1,3 +1,7 @@
+"""This module provides the Command Line Interface (CLI) installed into the python's environment together with the
+library.
+"""
+
 from pathlib import Path
 
 import click
@@ -5,14 +9,14 @@ import numpy as np
 from ataraxis_base_utilities import LogLevel, console
 from ataraxis_data_structures import DataLogger
 
-from .saver import InputPixelFormats
-from .camera import CameraInterfaces, get_opencv_ids, get_harvesters_ids
+from .saver import OutputPixelFormats, EncoderSpeedPresets, check_gpu_availability, check_ffmpeg_availability
+from .camera import CameraInterfaces, add_cti_file, get_opencv_ids, get_harvesters_ids
 from .video_system import VideoSystem
 
 console.enable()  # Enables console output
 
 # Ensures that displayed CLICK help messages are formatted according to the lab standard.
-CONTEXT_SETTINGS = dict(max_content_width=120)  # or any width you want
+CONTEXT_SETTINGS = {"max_content_width": 120}
 
 
 @click.group("axvs", context_settings=CONTEXT_SETTINGS)
@@ -22,101 +26,161 @@ def axvs_cli() -> None:
     """
 
 
+@axvs_cli.command("cti")
 @click.option(
     "-cti",
     "--cti-path",
     required=False,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
-    help="The path to the .cti file that stores the GenTL producer interface. This is required to discover "
-    "'harvesters' camera ids.",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path),
+    help=(
+        "The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the "
+        "file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable. "
+        "See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details."
+    ),
 )
-def add_cti() -> None:
-    pass
+def set_cti_file(cti_path: Path) -> None:
+    """Configures the library to use the input CTI file for all future runtimes involving GeniCam cameras.
+
+    This library relies on the Harvesters library to interface with GeniCam-compatible cameras. In turn, the Harvesters
+    library requires the GenTL Producer interface (.cti) file to discover and interface with compatible cameras. This
+    command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library.
+    """
+    add_cti_file(cti_path=cti_path)
+
+    # Notifies the user that the CTI file has been successfully set.
+    console.echo(f"AXVS CTI file: Set to {cti_path}.", level=LogLevel.SUCCESS)
 
 
 @axvs_cli.command("id")
 @click.option(
     "-i",
     "--interface",
-    type=click.Choice(["opencv", "harvesters"]),
+    type=click.Choice(["opencv", "harvesters"], case_sensitive=False),
     default="opencv",
     required=True,
-    help="The camera interface for which to discover and list compatible camera IDs. Note, the 'harvesters' interface "
-    "also requires the path to the .cti file to be provided through -cti argument.",
+    help="The camera interface for which to discover and list compatible camera IDs.",
 )
-@click.option(
-    "-cti",
-    "--cti-path",
-    required=False,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
-    help="The path to the .cti file that stores the GenTL producer interface. This is required to discover "
-    "'harvesters' camera ids.",
-)
-def list_ids(interface: str, cti_path: str) -> None:
-    """Lists ids for the cameras available through the selected interface. Subsequently, the IDs from this list can be
-    used when instantiating Camera class through API or as ain input to 'live-run' CLI script.
+def list_camera_indices(interface: str) -> None:
+    """Discovers all cameras compatible with the chosen interface and prints their identification information.
 
-    This method is primarily intended to be used on systems where the exact camera layout is not known. This is
-    especially true for the OpenCV id-discovery, which does not provide enough information to identify cameras.
+    This command is primarily intended to be used during the initial system configuration to determine the positional
+    indices of each camera in the list of all cameras discoverable by the chosen interface. The discovered indices can
+    then be used to initialize the VideoSystem instances to interface with the discovered cameras.
     """
-    # Depending on the interface, calls the appropriate ID-discovery command and lists discovered IDs.
+    # Depending on the interface, calls the appropriate ID-discovery command and displays resolved camera data.
     if interface == "opencv":
-        opencv_ids = get_opencv_ids()
-        console.echo("Available OpenCV camera IDs:")
-        for num, id_string in enumerate(opencv_ids, start=1):
-            console.echo(f"{num}: {id_string}")
+        # Discovers compatible cameras
+        opencv_cameras = get_opencv_ids()
 
-    elif interface == "harvesters":  # pragma: no cover
-        harvester_ids = get_harvesters_ids(Path(cti_path))
-        console.echo("Available Harvesters camera IDs:")
-        for num, id_string in enumerate(harvester_ids, start=1):
-            console.echo(f"{num}: {id_string}")
+        # If no cameras are discovered, displays an error message and aborts the runtime.
+        if len(opencv_cameras) == 0:
+            console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.ERROR)
+            return
+
+        # Otherwise, lists the data for all discovered cameras.
+        console.echo(
+            message=(
+                "Warning! Currently, it is impossible to resolve camera models or serial numbers through the "
+                "OpenCV interface. It is recommended to check each discovered OpenCV camera via the 'axvs run' "
+                "CLI command to precisely map the discovered camera indices to specific camera hardware."
+            ),
+            level=LogLevel.WARNING,
+        )
+        console.echo("Available OpenCV cameras:")
+        for num, camera_data in enumerate(opencv_cameras, start=0):
+            console.echo(
+                message=(
+                    f"OpenCV camera {num}: index={camera_data.camera_index}, "
+                    f"frame_height={camera_data.frame_height} pixels, frame_width={camera_data.frame_width} pixels, "
+                    f"frame_rate={camera_data.acquisition_frame_rate}."
+                )
+            )
+
+    # Same as above, but for the Harvesters interface.
+    elif interface == "harvesters":
+        harvesters_cameras = get_harvesters_ids()
+
+        if len(harvesters_cameras) == 0:
+            console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.ERROR)
+            return
+
+        # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
+        # mao discovered indices to physical hardware.
+        console.echo("Available Harvesters cameras:")
+        for num, camera_data in enumerate(harvesters_cameras, start=1):
+            console.echo(
+                message=(
+                    f"Harvesters camera {num}: index={camera_data.camera_index}, model={camera_data.model}, "
+                    f"serial_code={camera_data.serial_number} frame_height={camera_data.frame_height} pixels,"
+                    f"frame_width={camera_data.frame_width} pixels, frame_rate={camera_data.acquisition_frame_rate}."
+                )
+            )
 
 
-@click.command("run")
+@axvs_cli.command("check")
+def check_requirements() -> None:
+    """Checks whether the host system meets the requirements for CPU and (optionally) GPU video encoding.
+
+    This command allows checking whether the local system is set up correctly to support saving acquired camera frames
+    as videos. As a minimum, this requires that the system has the FFMPEG library installed and available on the
+    system's Path. Additionally, to support GPU (hardware) encoding, the system must have an Nvidia GPU. Note; the
+    presence of the GPU is evaluated by calling the 'nvidia-smi' command, so it must also be installed on the local
+    system alongside the GPU for the check to work as expected.
+    """
+    if not check_ffmpeg_availability():
+        console.echo(
+            message="Video saving requirements: Not met. Unable to access the FFMPEG library.", level=LogLevel.ERROR
+        )
+    elif not check_gpu_availability():
+        console.echo(
+            message=(
+                "Video saving requirements: Partially met. The local system supports CPU video encoding via the "
+                "FFMPEG library, but does not have an Nvidia GPU for GPU encoding."
+            ),
+            level=LogLevel.WARNING,
+        )
+    else:
+        console.echo(
+            message=("Video saving requirements: Fully met. The system supports both CPU and GPU video encoding."),
+            level=LogLevel.SUCCESS,
+        )
+
+
+@axvs_cli.command("run")
 @click.option(
-    "-c",
-    "--camera-backend",
+    "-i",
+    "--interface",
     type=click.Choice(["mock", "harvesters", "opencv"]),
     default="mock",
     show_default=True,
-    help="The backend to use for the Camera class. For Gen-TL compatible cameras, it is recommended to use "
-    "'harvesters' backend. When using 'harvesters' backend, make sure to provide the path to the .cti file "
-    "through the -cti option.",
+    help="The camera interface to use for interacting with the camera hardware. It is recommended to use the "
+    "'harvesters' interface for all GeniCam-compatible cameras and the 'opencv' interface for all other cameras.",
 )
 @click.option(
-    "-i",
-    "--camera_index",
+    "-c",
+    "--camera-index",
     type=int,
     default=0,
     show_default=True,
-    help="The list-id of the camera to use, for 'opencv' and 'harvesters' backends. This option allows selecting the "
-    "desired camera, if multiple are available on the host-system.",
+    help="The index of the target camera in the list of all cameras discoverable through the chosen interface. This "
+    "option allows selecting the desired camera if multiple are available on the host-system.",
 )
 @click.option(
-    "-s",
-    "--saver-backend",
-    type=click.Choice(["image", "video_cpu", "video_gpu"]),
-    default="video_cpu",
+    "-g",
+    "--gpu-index",
+    type=int,
+    default=-1,
     show_default=True,
-    help="The backend to use for the Saver class. If the host-system has an NVIDIA GPU, it is recommended to use the"
-    "video_gpu backend which efficiently encodes acquired camera frames as a video file. Image backend will save"
-    "camera frames as individual images, using 1 CPU core and multiple threads.",
+    help="The index of the GPU device to use for video encoding. Setting this option to a value below zero (default) "
+    "forces the VideoSystem to use the CPU for encoding the videos. Note; GPU encoding currently requires an "
+    "Nvidia GPU that supports hardware video encoding.",
 )
 @click.option(
     "-o",
     "--output-directory",
     required=True,
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True),
-    help="The path to the output directory where to save the acquired frames.",
-)
-@click.option(
-    "-d",
-    "--display-frames",
-    is_flag=True,
-    show_default=True,
-    default=False,
-    help="Determines whether to display acquired frames in real time.",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True, path_type=Path),
+    help="The path to the output directory where to save the acquired camera frames as an .mp4 video file.",
 )
 @click.option(
     "-m",
@@ -127,21 +191,12 @@ def list_ids(interface: str, cti_path: str) -> None:
     help="Determines whether the camera records frames in monochrome (grayscale) or colored spectrum.",
 )
 @click.option(
-    "-cti",
-    "--cti_path",
-    required=False,
-    default=None,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
-    help="The path to the .cti file, which is sued by the 'harvesters' camera backend. This is required for "
-    "'harvesters' backend to work as expected.",
-)
-@click.option(
     "-w",
     "--width",
     type=int,
     default=600,
     show_default=True,
-    help="The width of the camera frames to acquire, in pixels. Must be a positive integer.",
+    help="The width of the camera frames to acquire, in pixels.",
 )
 @click.option(
     "-h",
@@ -149,111 +204,67 @@ def list_ids(interface: str, cti_path: str) -> None:
     type=int,
     default=400,
     show_default=True,
-    help="The height of the camera frames to acquire, in pixels. Must be a positive integer.",
+    help="The height of the camera frames to acquire, in pixels.",
 )
 @click.option(
     "-f",
-    "--fps",
-    type=float,
-    default=30.0,
+    "--frame-rate",
+    type=int,
+    default=30,
     show_default=True,
-    help="The frames per second (FPS) to use for the camera. Must be a positive number.",
+    help="The rate at which to acquire the frames, in frames per second.",
 )
 def live_run(
-    camera_backend: str,
+    interface: str,
     camera_index: int,
-    saver_backend: str,
-    output_directory: str,
-    display_frames: bool,
-    monochrome: bool,
-    cti_path: str | None,
+    gpu_index: int,
+    output_directory: Path,
     width: int,
     height: int,
-    fps: float,
+    frame_rate: int,
+    *,
+    monochrome: bool,
 ) -> None:
-    """Instantiates Camera, Saver, and VideoSystem classes using the input parameters and runs the VideoSystem with
-    manual control from the user.
+    """Creates a VideoSystem instance using the input parameters and starts an interactive imaging session.
 
-    This method uses input() command to allow interfacing with the running system through a terminal window. The user
-    has to use the terminal to quite the runtime and enable / disable saving acquired frames to non-volatile memory.
-
-    Notes:
-        This CLI script does not support the full range of features offered through the library. Specifically, it does
-        not allow fine-tuning Saver class parameters and supports limited Camera and VideoSystem class behavior
-        configuration. Use the API for production applications.
+    This command allows testing various components of the VideoSystem by running an interactive session controlled via
+    the terminal. Primarily, this CLI is designed to help with the initial identification and calibration of VideoSystem
+    instances and does not support the full range of features offered through the VideoSystem class API.
     """
-    console.enable()  # Enables console output
-
     # Initializes and starts the DataLogger instance
-    logger = DataLogger(output_directory=Path(output_directory))
+    logger = DataLogger(output_directory=Path(output_directory), instance_name="axvs_live_run")
     logger.start()
 
-    # Initializes the system
+    # Uses command arguments to resolve VideoSystem configuration parameters
+    if interface == "mock":
+        camera_interface = CameraInterfaces.MOCK
+    elif interface == "harvesters":
+        camera_interface = CameraInterfaces.HARVESTERS
+    else:
+        camera_interface = CameraInterfaces.OPENCV
+
+    # Initializes the VideoSystem system
     video_system = VideoSystem(
         system_id=np.uint8(111),
         data_logger=logger,
         output_directory=Path(output_directory),
-        cti_path=Path(cti_path) if cti_path is not None else None,
+        camera_interface=camera_interface,
+        camera_index=camera_index,
+        frame_width=width,
+        frame_height=height,
+        frame_rate=frame_rate,
+        display_frame_rate=25,  # Statically sets the display rate to 25 fps.
+        color=not monochrome,
+        gpu=gpu_index,
+        video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
+        encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
+        output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
+        quantization_parameter=-1,  # Uses the encoder's default quantization parameter.
     )
-
-    # Adds the requested camera to the VideoSystem
-    if camera_backend == "mock":
-        video_system._add_camera(
-            save_frames=True,
-            display_frames=display_frames,
-            camera_backend=CameraInterfaces.MOCK,
-            camera_index=camera_index,
-            frame_width=width,
-            frame_height=height,
-            acquisition_frame_rate=fps,
-            color=not monochrome,
-        )
-    elif camera_backend == "harvesters":  # pragma: no cover
-        video_system._add_camera(
-            save_frames=True,
-            display_frames=display_frames,
-            camera_backend=CameraInterfaces.HARVESTERS,
-            camera_index=camera_index,
-            frame_width=width,
-            frame_height=height,
-            acquisition_frame_rate=fps,
-        )
-    else:  # pragma: no cover
-        video_system._add_camera(
-            save_frames=True,
-            display_frames=display_frames,
-            camera_backend=CameraInterfaces.OPENCV,
-            camera_index=camera_index,
-            frame_width=width,
-            frame_height=height,
-            acquisition_frame_rate=fps,
-            color=not monochrome,
-        )
-
-    # Instantiates the requested saver
-    if monochrome:
-        pixel_color = InputPixelFormats.MONOCHROME  # pragma: no cover
-    else:
-        pixel_color = InputPixelFormats.BGR
-
-    saver: ImageSaver | VideoSaver
-    if saver_backend == "image":
-        video_system.add_image_saver(
-            image_format=ImageFormats.PNG,
-            png_compression=1,
-            thread_count=10,
-        )
-    else:  # pragma: no cover
-        video_system.add_saver(
-            hardware_encoding=False if saver_backend == "video_cpu" else True,
-            preset=CPUEncoderPresets.FAST if saver_backend == "video_cpu" else GPUEncoderPresets.FAST,
-            input_pixel_format=pixel_color,
-        )
 
     # Starts the system by spawning child processes
     video_system.start()
-    message = "Live VideoSystem: initialized and started (spawned child processes)."
-    console.echo(message=message, level=LogLevel.INFO)
+    console.echo(message="Live VideoSystem: initialized and started (spawned child processes).", level=LogLevel.INFO)
 
     # Ensures that manual control instruction is only shown once
     once: bool = True
@@ -261,35 +272,34 @@ def live_run(
     while video_system.started:
         if once:
             message = (
-                "Live VideoSystem manual control: activated. Enter 'q' to terminate system runtime."
-                "Enter 'w' to start saving camera frames. Enter 's' to stop saving camera frames. After termination, "
-                "the system may stay alive for up to 60 seconds to finish saving buffered frames."
+                "Enter 'q' to terminate system's runtime. Enter 'w' to start saving camera frames. "
+                "Enter 's' to stop saving camera frames. Note, after termination, the system may stay alive for up "
+                "to 600 seconds to finish saving buffered frame data."
             )
             console.echo(message=message, level=LogLevel.SUCCESS)
             once = False
 
         key = input("\nEnter command key:")
-        if key.lower()[0] == "q":
-            message = "Terminating Live VideoSystem..."
+        if key.lower() == "q":
+            message = "Terminating the VideoSystem..."
             console.echo(message)
             video_system.stop()
             logger.stop()
-        elif key.lower()[0] == "w":  # pragma: no cover
-            message = "Starting Live VideoSystem camera frames saving..."
+        elif key.lower() == "w":  # pragma: no cover
+            message = "VideoSystem's camera frame saving: Started."
             console.echo(message)
             video_system.start_frame_saving()
-        elif key.lower()[0] == "s":  # pragma: no cover
-            message = "Stopping Live VideoSystem camera frames saving..."
+        elif key.lower() == "s":  # pragma: no cover
+            message = "VideoSystem's camera frame saving: Stopped."
             console.echo(message)
             video_system.stop_frame_saving()
         else:  # pragma: no cover
             message = (
-                f"Unknown input key {key.lower()[0]} encountered while interacting with Live VideoSystem. Use 'q' to "
-                f"terminate the system, 'w' to start saving frames, and 's' to stop saving frames."
+                f"Unknown input key {key.lower()} encountered while interacting with the VideoSystem. Use 'q' to "
+                f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
             )
             console.echo(message, level=LogLevel.WARNING)
-
-    message = (
-        f"Live VideoSystem: terminated. Saved frames (if any) are available from the {output_directory} directory."
+    console.echo(
+        message=f"VideoSystem: Terminated. Saved frames (if any) are available from the {output_directory} directory.",
+        level=LogLevel.SUCCESS,
     )
-    console.echo(message=message, level=LogLevel.SUCCESS)

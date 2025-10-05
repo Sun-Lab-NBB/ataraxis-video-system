@@ -322,7 +322,7 @@ class VideoSystem:
         # Only adds the video saver if the user intends to save the acquired frames (as indicated by providing a valid
         # output directory).
         self._saver: VideoSaver | None = None
-        if output_directory is not None:
+        if self._output_file is not None:
             # Validates the video saver configuration parameters:
             if not isinstance(gpu, int):
                 message = (
@@ -356,7 +356,7 @@ class VideoSystem:
                 console.error(error=ValueError, message=message)
             if (
                 not isinstance(quantization_parameter, int)
-                or not -1 < quantization_parameter <= _MAXIMUM_QUANTIZATION_VALUE
+                or not -1 <= quantization_parameter <= _MAXIMUM_QUANTIZATION_VALUE
             ):
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "
@@ -405,8 +405,8 @@ class VideoSystem:
 
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
-        self._logger_queue: MPQueue = data_logger.input_queue
-        self._saver_queue: MPQueue = self._mp_manager.Queue()
+        self._logger_queue: MPQueue = data_logger.input_queue  # type: ignore[type-arg]
+        self._saver_queue: MPQueue = self._mp_manager.Queue()  # type: ignore[type-arg, assignment]
         self._terminator_array: SharedMemoryArray | None = None
         self._producer_process: Process | None = None
         self._consumer_process: Process | None = None
@@ -491,7 +491,9 @@ class VideoSystem:
 
         # Waits for the processes to report that they have been successfully initialized.
         initialization_timer.reset()
-        while self._terminator_array[2] != 1 and self._terminator_array[3] != 1:  # pragma: no cover
+        while self._terminator_array[2] != 1 and (
+            self._consumer_process is not None and self._terminator_array[3] != 1
+        ):  # pragma: no cover
             # If the processes take too long to initialize or die, raises an error.
             error = False
             message: str = ""  # Pre-initialization to appease mypy
@@ -505,9 +507,10 @@ class VideoSystem:
                     f"managed by the process."
                 )
                 error = True
-            elif (
-                initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[3] != 1
-            ) or not self._consumer_process.is_alive():
+            elif self._consumer_process is not None and (
+                (initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[3] != 1)
+                or not self._consumer_process.is_alive()
+            ):
                 message = (
                     f"Unable to start the VideoSystem with id {self._system_id}. The consumer process has "
                     f"unexpectedly shut down or stalled for more than {_PROCESS_INITIALIZATION_TIME} seconds "
@@ -585,7 +588,7 @@ class VideoSystem:
 
     @staticmethod
     def _frame_display_loop(
-        display_queue: Queue,
+        display_queue: Queue,  # type: ignore[type-arg]
         system_id: np.uint8,
     ) -> None:  # pragma: no cover
         """Continuously fetches frame images from the display_queue and displays them via the OpenCV's imshow()
@@ -635,8 +638,8 @@ class VideoSystem:
         system_id: np.uint8,
         camera: OpenCVCamera | HarvestersCamera | MockCamera,
         display_frame_rate: int,
-        saver_queue: MPQueue,
-        logger_queue: MPQueue,
+        saver_queue: MPQueue,  # type: ignore[type-arg]
+        logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
         """Continuously grabs frames from the managed camera and queues them up to be saved by the consumer process.
@@ -668,7 +671,7 @@ class VideoSystem:
 
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all future time
         # readouts.
-        onset: NDArray[np.uint8] = get_timestamp(output_format=TimestampFormats.BYTES)
+        onset: NDArray[np.uint8] = get_timestamp(output_format=TimestampFormats.BYTES)  # type: ignore[assignment]
         frame_timer.reset()  # Immediately resets the stamp timer to make it as close as possible to the onset time
 
         # Sends the onset data to the logger queue. The acquisition_time of 0 is universally interpreted as the timer
@@ -679,7 +682,7 @@ class VideoSystem:
         # displaying the frames.
         show_time: float | None = None
         show_timer: PrecisionTimer | None = None
-        display_queue: Queue | None = None
+        display_queue: Queue | None = None  # type: ignore[type-arg]
         display_thread: Thread | None = None
         if display_frame_rate > 0:
             # Creates the queue and thread for displaying camera frames
@@ -709,8 +712,9 @@ class VideoSystem:
 
                 # If the camera is configured to display acquired frames, queues each frame to be displayed. The rate
                 # at which the frames are displayed does not have to match the rate at which they are acquired.
-                if display_queue is not None and show_timer.elapsed >= show_time:
-                    show_timer.reset()  # Resets the display timer
+                if display_queue is not None and show_timer.elapsed >= show_time:  # type: ignore[union-attr, operator]
+                    # Resets the display timer
+                    show_timer.reset()  # type: ignore[union-attr]
                     display_queue.put(frame)
 
                 # If frame saving is enabled, sends the acquired frame data and the acquisition timestamp to the
@@ -743,8 +747,8 @@ class VideoSystem:
     def _frame_saving_loop(
         system_id: np.uint8,
         saver: VideoSaver,
-        saver_queue: MPQueue,
-        logger_queue: MPQueue,
+        saver_queue: MPQueue,  # type: ignore[type-arg]
+        logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
         """Continuously grabs the frames from the image_queue and saves them as an .mp4 video file.
@@ -837,7 +841,7 @@ class VideoSystem:
         timer = PrecisionTimer(precision="ms")
 
         # The watchdog function runs until the global shutdown signal is emitted.
-        while not self._terminator_array[0]:
+        while self._terminator_array is not None and not self._terminator_array[0]:
             # Checks process state every 20 ms. Releases the GIL while waiting.
             timer.delay(delay=20, allow_sleep=True, block=False)
 
@@ -866,7 +870,7 @@ class VideoSystem:
                 while (
                     self._consumer_process is not None
                     and not self._saver_queue.empty()
-                    and self._producer_process.is_alive()
+                    and self._consumer_process.is_alive()
                 ):
                     if timer.elapsed > _PROCESS_SHUTDOWN_TIME * 1000:
                         break

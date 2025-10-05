@@ -216,6 +216,12 @@ class VideoSaver:
         # Stores the caller VideoSystem ID to a class attribute.
         self._system_id: int = system_id
 
+        # Ensures that all enumeration inputs are stored as enumerations:
+        video_encoder = VideoEncoders(video_encoder)
+        encoder_speed_preset = EncoderSpeedPresets(encoder_speed_preset)
+        input_pixel_format = InputPixelFormats(input_pixel_format)
+        output_pixel_format = OutputPixelFormats(output_pixel_format)
+
         # Ensures that the output file's directory exists.
         ensure_directory_exists(output_file)
 
@@ -354,7 +360,7 @@ class VideoSaver:
 
         # Writes the input frame to the encoder's standard input pipe.
         try:
-            self._ffmpeg_process.stdin.write(frame.tobytes())
+            self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore[union-attr]
         except Exception as e:  # pragma: no cover
             message = (
                 f"The FFMPEG process of the VideoSaver instance for the VideoSystem with id {self._system_id} "
