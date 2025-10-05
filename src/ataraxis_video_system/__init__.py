@@ -16,6 +16,11 @@ if mp.get_start_method(allow_none=True) is None:
 # Improves frame rendering (display) on Windows operating systems.
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 
+# The QT bundled with OpenCV (used for live image rendering) does not include the wayland support plugin. This forces
+# QT to use the X11 compatibility layer when it is called from a Wayland system.
+if "WAYLAND_DISPLAY" in os.environ:
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 
 from .saver import (
     VideoEncoders,
