@@ -22,6 +22,18 @@ def axvs_cli() -> None:
     """
 
 
+@click.option(
+    "-cti",
+    "--cti-path",
+    required=False,
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
+    help="The path to the .cti file that stores the GenTL producer interface. This is required to discover "
+    "'harvesters' camera ids.",
+)
+def add_cti() -> None:
+    pass
+
+
 @axvs_cli.command("id")
 @click.option(
     "-i",

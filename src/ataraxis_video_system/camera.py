@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+import appdirs
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer
 from harvesters.core import Harvester, ImageAcquirer
@@ -18,14 +19,14 @@ from harvesters.util.pfnc import (
     rgb_formats,
     mono_location_formats,
 )
-from ataraxis_base_utilities import console
+from ataraxis_base_utilities import console, ensure_directory_exists
 
 from .saver import InputPixelFormats
 
 # Repackages Harvesters color formats into sets to optimize the efficiency of the HarvestersCamera grab_frames() method:
-mono_formats = set(mono_location_formats)
-color_formats = set(bgr_formats) | set(rgb_formats)
-all_rgb_formats = set(rgb_formats)
+_mono_formats = set(mono_location_formats)
+_color_formats = set(bgr_formats) | set(rgb_formats)
+_all_rgb_formats = set(rgb_formats)
 
 # Determines the size of the frame pool used by the MockCamera instances.
 _FRAME_POOL_SIZE = 10
@@ -186,6 +187,72 @@ def get_harvesters_ids(cti_path: Path) -> tuple[CameraInformation, ...]:
     harvester.reset()
 
     return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+
+def add_cti_file(cti_path: Path) -> None:
+    """Configures the 'harvesters' camera interface to use the provided .cti file during all future runtimes.
+
+    The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
+    compatible GenTL devices (cameras). This function configures the local machine to use the specified .cti file
+    for all future runtimes that use the 'harvesters' camera interface.
+
+    Notes:
+        The path to the .cti file is stored inside the user's data directory, so that it can be reused between library
+        calls.
+
+    Args:
+        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
+            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
+            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
+    """
+    # Verifies the input CTI file.
+    harvester = Harvester()
+    harvester.add_cti_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+
+    # Resolves the path to the library-specific .txt file used to store the path to the currently used .cti file.
+    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    cti_path_file = app_dir.joinpath("cti_path.txt")
+
+    # In case this function is called before the app directory is created, ensures the app directory exists
+    ensure_directory_exists(cti_path_file)
+
+    # Overwrites the contents of the path file with the verified .cti file path.
+    with cti_path_file.open("w") as f:
+        f.write(str(cti_path))
+
+
+def _get_cti_path() -> Path:
+    """Resolves and returns the path to the CTI file that provides the GenTL Producer interface.
+
+    This service function is used when initializing HarvestersCamera instances to resolve the GenTL Producer interface.
+
+    Returns:
+        The path to the GenTL Producer interface (.cti) file.
+
+    Raises:
+        FileNotFoundError: If the function is unable to resolve the path to the .cti file.
+    """
+    # Uses appdirs to locate the user's data directory and resolve the path to the .cti path file.
+    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    cti_path_file = app_dir.joinpath("cti_path.txt")
+
+    # If the path file or the library data directory does not exist, aborts with an error.
+    if not cti_path_file.exists():
+        message = (
+            "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
+            "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti' CLI "
+            "command."
+        )
+        console.error(message=message, error=FileNotFoundError)
+
+    # Once the location of the path storage file is resolved, reads the .cti file path.
+    with cti_path_file.open() as f:
+        cti_path = Path(f.read().strip())
+
+    # Verifies the CTI file's validity before returning it to the caller.
+    harvester = Harvester()
+    harvester.add_cti_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    return cti_path
 
 
 class OpenCVCamera:
@@ -424,9 +491,6 @@ class HarvestersCamera:
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
-        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
-            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
-            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
         camera_index: The index of the camera in the list of all cameras discoverable by Harvesters, e.g.: 0 for the
             first available camera, 1 for the second, etc. This specifies the camera hardware the instance should
             interface with at runtime.
@@ -455,7 +519,6 @@ class HarvestersCamera:
     def __init__(
         self,
         system_id: int,
-        cti_path: Path,
         camera_index: int = 0,
         frame_rate: int | None = None,
         frame_width: int | None = None,
@@ -474,7 +537,7 @@ class HarvestersCamera:
         # Initializes the Harvester class to discover the list of available cameras.
         self._harvester: Harvester = Harvester()
         # Adds the .cti file to the class. This also verifies the file's existence and validity.
-        self._harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+        self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
         self._harvester.update()  # Discovers compatible cameras using the GenTL interface specified by the CTI file.
 
         # Pre-creates the attribute to store the initialized ImageAcquirer object for the connected camera.
@@ -636,7 +699,7 @@ class HarvestersCamera:
                 return out_array
 
             # For color data, evaluates the input format and reshapes the data as necessary.
-            if data_format in color_formats:  # pragma: no cover
+            if data_format in _color_formats:  # pragma: no cover
                 # Reshapes the data into RGB + A format as the first processing step.
                 content.data.reshape(
                     height,
@@ -646,7 +709,7 @@ class HarvestersCamera:
 
                 # Swaps every R and B value (RGB → BGR) ot produce BGR / BGRA images. This ensures consistency
                 # with the OpenCVCamera API. Note, this is only done if the image data is in the RGB format.
-                if data_format in all_rgb_formats:
+                if data_format in _all_rgb_formats:
                     frame: NDArray[np.integer[Any]] = content[:, :, ::-1].copy()
 
                 self._color = True  # Ensures that the color flag is set to True.

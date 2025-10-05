@@ -51,6 +51,7 @@ dependencies = [
     "ataraxis-base-utilities>=4,<5",
     "ataraxis-data-structures>=4,<5",
     "click>=8,<9",
+    "appdirs>=1,<2",
 ]
 
 [project.urls]
@@ -71,7 +72,7 @@ dev = [
     "ataraxis-automation>=6,<7",
 
     # Types:
-    "types-pillow>=10,<11",
+    "types-appdirs>=1,<2",
 ]
 
 # Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.

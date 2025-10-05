@@ -100,10 +100,6 @@ class VideoSystem:
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
             a single-channel format. This argument is only used by the OpenCV and Mock camera interfaces, the
             Harvesters interface infers this information directly from the camera's configuration.
-        cti_path: The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the
-            file supplied by the camera vendor, but a general Producer, such as mvImpactAcquire, is also acceptable.
-            See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details. This argument is
-            only used by the Harvesters camera interface.
         gpu: The index of the GPU to use for video encoding. Setting this argument to a value of -1 (default) configures
             the instance to use the CPU for encoding. Valid GPU indices can be obtained from the 'nvidia-smi' terminal
             command.
@@ -156,7 +152,6 @@ class VideoSystem:
         frame_width: int | None = None,
         frame_height: int | None = None,
         frame_rate: int | None = None,
-        cti_path: Path | None = None,
         gpu: int = -1,
         video_encoder: VideoEncoders | str = VideoEncoders.H265,
         encoder_speed_preset: EncoderSpeedPresets | int = EncoderSpeedPresets.SLOW,
@@ -173,15 +168,6 @@ class VideoSystem:
 
         # Ensures system_id is a byte-convertible integer
         self._system_id: np.uint8 = np.uint8(system_id)
-
-        # If cti_path is provided, checks if it is a valid file path.
-        if cti_path is not None and (not cti_path.exists() or cti_path.suffix != ".cti"):
-            message = (
-                f"Unable to initialize the VideoSystem instance with id {system_id}. Expected the path to an existing "
-                f"file with a '.cti' suffix or None as the 'cti_path' argument value, but encountered "
-                f"{cti_path} of type {type(cti_path).__name__}."
-            )
-            console.error(message=message, error=TypeError)
 
         # Ensures that the data_logger is an initialized DataLogger instance.
         if not isinstance(data_logger, DataLogger):
@@ -262,21 +248,9 @@ class VideoSystem:
 
         # HarvestersCamera
         elif camera_interface == CameraInterfaces.HARVESTERS:
-            # Ensures that the CTI file path is provided
-            if cti_path is None:
-                message = (
-                    f"Unable to configure the HarvestersCamera interface for the VideoSystem with id "
-                    f"{self._system_id}. Expected the VideoSystem's 'harvesters_cti_path' argument to be a Path object "
-                    f"pointing to the '.cti' file, but got None instead."
-                )
-                console.error(error=ValueError, message=message)
-                # Fallback to appease mypy, should not be reachable
-                raise ValueError(message)  # pragma: no cover
-
             # Instantiates the HarvestersCamera object
             self._camera = HarvestersCamera(
                 system_id=int(self._system_id),
-                cti_path=cti_path,
                 camera_index=camera_index,
                 frame_height=frame_height,
                 frame_width=frame_width,

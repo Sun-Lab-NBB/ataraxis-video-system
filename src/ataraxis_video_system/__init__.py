@@ -25,7 +25,7 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
-from .camera import CameraInterfaces, CameraInformation, get_opencv_ids, get_harvesters_ids
+from .camera import CameraInterfaces, CameraInformation, add_cti_file, get_opencv_ids, get_harvesters_ids
 from .video_system import VideoSystem, extract_logged_camera_timestamps
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "OutputPixelFormats",
     "VideoEncoders",
     "VideoSystem",
+    "add_cti_file",
     "check_ffmpeg_availability",
     "check_gpu_availability",
     "extract_logged_camera_timestamps",
