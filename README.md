@@ -1,6 +1,6 @@
 # ataraxis-video-system
 
-A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as images or videos.
+A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as video files.
 
 ![PyPI - Version](https://img.shields.io/pypi/v/ataraxis-video-system)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ataraxis-video-system)

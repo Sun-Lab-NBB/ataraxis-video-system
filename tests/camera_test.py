@@ -6,22 +6,32 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
+from ataraxis_video_system.camera import (
+    MockCamera,
+    OpenCVCamera,
+    HarvestersCamera,
+    get_opencv_ids,
+    get_harvesters_ids,
+    add_cti_file,
+    _get_cti_path,
+    CameraInformation,
+    CameraInterfaces,
+)
 
 
 @pytest.fixture(scope="session")
 def cti_path():
+    """Provides the path to the CTI file for testing."""
     _cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
     return _cti_path
 
 
 @pytest.fixture(scope="session")
 def has_opencv():
-    """Static check for OpenCV camera availability."""
+    """Checks for OpenCV camera availability in the test environment."""
     try:
-        opencv_id = VideoSystem.get_opencv_ids()
-        if len(opencv_id) > 0:
+        opencv_ids = get_opencv_ids()
+        if len(opencv_ids) > 0:
             return True
         else:
             return False
@@ -31,13 +41,15 @@ def has_opencv():
 
 @pytest.fixture(scope="session")
 def has_harvesters(cti_path):
-    """Static check for Harvesters camera availability."""
+    """Checks for Harvesters camera availability in the test environment."""
     if not cti_path.exists():
         return False
 
     try:
-        harvesters_id = VideoSystem.get_harvesters_ids(cti_path)
-        if len(harvesters_id) > 0:
+        # Sets the CTI path for testing
+        add_cti_file(cti_path)
+        harvesters_ids = get_harvesters_ids()
+        if len(harvesters_ids) > 0:
             return True
         else:
             return False
@@ -46,20 +58,26 @@ def has_harvesters(cti_path):
 
 
 @pytest.mark.parametrize(
-    "color, fps, width, height",
+    "color, frame_rate, frame_width, frame_height",
     [
         (True, 30, 600, 400),
         (False, 60, 1200, 1200),
         (False, 10, 3000, 3000),
     ],
 )
-def test_mock_camera_init(color, fps, width, height) -> None:
+def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
     """Verifies the functioning of the MockCamera __init__() method."""
-    camera = MockCamera(camera_id=np.uint8(222), camera_index=1, color=color, fps=fps, width=width, height=height)
-    assert camera.width == width
-    assert camera.height == height
-    assert camera.fps == fps
-    assert camera.camera_id == np.uint8(222)
+    camera = MockCamera(
+        system_id=222,
+        color=color,
+        frame_rate=frame_rate,
+        frame_width=frame_width,
+        frame_height=frame_height
+    )
+    assert camera.frame_width == frame_width
+    assert camera.frame_height == frame_height
+    assert camera.frame_rate == frame_rate
+    assert camera._system_id == 222
     assert not camera.is_acquiring
     assert not camera.is_connected
 
@@ -67,7 +85,7 @@ def test_mock_camera_init(color, fps, width, height) -> None:
 def test_mock_camera_connect_disconnect():
     """Verifies the functioning of the MockCamera connect() and disconnect() methods."""
     # Setup
-    camera = MockCamera()  # Uses default parameters
+    camera = MockCamera(system_id=222)  # Uses default parameters
 
     # Verifies camera connection
     camera.connect()
@@ -81,7 +99,7 @@ def test_mock_camera_connect_disconnect():
 def test_mock_camera_grab_frame():
     """Verifies the functioning of the MockCamera grab_frame() method."""
     # Setup
-    camera = MockCamera(camera_id=np.uint8(222), camera_index=-1, color=False, width=2, height=3)
+    camera = MockCamera(system_id=222, color=False, frame_width=2, frame_height=3)
     camera.connect()
 
     # Accesses the frame pool generated at class initialization. All 'grabbed' frames are sampled from the frame pool.
@@ -104,14 +122,15 @@ def test_mock_camera_grab_frame():
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the MockCamera grab_frame() method."""
     # Setup
-    camera = MockCamera(camera_id=np.uint8(222), camera_index=1)
+    camera = MockCamera(system_id=222)
 
     # Verifies that the camera cannot yield images if it is not connected.
     message = (
-        f"The Mocked camera with id {camera._id} is not 'connected' and cannot yield images."
-        f"Call the connect() method of the class prior to calling the grab_frame() method."
+        f"The MockCamera instance for the VideoSystem with id {camera._system_id} is not currently simulating "
+        f"connection to the camera hardware, and cannot simulate image acquisition. Call the connect() method "
+        f"prior to calling the grab_frame() method."
     )
-    with pytest.raises(RuntimeError, match=error_format(message)):
+    with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
 
@@ -119,48 +138,59 @@ def test_mock_camera_grab_frame_errors() -> None:
 def test_opencv_camera_init_repr() -> None:
     """Verifies the functioning of the OpenCVCamera __init__() and __repr__() methods."""
     # Setup
-    camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=True, fps=100, width=500, height=500)
+    camera = OpenCVCamera(
+        system_id=222,
+        camera_index=0,
+        color=True,
+        frame_rate=100,
+        frame_width=500,
+        frame_height=500
+    )
 
     # Verifies initial camera parameters
-    assert camera.fps == 100
-    assert camera.width == 500
-    assert camera.height == 500
+    assert camera.frame_rate == 100
+    assert camera.frame_width == 500
+    assert camera.frame_height == 500
     assert not camera.is_connected
     assert not camera.is_acquiring
-    assert camera.camera_id == np.uint8(222)
-    assert camera.backend == "Any"
+    assert camera._system_id == 222
 
     # Verifies the __repr__() method
     representation_string = (
-        f"OpenCVCamera(camera_id={camera._id}, camera_index={camera._camera_index}, fps={camera.fps}, "
-        f"width={camera.width}, height={camera.height}, connected={camera.is_connected}, "
-        f"acquiring={camera.is_acquiring}, backend = {camera.backend})"
+        f"OpenCVCamera(system_id={camera._system_id}, camera_index={camera._camera_index}, "
+        f"frame_rate={camera.frame_rate} frames / second, frame_width={camera.frame_width} pixels, "
+        f"frame_height={camera.frame_height} pixels, connected={camera._camera is not None}, "
+        f"acquiring={camera._acquiring})"
     )
     assert repr(camera) == representation_string
 
 
 @pytest.mark.xdist_group(name="group1")
 @pytest.mark.parametrize(
-    "color, fps, width, height",
+    "color",
     [
-        (True, 30, 640, 480),
-        (False, 15, 176, 144),
+        True,
+        False,
     ],
 )
-def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height) -> None:
+def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
-    camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=color, fps=fps, width=width, height=height)
+    camera = OpenCVCamera(
+        system_id=222,
+        camera_index=0,
+        color=color,
+    )
 
-    # Tests connect method. Note, this may change the fps, width and height class properties, as the camera may not
-    # support the requested parameters and instead set them to the nearest supported values or to default values. The
-    # specific behavior depends on each camera. Since this code is tested across many different cameras, and it is hard
-    # to predict which cameras will support which settings, we do not formally verify whether parameter assignment has
-    # worked.
+    # Tests connect method. Note, this may change the frame_rate, frame_width and frame_height class properties, as the
+    # camera may not support the requested parameters and instead set them to the nearest supported values or to default
+    # values. The specific behavior depends on each camera. Since this code is tested across many different cameras, and
+    # it is hard to predict which cameras will support which settings, formal verification of parameter assignment is
+    # not performed.
     assert not camera.is_connected
     camera.connect()
     assert camera.is_connected
@@ -173,20 +203,24 @@ def test_opencv_camera_connect_disconnect(has_opencv, color, fps, width, height)
 
 @pytest.mark.xdist_group(name="group1")
 @pytest.mark.parametrize(
-    "color, fps, width, height",
+    "color",
     [
-        (True, 30, 640, 480),
-        (False, 30, 1280, 720),
+        True,
+        False,
     ],
 )
-def test_opencv_camera_grab_frame(color, fps, width, height, has_opencv) -> None:
+def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
     # Skips the test if OpenCV-compatible hardware is not available.
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
     # Setup
-    camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=0, color=color, fps=fps, width=width, height=height)
+    camera = OpenCVCamera(
+        system_id=222,
+        camera_index=0,
+        color=color,
+    )
     camera.connect()
 
     # Tests grab_frame() method.
@@ -209,34 +243,26 @@ def test_opencv_camera_grab_frame(color, fps, width, height, has_opencv) -> None
 def test_opencv_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the OpenCVCamera grab_frame() method."""
     # Setup
-    camera = OpenCVCamera(camera_id=np.uint8(222), camera_index=-1)  # Uses invalid ID -1
-    camera._backend = -10  # Also, invalidates the backend code to trigger some errors below.
+    camera = OpenCVCamera(system_id=222, camera_index=333)  # Uses invalid index 333
 
-    # Verifies that retrieving an invalid backend code correctly raises a ValueError
+    # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
-        f"Unknown backend code {camera._backend} encountered when retrieving the backend name used by the "
-        f"OpenCV-managed camera with id {camera._id}. Recognized backend codes are: "
-        f"{(camera._backends.values())}"
+        f"The OpenCVCamera instance for the VideoSystem with id {camera._system_id} is not connected to the "
+        f"camera hardware, and cannot acquire images. Call the connect() method prior to calling the "
+        f"grab_frame() method."
     )
-    with pytest.raises(ValueError, match=(error_format(message))):
-        _ = camera.backend
-
-    # Verifies that calling grab_frame() correctly raises a RuntimeError when the camera is not connected
-    message = (
-        f"The OpenCV-managed camera with id {camera._id} is not connected, and "
-        f"cannot yield images. Call the connect() method of the class prior to calling the grab_frame() method."
-    )
-    with pytest.raises(RuntimeError, match=error_format(message)):
+    with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
-    # Verifies that connecting to an invalid camera ID correctly raises a ValueError when grab_frame() is called for
-    # that camera
+    # Verifies that connecting to an invalid camera ID correctly raises a BrokenPipeError when grab_frame() is called
+    # for that camera
     camera.connect()
     message = (
-        f"The OpenCV-managed camera with id {camera._id} did not yield an image, "
-        f"which is not expected. This may indicate initialization or connectivity issues."
+        f"The OpenCVCamera instance for the VideoSystem with id {camera._system_id} has failed to grab a frame "
+        f"image from the camera hardware, which is not expected. This indicates initialization or connectivity "
+        f"issues."
     )
-    with pytest.raises(RuntimeError, match=error_format(message)):
+    with pytest.raises(BrokenPipeError, match=error_format(message)):
         _ = camera.grab_frame()
 
 
@@ -249,21 +275,26 @@ def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
 
     # Setup
     camera = HarvestersCamera(
-        camera_id=np.uint8(222), camera_index=0, fps=60, width=1000, height=1000, cti_path=cti_path
+        system_id=222,
+        camera_index=0,
+        frame_rate=60,
+        frame_width=1000,
+        frame_height=1000
     )
 
     # Verifies initial camera parameters
-    assert camera.fps == 60
-    assert camera.width == 1000
-    assert camera.height == 1000
+    assert camera.frame_rate == 60
+    assert camera.frame_width == 1000
+    assert camera.frame_height == 1000
     assert not camera.is_connected
     assert not camera.is_acquiring
-    assert camera.camera_id == np.uint8(222)
+    assert camera._system_id == 222
 
     # Verifies the __repr__() method
     representation_string = (
-        f"HarvestersCamera(camera_id={camera._id}, camera_index={camera._camera_index}, fps={camera.fps}, "
-        f"width={camera.width}, height={camera.height}, connected={camera.is_connected}, "
+        f"HarvestersCamera(system_id={camera._system_id}, camera_index={camera._camera_index}, "
+        f"frame_rate={camera.frame_rate} frames / second, frame_width={camera.frame_width} pixels, "
+        f"frame_height={camera.frame_height} pixels, connected={camera._camera is not None}, "
         f"acquiring={camera.is_acquiring})"
     )
     assert repr(camera) == representation_string
@@ -278,11 +309,15 @@ def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
 
     # Setup
     camera = HarvestersCamera(
-        camera_id=np.uint8(222), camera_index=0, fps=60, width=1000, height=1000, cti_path=cti_path
+        system_id=222,
+        camera_index=0,
+        frame_rate=60,
+        frame_width=1000,
+        frame_height=1000
     )
 
     # Tests connect method. Unlike OpenCV camera, if Harvesters camera is unable to set the parameters to the
-    # requested values, it will raise an error.
+    # requested values, it may raise an error depending on the camera model.
     assert not camera.is_connected
     camera.connect()
     assert camera.is_connected
@@ -295,18 +330,22 @@ def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
 
 @pytest.mark.xdist_group(name="group2")
 @pytest.mark.parametrize(
-    "fps, width, height",
+    "frame_rate, frame_width, frame_height",
     [(30, 600, 400), (60, 1200, 1200), (None, None, None)],
 )
-def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_path) -> None:
-    """Verifies the functioning of the OpenCVCamera grab_frame() method."""
+def test_harvesters_camera_grab_frame(frame_rate, frame_width, frame_height, has_harvesters, cti_path) -> None:
+    """Verifies the functioning of the HarvestersCamera grab_frame() method."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
     camera = HarvestersCamera(
-        camera_id=np.uint8(222), camera_index=0, fps=fps, width=width, height=height, cti_path=cti_path
+        system_id=222,
+        camera_index=0,
+        frame_rate=frame_rate,
+        frame_width=frame_width,
+        frame_height=frame_height
     )
     camera.connect()
 
@@ -316,13 +355,13 @@ def test_harvesters_camera_grab_frame(fps, width, height, has_harvesters, cti_pa
     assert camera.is_acquiring  # Ensures calling grab_frame() switches the camera into acquisition mode
 
     # Verifies the dimensions of the grabbed frame
-    if height is not None and width is not None:
-        assert frame.shape[0] == height
-        assert frame.shape[1] == width
+    if frame_height is not None and frame_width is not None:
+        assert frame.shape[0] == frame_height
+        assert frame.shape[1] == frame_width
 
     # Does not check the color handling, as it is expected that the camera itself is configured to properly handle
-    # monochrome / color conversions on-hardware. Also, because we do not have a Harvesters camera that is compatible
-    # with color imaging.
+    # monochrome / color conversions on-hardware. Also, because Harvesters cameras used in testing may not be
+    # compatible with color imaging.
 
     # Deletes the class to test the functioning of the __del__() method.
     del camera
@@ -337,16 +376,67 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters, cti_path) -> None:
 
     # Setup
     camera = HarvestersCamera(
-        camera_id=np.uint8(222), camera_index=0, fps=60, width=1000, height=1000, cti_path=cti_path
+        system_id=222,
+        camera_index=0,
+        frame_rate=60,
+        frame_width=1000,
+        frame_height=1000
     )
 
-    # Verifies that calling grab_frame() correctly raises a RuntimeError when the camera is not connected
+    # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
-        f"The Harvesters-managed camera with id {camera._id} is not connected and cannot "
-        f"yield images. Call the connect() method of the class prior to calling the grab_frame() method."
+        f"The HarvestersCamera instance for the VideoSystem with id {camera._system_id} is not connected to the "
+        f"camera hardware and cannot acquire images. Call the connect() method prior to calling the "
+        f"grab_frame() method."
     )
-    with pytest.raises(RuntimeError, match=error_format(message)):
+    with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
     # Other GrabFrame errors cannot be readily reproduced under a test environment and are likely not possible to
     # encounter under most real-world conditions.
+
+
+def test_get_opencv_ids() -> None:
+    """Verifies the functioning of the get_opencv_ids() function."""
+    # Tests the function execution
+    camera_ids = get_opencv_ids()
+
+    # Verifies that the function returns a tuple
+    assert isinstance(camera_ids, tuple)
+
+    # If cameras are discovered, verifies that each element is a CameraInformation instance
+    if len(camera_ids) > 0:
+        for camera_info in camera_ids:
+            assert isinstance(camera_info, CameraInformation)
+            assert camera_info.interface == CameraInterfaces.OPENCV
+            assert isinstance(camera_info.camera_index, int)
+            assert isinstance(camera_info.frame_width, int)
+            assert isinstance(camera_info.frame_height, int)
+            assert isinstance(camera_info.acquisition_frame_rate, int)
+            assert camera_info.serial_number is None  # OpenCV doesn't provide serial numbers
+            assert camera_info.model is None  # OpenCV doesn't provide model names
+
+
+def test_get_harvesters_ids(has_harvesters) -> None:
+    """Verifies the functioning of the get_harvesters_ids() function."""
+    # Skips the test if Harvesters-compatible hardware is not available.
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera.")
+
+    # Tests the function execution
+    camera_ids = get_harvesters_ids()
+
+    # Verifies that the function returns a tuple
+    assert isinstance(camera_ids, tuple)
+
+    # If cameras are discovered, verifies that each element is a CameraInformation instance
+    if len(camera_ids) > 0:
+        for camera_info in camera_ids:
+            assert isinstance(camera_info, CameraInformation)
+            assert camera_info.interface == CameraInterfaces.HARVESTERS
+            assert isinstance(camera_info.camera_index, int)
+            assert isinstance(camera_info.frame_width, int)
+            assert isinstance(camera_info.frame_height, int)
+            assert isinstance(camera_info.acquisition_frame_rate, int)
+            assert isinstance(camera_info.serial_number, str)  # Harvesters provides serial numbers
+            assert isinstance(camera_info.model, str)  # Harvesters provides model names

@@ -2,7 +2,7 @@ Welcome to ataraxis-video-system API documentation page
 =======================================================
 
 ataraxis-video-system is a Python library that interfaces with a wide range of cameras to flexibly record visual stream
-data as videos.
+data as video files.
 
 This library is part of the broader 'Ataraxis' science-automation project, developed in the
 `Sun lab <https://neuroai.github.io/sunlab/>`_ at Cornell University.

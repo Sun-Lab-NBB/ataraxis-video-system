@@ -826,7 +826,7 @@ class MockCamera:
     @property
     def is_connected(self) -> bool:
         """Returns True if the instance is 'connected' to the camera hardware."""
-        return self._camera is not None
+        return self._camera
 
     @property
     def is_acquiring(self) -> bool:

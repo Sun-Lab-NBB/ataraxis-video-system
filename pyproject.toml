@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ataraxis-video-system"
 version = "2.0.0"
-description = "Interfaces with a wide range of cameras to flexibly record visual stream data as videos."
+description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
