@@ -260,7 +260,7 @@ def live_run(
         video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
         encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
         output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
-        quantization_parameter=-1,  # Uses the encoder's default quantization parameter.
+        quantization_parameter=15,  # Uses the instance's default parameter
     )
 
     # Starts the system by spawning child processes

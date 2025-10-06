@@ -111,8 +111,8 @@ class VideoSystem:
             OutputPixelFormats enumeration members.
         quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. This
             determines how much information to discard from each encoded frame. Lower values produce better video
-            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Setting this
-            argument to a value of -1 uses the default preset for the chosen encoder.
+            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Note, the
+            default value is calibrated for the H265 encoder and is likely too low for the H264 encoder.
 
     Attributes:
         _started: Tracks whether the system is currently running (has active subprocesses).
@@ -156,7 +156,7 @@ class VideoSystem:
         video_encoder: VideoEncoders | str = VideoEncoders.H265,
         encoder_speed_preset: EncoderSpeedPresets | int = EncoderSpeedPresets.SLOW,
         output_pixel_format: OutputPixelFormats | str = OutputPixelFormats.YUV444,
-        quantization_parameter: int = -1,
+        quantization_parameter: int = 15,
         *,
         color: bool | None = None,
     ) -> None:
@@ -343,7 +343,7 @@ class VideoSystem:
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Encountered "
                     f"an unexpected 'encoder_speed_preset' argument value {encoder_speed_preset} of type "
                     f"{type(encoder_speed_preset).__name__}. Use one of the supported EncoderSpeedPresets enumeration "
-                    f"members: {', '.join(tuple(EncoderSpeedPresets))}."
+                    f"members: {', '.join([str(preset) for preset in tuple(EncoderSpeedPresets)])}."
                 )
                 console.error(error=ValueError, message=message)
             if output_pixel_format not in OutputPixelFormats:

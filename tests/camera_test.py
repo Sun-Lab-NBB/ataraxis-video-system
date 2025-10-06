@@ -1,7 +1,5 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
@@ -12,18 +10,9 @@ from ataraxis_video_system.camera import (
     HarvestersCamera,
     get_opencv_ids,
     get_harvesters_ids,
-    add_cti_file,
-    _get_cti_path,
     CameraInformation,
     CameraInterfaces,
 )
-
-
-@pytest.fixture(scope="session")
-def cti_path():
-    """Provides the path to the CTI file for testing."""
-    _cti_path = Path("/opt/mvIMPACT_Acquire/lib/x86_64/mvGenTLProducer.cti")
-    return _cti_path
 
 
 @pytest.fixture(scope="session")
@@ -40,14 +29,10 @@ def has_opencv():
 
 
 @pytest.fixture(scope="session")
-def has_harvesters(cti_path):
+def has_harvesters():
     """Checks for Harvesters camera availability in the test environment."""
-    if not cti_path.exists():
-        return False
-
     try:
-        # Sets the CTI path for testing
-        add_cti_file(cti_path)
+        # Attempts to discover Harvesters cameras using the internally stored CTI path
         harvesters_ids = get_harvesters_ids()
         if len(harvesters_ids) > 0:
             return True
@@ -68,11 +53,7 @@ def has_harvesters(cti_path):
 def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
     """Verifies the functioning of the MockCamera __init__() method."""
     camera = MockCamera(
-        system_id=222,
-        color=color,
-        frame_rate=frame_rate,
-        frame_width=frame_width,
-        frame_height=frame_height
+        system_id=222, color=color, frame_rate=frame_rate, frame_width=frame_width, frame_height=frame_height
     )
     assert camera.frame_width == frame_width
     assert camera.frame_height == frame_height
@@ -107,7 +88,7 @@ def test_mock_camera_grab_frame():
 
     # Acquires 11 frames. Note, the code below will STOP working unless the tested number of frames is below 20.
     for num in range(11):
-        frame = camera.grab_frame()  # Grabs the frame from the precreated frame-pool
+        frame = camera.grab_frame()  # Grabs the frame from the pre-created frame-pool
 
         # Currently, the frame pool consists of 10 images. To optimize grabbed image verification, ensures that 'num' is
         # always within the range of the frame pool and follows the behavior of the grabber that treats the pool as a
@@ -138,14 +119,7 @@ def test_mock_camera_grab_frame_errors() -> None:
 def test_opencv_camera_init_repr() -> None:
     """Verifies the functioning of the OpenCVCamera __init__() and __repr__() methods."""
     # Setup
-    camera = OpenCVCamera(
-        system_id=222,
-        camera_index=0,
-        color=True,
-        frame_rate=100,
-        frame_width=500,
-        frame_height=500
-    )
+    camera = OpenCVCamera(system_id=222, camera_index=0, color=True, frame_rate=100, frame_width=500, frame_height=500)
 
     # Verifies initial camera parameters
     assert camera.frame_rate == 100
@@ -267,20 +241,14 @@ def test_opencv_camera_grab_frame_errors() -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
+def test_harvesters_camera_init_repr(has_harvesters) -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
-    # Setup
-    camera = HarvestersCamera(
-        system_id=222,
-        camera_index=0,
-        frame_rate=60,
-        frame_width=1000,
-        frame_height=1000
-    )
+    # Setup - Note that the CTI path is automatically resolved internally by the HarvestersCamera class
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
 
     # Verifies initial camera parameters
     assert camera.frame_rate == 60
@@ -301,20 +269,14 @@ def test_harvesters_camera_init_repr(has_harvesters, cti_path) -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
+def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
-    camera = HarvestersCamera(
-        system_id=222,
-        camera_index=0,
-        frame_rate=60,
-        frame_width=1000,
-        frame_height=1000
-    )
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
 
     # Tests connect method. Unlike OpenCV camera, if Harvesters camera is unable to set the parameters to the
     # requested values, it may raise an error depending on the camera model.
@@ -333,19 +295,15 @@ def test_harvesters_camera_connect_disconnect(has_harvesters, cti_path) -> None:
     "frame_rate, frame_width, frame_height",
     [(30, 600, 400), (60, 1200, 1200), (None, None, None)],
 )
-def test_harvesters_camera_grab_frame(frame_rate, frame_width, frame_height, has_harvesters, cti_path) -> None:
+def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, frame_height) -> None:
     """Verifies the functioning of the HarvestersCamera grab_frame() method."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
-    # Setup
+    # Setup - The library internally manages the CTI path
     camera = HarvestersCamera(
-        system_id=222,
-        camera_index=0,
-        frame_rate=frame_rate,
-        frame_width=frame_width,
-        frame_height=frame_height
+        system_id=222, camera_index=0, frame_rate=frame_rate, frame_width=frame_width, frame_height=frame_height
     )
     camera.connect()
 
@@ -368,20 +326,14 @@ def test_harvesters_camera_grab_frame(frame_rate, frame_width, frame_height, has
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_grab_frame_errors(has_harvesters, cti_path) -> None:
+def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
     """Verifies the error handling of the HarvestersCamera grab_frame() method."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
-    # Setup
-    camera = HarvestersCamera(
-        system_id=222,
-        camera_index=0,
-        frame_rate=60,
-        frame_width=1000,
-        frame_height=1000
-    )
+    # Setup - Uses the internally stored CTI path
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
 
     # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
@@ -423,7 +375,7 @@ def test_get_harvesters_ids(has_harvesters) -> None:
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera.")
 
-    # Tests the function execution
+    # Tests the function execution - The CTI path is resolved internally
     camera_ids = get_harvesters_ids()
 
     # Verifies that the function returns a tuple
@@ -438,5 +390,5 @@ def test_get_harvesters_ids(has_harvesters) -> None:
             assert isinstance(camera_info.frame_width, int)
             assert isinstance(camera_info.frame_height, int)
             assert isinstance(camera_info.acquisition_frame_rate, int)
-            assert isinstance(camera_info.serial_number, str)  # Harvesters provides serial numbers
-            assert isinstance(camera_info.model, str)  # Harvesters provides model names
+            assert isinstance(camera_info.serial_number, str)
+            assert isinstance(camera_info.model, str)

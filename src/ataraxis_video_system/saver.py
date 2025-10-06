@@ -232,45 +232,45 @@ class VideoSaver:
         # If a GPU index is provided, uses one of the hardware-encoding libraries.
         if gpu >= 0:
             # Selects the encoder library.
-            video_encoder = "h264_nvenc" if video_encoder == VideoEncoders.H264 else "hevc_nvenc"
+            video_codec = "h264_nvenc" if video_encoder == VideoEncoders.H264 else "hevc_nvenc"
 
             # Resolves the chromatic coding profile.
-            if video_encoder == "h264_nvenc":
-                encoder_profile = "high444p" if output_pixel_format.value == "yuv444p" else "main"
+            if video_codec == "h264_nvenc":
+                encoder_profile = "high444p" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
             else:
-                encoder_profile = "rext" if output_pixel_format.value == "yuv444p" else "main"
+                encoder_profile = "rext" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
 
             # Resolves the GPU encoding speed preset.
             encoder_speed = self._gpu_encoder_preset_map[encoder_speed_preset.value]
 
             # Uses the resolved data to construct the GPU encoding command.
             encoder_command_portion = (
-                f"-vcodec {video_encoder} -qp {quantization_parameter} -preset {encoder_speed} "
+                f"-vcodec {video_codec} -qp {quantization_parameter} -preset {encoder_speed} "
                 f"-profile:v {encoder_profile} -pixel_format {output_pixel_format.value} -gpu {gpu} -rc constqp"
             )
 
         # Otherwise, uses one of the software-encoding libraries.
         else:
             # Selects the encoder library.
-            video_encoder = "libx264" if video_encoder == VideoEncoders.H264 else "libx265"
+            video_codec = "libx264" if video_encoder == VideoEncoders.H264 else "libx265"
 
             # Resolves the chromatic coding profile.
-            if video_encoder == "libx265":
-                encoder_profile = "main444-8" if output_pixel_format.value == "yuv444p" else "main"
+            if video_codec == "libx265":
+                encoder_profile = "main444-8" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
             else:
-                encoder_profile = "high444" if output_pixel_format.value == "yuv444p" else "high420"
+                encoder_profile = "high444" if output_pixel_format == OutputPixelFormats.YUV444 else "high422"
 
             # Resolves the CPU encoding speed preset.
             encoder_speed = self._cpu_encoder_preset_map[encoder_speed_preset.value]
 
             # This is unique to CPU encoders. Resolves the 'parameter' specifier based on the encoder name. This is
             # used to force CPU encoders to use the QP control mode.
-            parameter_specifier = "-x264-params" if video_encoder == "libx264" else "-x265-params"
+            parameter_specifier = "-x264-params" if video_codec == "libx264" else "-x265-params"
 
             # Note, the qp has to be preceded by the '-parameter' specifier for the desired h265 / h265 encoder
             encoder_command_portion = (
-                f"-vcodec {video_encoder} {parameter_specifier} qp={quantization_parameter} "
-                f"-preset {encoder_speed} -profile {encoder_profile} -pixel_format "
+                f"-vcodec {video_codec} {parameter_specifier} qp={quantization_parameter} "
+                f"-preset {encoder_speed} -profile {encoder_profile} -pix_fmt "
                 f"{output_pixel_format.value}"
             )
 
@@ -304,7 +304,7 @@ class VideoSaver:
     @property
     def is_active(self) -> bool:
         """Returns True if the instance's encoder process is active (running)."""
-        return self._ffmpeg_process is None
+        return self._ffmpeg_process is not None
 
     def start(self) -> None:
         """Creates the FFMPEG encoder process and sets up the data stream to pipe incoming camera frames to the
