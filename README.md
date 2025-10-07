@@ -10,27 +10,26 @@ A Python library that interfaces with a wide range of cameras to flexibly record
 ![PyPI - License](https://img.shields.io/pypi/l/ataraxis-video-system)
 ![PyPI - Status](https://img.shields.io/pypi/status/ataraxis-video-system)
 ![PyPI - Wheel](https://img.shields.io/pypi/wheel/ataraxis-video-system)
+
 ___
 
 ## Detailed Description
 
-This library provides an interface for efficiently acquiring and saving visual data from cameras in real time. To 
-achieve this, the library internally binds OpenCV and GeniCam backends to grab frames from a wide range of consumer, 
-industrial, and scientific cameras using USB and Gigabit interfaces. To save the acquired frames, the library uses 
-FFMPEG to recruit CPUs or GPUs and supports H264 and H265 codecs. The library abstracts setup, acquisition, and cleanup 
-procedures via a simple API exposed by the VideoSystem interface class, while allowing for extensive configuration of 
-all managed elements. To optimize runtime efficiency, the library uses multithreading and multiprocessing, where 
-appropriate.
+This library abstracts all necessary steps for acquiring and saving video data: it interfaces with the camera to 
+grab the raw frames and encodes them as a video file stored in the non-volatile memory. The library is specifically 
+designed for working with multiple cameras at the same time and can be customized to precisely balance the resultant 
+video quality and real-time throughput for a wide range of video recording applications.
+
 ___
 
 ## Features
 
 - Supports Windows, Linux, and macOS.
 - Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial and scientific cameras.
-- Uses FFMPEG to efficiently encode acquired data as videos or images in real time.
+- Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
-- Pure-python API.
 - GPL 3 License.
+
 ___
 
 ## Table of Contents
@@ -43,6 +42,7 @@ ___
 - [Authors](#authors)
 - [License](#license)
 - [Acknowledgements](#Acknowledgments)
+
 ___
 
 ## Dependencies
