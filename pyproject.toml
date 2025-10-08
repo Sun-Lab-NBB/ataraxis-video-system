@@ -10,7 +10,7 @@ version = "2.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"  # Until genicam supports 3.14
 authors = [
     { name = "Ivan Kondratyev" },
     { name = "Jacob Groner" },
@@ -92,7 +92,7 @@ packages = ["src/ataraxis_video_system", "examples"]
 [tool.ruff]
 line-length = 120         # The maximum column length is set to 120 for this project
 indent-width = 4          # Same as black, indents are 4 spaces
-target-version = "py311"  # Targets the lowest supported version of python
+target-version = "py312"  # Targets the lowest supported version of python
 src = ["src"]             # The name of the source directory
 
 # Excludes 'service' .py files, such as the sphinx configuration file from linting.

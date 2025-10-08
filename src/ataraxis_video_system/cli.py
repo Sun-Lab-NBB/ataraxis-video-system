@@ -58,31 +58,22 @@ def set_cti_file(file_path: Path) -> None:  # pragma: no cover
 
 
 @axvs_cli.command("id")
-@click.option(
-    "-i",
-    "--interface",
-    type=click.Choice(["opencv", "harvesters"], case_sensitive=False),
-    default="opencv",
-    required=True,
-    help="The camera interface for which to discover and list compatible camera IDs.",
-)
-def list_camera_indices(interface: str) -> None:
-    """Discovers all cameras compatible with the chosen interface and prints their identification information.
+def list_camera_indices() -> None:
+    """Discovers all cameras compatible with the Opencv and Harvesters interfaces and prints their identification
+    information.
 
     This command is primarily intended to be used during the initial system configuration to determine the positional
-    indices of each camera in the list of all cameras discoverable by the chosen interface. The discovered indices can
-    then be used to initialize the VideoSystem instances to interface with the discovered cameras.
+    indices of each camera in the list of all cameras discoverable by each supported interface. The discovered indices
+    can then be used to initialize the VideoSystem instances to interface with the discovered cameras.
     """
-    # Depending on the interface, calls the appropriate ID-discovery command and displays resolved camera data.
-    if interface == "opencv":
-        # Discovers compatible cameras
-        opencv_cameras = get_opencv_ids()
+    # Discovers compatible OpenCV cameras
+    opencv_cameras = get_opencv_ids()
 
-        # If no cameras are discovered, displays an error message and aborts the runtime.
-        if len(opencv_cameras) == 0:
-            console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.ERROR)
-            return
+    # If no cameras are discovered, displays an error message and advances to Harvesters verification.
+    if len(opencv_cameras) == 0:
+        console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.ERROR)
 
+    else:
         # Otherwise, lists the data for all discovered cameras.
         console.echo(
             message=(
@@ -92,8 +83,8 @@ def list_camera_indices(interface: str) -> None:
             ),
             level=LogLevel.WARNING,
         )
-        console.echo("Available OpenCV cameras:")
-        for num, camera_data in enumerate(opencv_cameras, start=0):
+        console.echo("Available OpenCV cameras:", level=LogLevel.SUCCESS)
+        for num, camera_data in enumerate(opencv_cameras, start=1):
             console.echo(
                 message=(
                     f"OpenCV camera {num}: index={camera_data.camera_index}, "
@@ -101,9 +92,7 @@ def list_camera_indices(interface: str) -> None:
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
             )
-
-    # Same as above, but for the Harvesters interface.
-    elif interface == "harvesters":
+    try:
         harvesters_cameras = get_harvesters_ids()
 
         if len(harvesters_cameras) == 0:
@@ -112,7 +101,7 @@ def list_camera_indices(interface: str) -> None:
 
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
         # mao discovered indices to physical hardware.
-        console.echo("Available Harvesters cameras:")
+        console.echo("Available Harvesters cameras:", level=LogLevel.SUCCESS)
         for num, camera_data in enumerate(harvesters_cameras, start=1):
             console.echo(
                 message=(
@@ -122,6 +111,15 @@ def list_camera_indices(interface: str) -> None:
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
             )
+    except Exception:
+        console.echo(
+            message=(
+                "Unable to discover Harvesters-compatible cameras, as the library has not been provided with a CTI "
+                "interface file. Use the 'axvs cti' command to set the path to the CTI file before calling this "
+                "command."
+            ),
+            level=LogLevel.ERROR,
+        )
 
 
 @axvs_cli.command("check")

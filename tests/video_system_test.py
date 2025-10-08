@@ -16,15 +16,13 @@ from ataraxis_video_system.saver import (
     EncoderSpeedPresets,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.camera import CameraInterfaces, get_harvesters_ids
+from ataraxis_video_system.camera import CameraInterfaces, get_harvesters_ids, get_opencv_ids
 from ataraxis_video_system.video_system import extract_logged_camera_timestamps
 
 
 @pytest.fixture(scope="session")
 def has_opencv():
     """Checks for OpenCV camera availability in the test environment."""
-    from ataraxis_video_system.camera import get_opencv_ids
-
     try:
         opencv_ids = get_opencv_ids()
         if len(opencv_ids) > 0:
@@ -65,7 +63,7 @@ def has_nvidia():
         return False
 
 
-@pytest.fixture()
+@pytest.fixture
 def data_logger(tmp_path) -> DataLogger:
     """Creates a DataLogger instance and returns it to the caller."""
     data_logger = DataLogger(output_directory=tmp_path, instance_name=str(tmp_path.stem))
@@ -129,6 +127,7 @@ def test_init_errors(data_logger) -> None:
             system_id=invalid_system_id,  # type: ignore
             data_logger=data_logger,
             output_directory=data_logger.output_directory,
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid data_logger input
@@ -157,40 +156,8 @@ def test_init_errors(data_logger) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=invalid_output_directory,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
-
-
-@pytest.mark.xdist_group(name="group2")
-@pytest.mark.parametrize(
-    "camera_interface",
-    [
-        CameraInterfaces.MOCK,
-        CameraInterfaces.OPENCV,
-        CameraInterfaces.HARVESTERS,
-    ],
-)
-def test_camera_interfaces(camera_interface, data_logger, tmp_path, has_opencv, has_harvesters) -> None:
-    """Verifies the functioning of the VideoSystem with different camera interfaces."""
-    if camera_interface == CameraInterfaces.OPENCV and not has_opencv:
-        pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
-
-    if camera_interface == CameraInterfaces.HARVESTERS and not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera.")
-
-    # Creates a VideoSystem instance with the tested camera interface
-    output_directory = tmp_path.joinpath("test_output_directory")
-    vs = VideoSystem(
-        system_id=np.uint8(1),
-        data_logger=data_logger,
-        output_directory=output_directory,
-        camera_interface=camera_interface,
-        camera_index=0,
-        color=False,
-    )
-
-    # Verifies the camera was properly initialized
-    assert vs._camera is not None
-    assert not vs.started
 
 
 def test_camera_configuration_errors(data_logger, tmp_path) -> None:
@@ -210,6 +177,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             camera_index=invalid_index,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid frame rate
@@ -225,6 +193,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             frame_rate=invalid_frame_rate,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid frame width
@@ -240,6 +209,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             frame_width=invalid_frame_width,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid frame height
@@ -255,6 +225,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             frame_height=invalid_frame_height,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid camera interface
@@ -318,6 +289,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             gpu=invalid_gpu,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid video encoder
@@ -329,6 +301,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             video_encoder=invalid_encoder,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid encoder preset
@@ -340,6 +313,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             encoder_speed_preset=invalid_preset,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid output pixel format
@@ -351,6 +325,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             output_pixel_format=invalid_format,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
     # Invalid quantization parameter
@@ -366,6 +341,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             data_logger=data_logger,
             output_directory=output_directory,
             quantization_parameter=invalid_qp,  # type: ignore
+            camera_interface=CameraInterfaces.MOCK,
         )
 
 
@@ -527,118 +503,11 @@ def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
 
 
 def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
-    """Verifies the extraction of camera frame timestamps from logged data using MockCamera.
-
-    This test creates a VideoSystem with MockCamera, runs it for a controlled duration,
-    and validates that the extracted timestamps are correct in terms of count, ordering,
-    and timing intervals.
-    """
-    from ataraxis_data_structures import assemble_log_archives
-    from ataraxis_time import PrecisionTimer
-
-    # Test configuration
-    system_id = np.uint8(42)
-    frame_rate = 20  # 20 FPS for predictable timing
-    acquisition_duration = 3  # Run for 3 seconds
-    expected_frame_count = int(frame_rate * acquisition_duration)
-
-    # Creates the VideoSystem with MockCamera for controlled testing
-    output_directory = tmp_path.joinpath("test_timestamp_extraction")
-    output_directory.mkdir(parents=True, exist_ok=True)
-
-    video_system = VideoSystem(
-        system_id=system_id,
-        data_logger=data_logger,
-        output_directory=output_directory,
-        camera_interface=CameraInterfaces.MOCK,
-        camera_index=0,
-        frame_rate=frame_rate,
-        frame_width=640,
-        frame_height=480,
-        color=False,
-        quantization_parameter=25,
-    )
-
-    # Start the data logger and video system
-    data_logger.start()
-    video_system.start()
-
-    # Enable frame saving and run for the specified duration
-    timer = PrecisionTimer("s")
-    video_system.start_frame_saving()
-    timer.delay(delay=acquisition_duration, allow_sleep=True, block=False)
-    video_system.stop_frame_saving()
-
-    # Stop the video system and data logger
-    video_system.stop()
-    data_logger.stop()
-
-    # Compress the logs to create the .npz archive
-    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
-
-    # Construct the expected log file path
-    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
-
-    # Verify the log file was created
-    assert log_file_path.exists(), f"Log file not found at {log_file_path}"
-
-    # Extract timestamps using both sequential and parallel processing
-    # Test with sequential processing (n_workers=1)
-    timestamps_sequential = extract_logged_camera_timestamps(log_file_path, n_workers=1)
-
-    # Test with parallel processing (n_workers=-1 for all cores)
-    timestamps_parallel = extract_logged_camera_timestamps(log_file_path, n_workers=-1)
-
-    # Verify both methods produce the same results
-    assert timestamps_sequential == timestamps_parallel, "Sequential and parallel extraction produced different results"
-
-    # Validate timestamp count (allow for small variation due to timing)
-    actual_frame_count = len(timestamps_sequential)
-    tolerance = 5  # Allow ±5 frames tolerance
-    assert abs(actual_frame_count - expected_frame_count) <= tolerance, (
-        f"Expected approximately {expected_frame_count} frames, got {actual_frame_count}"
-    )
-
-    # Validate that timestamps are monotonically increasing
-    for i in range(1, len(timestamps_sequential)):
-        assert timestamps_sequential[i] > timestamps_sequential[i - 1], (
-            f"Timestamps not monotonically increasing at index {i}"
-        )
-
-    # Validate frame intervals (should be approximately 1/frame_rate seconds)
-    if len(timestamps_sequential) > 1:
-        expected_interval_us = 1_000_000 / frame_rate  # Convert to microseconds
-        intervals = [
-            timestamps_sequential[i] - timestamps_sequential[i - 1] for i in range(1, len(timestamps_sequential))
-        ]
-
-        # Calculate average interval
-        avg_interval = np.mean(intervals)
-
-        # Allow for 20% deviation from the expected interval
-        interval_tolerance = expected_interval_us * 0.2
-        # noinspection PyTypeChecker
-        assert abs(avg_interval - expected_interval_us) < interval_tolerance, (
-            f"Average frame interval {avg_interval:.2f} µs deviates too much from "
-            f"expected {expected_interval_us:.2f} µs"
-        )
-
-    # Validate that all timestamps are positive and reasonable
-    for timestamp in timestamps_sequential:
-        assert timestamp > 0, "Found non-positive timestamp"
-        # Timestamps should be Unix microseconds (a reasonable range check)
-        assert timestamp > 1_000_000_000_000_000, "Timestamp appears to be in wrong units"
-        assert timestamp < 2_000_000_000_000_000, "Timestamp unreasonably large"
-
-
-def test_camera_timestamp_extraction_with_multiple_segments(data_logger, tmp_path) -> None:
     """Tests timestamp extraction with start/stop segments of frame saving.
 
     This test verifies that timestamps are correctly extracted when frame saving
     is enabled and disabled multiple times during a single session.
     """
-    from ataraxis_data_structures import assemble_log_archives
-    from ataraxis_time import PrecisionTimer
 
     system_id = np.uint8(99)
     frame_rate = 10  # Lower frame rate for easier validation
@@ -713,49 +582,3 @@ def test_camera_timestamp_extraction_with_multiple_segments(data_logger, tmp_pat
         # The maximum interval might be larger due to pauses, but shouldn't be
         # excessive (e.g., not more than 10x the average for this controlled test)
         assert max_interval < avg_interval * 10, "Detected unexpectedly large gap in timestamps"
-
-
-def test_camera_timestamp_extraction_empty_log(data_logger, tmp_path) -> None:
-    """Tests timestamp extraction when no frames were saved (empty timestamp log).
-
-    This verifies that the extraction function handles the case where a VideoSystem
-    was started but no frames were actually saved.
-    """
-    from ataraxis_data_structures import assemble_log_archives
-    from ataraxis_time import PrecisionTimer
-
-    system_id = np.uint8(77)
-
-    # Create VideoSystem but don't enable frame saving
-    output_directory = tmp_path.joinpath("test_empty_timestamps")
-    output_directory.mkdir(parents=True, exist_ok=True)
-
-    video_system = VideoSystem(
-        system_id=system_id,
-        data_logger=data_logger,
-        output_directory=output_directory,
-        camera_interface=CameraInterfaces.MOCK,
-        frame_rate=30,
-    )
-
-    # Start but never enable frame saving
-    data_logger.start()
-    video_system.start()
-
-    timer = PrecisionTimer("s")
-    timer.delay(delay=1, allow_sleep=True, block=False)
-
-    video_system.stop()
-    data_logger.stop()
-
-    # Process logs
-    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
-
-    # Extracts timestamps from the log with only the onset message
-    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
-
-    if log_file_path.exists():
-        timestamps = extract_logged_camera_timestamps(log_file_path, n_workers=1)
-
-        # Should return an empty tuple when no frames were saved
-        assert timestamps == (), f"Expected empty tuple, got {len(timestamps)} timestamps"

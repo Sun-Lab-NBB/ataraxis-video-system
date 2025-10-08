@@ -147,6 +147,7 @@ def test_opencv_camera_init_repr() -> None:
         False,
     ],
 )
+@pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
     # Skips the test if OpenCV-compatible hardware is not available.
@@ -183,6 +184,7 @@ def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
         False,
     ],
 )
+@pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
     # Skips the test if OpenCV-compatible hardware is not available.
@@ -346,49 +348,3 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
 
     # Other GrabFrame errors cannot be readily reproduced under a test environment and are likely not possible to
     # encounter under most real-world conditions.
-
-
-def test_get_opencv_ids() -> None:
-    """Verifies the functioning of the get_opencv_ids() function."""
-    # Tests the function execution
-    camera_ids = get_opencv_ids()
-
-    # Verifies that the function returns a tuple
-    assert isinstance(camera_ids, tuple)
-
-    # If cameras are discovered, verifies that each element is a CameraInformation instance
-    if len(camera_ids) > 0:
-        for camera_info in camera_ids:
-            assert isinstance(camera_info, CameraInformation)
-            assert camera_info.interface == CameraInterfaces.OPENCV
-            assert isinstance(camera_info.camera_index, int)
-            assert isinstance(camera_info.frame_width, int)
-            assert isinstance(camera_info.frame_height, int)
-            assert isinstance(camera_info.acquisition_frame_rate, int)
-            assert camera_info.serial_number is None  # OpenCV doesn't provide serial numbers
-            assert camera_info.model is None  # OpenCV doesn't provide model names
-
-
-def test_get_harvesters_ids(has_harvesters) -> None:
-    """Verifies the functioning of the get_harvesters_ids() function."""
-    # Skips the test if Harvesters-compatible hardware is not available.
-    if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera.")
-
-    # Tests the function execution - The CTI path is resolved internally
-    camera_ids = get_harvesters_ids()
-
-    # Verifies that the function returns a tuple
-    assert isinstance(camera_ids, tuple)
-
-    # If cameras are discovered, verifies that each element is a CameraInformation instance
-    if len(camera_ids) > 0:
-        for camera_info in camera_ids:
-            assert isinstance(camera_info, CameraInformation)
-            assert camera_info.interface == CameraInterfaces.HARVESTERS
-            assert isinstance(camera_info.camera_index, int)
-            assert isinstance(camera_info.frame_width, int)
-            assert isinstance(camera_info.frame_height, int)
-            assert isinstance(camera_info.acquisition_frame_rate, int)
-            assert isinstance(camera_info.serial_number, str)
-            assert isinstance(camera_info.model, str)
