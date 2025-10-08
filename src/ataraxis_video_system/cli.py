@@ -28,8 +28,8 @@ def axvs_cli() -> None:
 
 @axvs_cli.command("cti")
 @click.option(
-    "-cti",
-    "--cti-path",
+    "-f",
+    "--file-path",
     required=False,
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path),
     help=(
@@ -38,17 +38,17 @@ def axvs_cli() -> None:
         "See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details."
     ),
 )
-def set_cti_file(cti_path: Path) -> None:
+def set_cti_file(file_path: Path) -> None:
     """Configures the library to use the input CTI file for all future runtimes involving GeniCam cameras.
 
     This library relies on the Harvesters library to interface with GeniCam-compatible cameras. In turn, the Harvesters
     library requires the GenTL Producer interface (.cti) file to discover and interface with compatible cameras. This
     command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library.
     """
-    add_cti_file(cti_path=cti_path)
+    add_cti_file(cti_path=file_path)
 
     # Notifies the user that the CTI file has been successfully set.
-    console.echo(f"AXVS CTI file: Set to {cti_path}.", level=LogLevel.SUCCESS)
+    console.echo(f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
 
 
 @axvs_cli.command("id")

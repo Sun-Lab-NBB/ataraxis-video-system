@@ -35,9 +35,9 @@ if __name__ == "__main__":
         system_id=np.uint8(101),
         data_logger=logger,
         output_directory=output_directory,
-        frame_rate = 30,
-        display_frame_rate = 15,
-        color = False,  # Acquires images in MONOCHROME mode
+        frame_rate=30,
+        display_frame_rate=15,
+        color=False,  # Acquires images in MONOCHROME mode
     )
 
     # Calling this method arms the video system and starts frame acquisition. However, the frames are not initially

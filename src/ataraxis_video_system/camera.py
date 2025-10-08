@@ -157,13 +157,14 @@ def get_harvesters_ids() -> tuple[CameraInformation, ...]:
     # Loops over all discovered cameras and retrieves detailed information from each camera
     working_ids: list[CameraInformation] = []
     for index, camera_info in enumerate(harvester.device_info_list):
-        # Accesses the remote device node map to get camera properties.
-        node_map = camera_info.node_map
+        # Accesses the remote device node map to get camera properties
+        camera = harvester.create(search_key=index)
+        node_map = camera.remote_device.node_map
 
         # Retrieves frame dimensions and acquisition rate from the camera's node map.
-        frame_width = int(node_map["Width"].value)
-        frame_height = int(node_map["Height"].value)
-        acquisition_rate = int(round(number=node_map["AcquisitionFrameRate"].value, ndigits=0))
+        frame_width = int(node_map.Width.value)
+        frame_height = int(node_map.Height.value)
+        acquisition_rate = int(round(number=node_map.AcquisitionFrameRate.value, ndigits=0))
 
         # Creates CameraInformation instance with all retrieved data
         camera_data = CameraInformation(
@@ -202,7 +203,7 @@ def add_cti_file(cti_path: Path) -> None:
     """
     # Verifies the input CTI file.
     harvester = Harvester()
-    harvester.add_cti_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
     # Resolves the path to the library-specific .txt file used to store the path to the currently used .cti file.
     app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
@@ -246,7 +247,7 @@ def _get_cti_path() -> Path:
 
     # Verifies the CTI file's validity before returning it to the caller.
     harvester = Harvester()
-    harvester.add_cti_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
     return cti_path
 
 
@@ -682,8 +683,8 @@ class HarvestersCamera:
 
             # Collects the information necessary to reshape the originally 1-dimensional frame array into the
             # 2-dimensional array using the correct number and order of color channels.
-            width = content.frame_width
-            height = content.frame_height
+            width = content.width
+            height = content.height
             data_format = content.data_format
 
             # For monochrome formats, reshapes the 1D array into a 2D array and returns it to caller.
