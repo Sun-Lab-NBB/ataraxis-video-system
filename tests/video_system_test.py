@@ -2,7 +2,6 @@
 
 import sys
 import subprocess
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -525,3 +524,238 @@ def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match=error_format(message)):
         extract_logged_camera_timestamps(invalid_path)
+
+
+def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
+    """Verifies the extraction of camera frame timestamps from logged data using MockCamera.
+
+    This test creates a VideoSystem with MockCamera, runs it for a controlled duration,
+    and validates that the extracted timestamps are correct in terms of count, ordering,
+    and timing intervals.
+    """
+    from ataraxis_data_structures import assemble_log_archives
+    from ataraxis_time import PrecisionTimer
+
+    # Test configuration
+    system_id = np.uint8(42)
+    frame_rate = 20  # 20 FPS for predictable timing
+    acquisition_duration = 3  # Run for 3 seconds
+    expected_frame_count = int(frame_rate * acquisition_duration)
+
+    # Creates the VideoSystem with MockCamera for controlled testing
+    output_directory = tmp_path.joinpath("test_timestamp_extraction")
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    video_system = VideoSystem(
+        system_id=system_id,
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.MOCK,
+        camera_index=0,
+        frame_rate=frame_rate,
+        frame_width=640,
+        frame_height=480,
+        color=False,
+        quantization_parameter=25,
+    )
+
+    # Start the data logger and video system
+    data_logger.start()
+    video_system.start()
+
+    # Enable frame saving and run for the specified duration
+    timer = PrecisionTimer("s")
+    video_system.start_frame_saving()
+    timer.delay(delay=acquisition_duration, allow_sleep=True, block=False)
+    video_system.stop_frame_saving()
+
+    # Stop the video system and data logger
+    video_system.stop()
+    data_logger.stop()
+
+    # Compress the logs to create the .npz archive
+    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
+
+    # Construct the expected log file path
+    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
+
+    # Verify the log file was created
+    assert log_file_path.exists(), f"Log file not found at {log_file_path}"
+
+    # Extract timestamps using both sequential and parallel processing
+    # Test with sequential processing (n_workers=1)
+    timestamps_sequential = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+
+    # Test with parallel processing (n_workers=-1 for all cores)
+    timestamps_parallel = extract_logged_camera_timestamps(log_file_path, n_workers=-1)
+
+    # Verify both methods produce the same results
+    assert timestamps_sequential == timestamps_parallel, "Sequential and parallel extraction produced different results"
+
+    # Validate timestamp count (allow for small variation due to timing)
+    actual_frame_count = len(timestamps_sequential)
+    tolerance = 5  # Allow ±5 frames tolerance
+    assert abs(actual_frame_count - expected_frame_count) <= tolerance, (
+        f"Expected approximately {expected_frame_count} frames, got {actual_frame_count}"
+    )
+
+    # Validate that timestamps are monotonically increasing
+    for i in range(1, len(timestamps_sequential)):
+        assert timestamps_sequential[i] > timestamps_sequential[i - 1], (
+            f"Timestamps not monotonically increasing at index {i}"
+        )
+
+    # Validate frame intervals (should be approximately 1/frame_rate seconds)
+    if len(timestamps_sequential) > 1:
+        expected_interval_us = 1_000_000 / frame_rate  # Convert to microseconds
+        intervals = [
+            timestamps_sequential[i] - timestamps_sequential[i - 1] for i in range(1, len(timestamps_sequential))
+        ]
+
+        # Calculate average interval
+        avg_interval = np.mean(intervals)
+
+        # Allow for 20% deviation from the expected interval
+        interval_tolerance = expected_interval_us * 0.2
+        # noinspection PyTypeChecker
+        assert abs(avg_interval - expected_interval_us) < interval_tolerance, (
+            f"Average frame interval {avg_interval:.2f} µs deviates too much from "
+            f"expected {expected_interval_us:.2f} µs"
+        )
+
+    # Validate that all timestamps are positive and reasonable
+    for timestamp in timestamps_sequential:
+        assert timestamp > 0, "Found non-positive timestamp"
+        # Timestamps should be Unix microseconds (a reasonable range check)
+        assert timestamp > 1_000_000_000_000_000, "Timestamp appears to be in wrong units"
+        assert timestamp < 2_000_000_000_000_000, "Timestamp unreasonably large"
+
+
+def test_camera_timestamp_extraction_with_multiple_segments(data_logger, tmp_path) -> None:
+    """Tests timestamp extraction with start/stop segments of frame saving.
+
+    This test verifies that timestamps are correctly extracted when frame saving
+    is enabled and disabled multiple times during a single session.
+    """
+    from ataraxis_data_structures import assemble_log_archives
+    from ataraxis_time import PrecisionTimer
+
+    system_id = np.uint8(99)
+    frame_rate = 10  # Lower frame rate for easier validation
+
+    output_directory = tmp_path.joinpath("test_segmented_timestamps")
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    video_system = VideoSystem(
+        system_id=system_id,
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.MOCK,
+        frame_rate=frame_rate,
+        frame_width=320,
+        frame_height=240,
+        color=True,
+    )
+
+    # Start systems
+    data_logger.start()
+    video_system.start()
+
+    timer = PrecisionTimer("s")
+
+    # First segment: 1 second of recording
+    video_system.start_frame_saving()
+    timer.delay(delay=1, allow_sleep=True, block=False)
+    video_system.stop_frame_saving()
+
+    # Pause: 1 second without recording
+    timer.delay(delay=1, allow_sleep=True, block=False)
+
+    # Second segment: 2 seconds of recording
+    video_system.start_frame_saving()
+    timer.delay(delay=2, allow_sleep=True, block=False)
+    video_system.stop_frame_saving()
+
+    # Pause: 1 second without recording
+    timer.delay(delay=1, allow_sleep=True, block=False)
+
+    # Third segment: 1 second of recording
+    video_system.start_frame_saving()
+    timer.delay(delay=1, allow_sleep=True, block=False)
+    video_system.stop_frame_saving()
+
+    # Stop systems
+    video_system.stop()
+    data_logger.stop()
+
+    # Process logs
+    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
+
+    # Extracts timestamps
+    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
+    timestamps = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+
+    # Total recording time: 1 + 2 + 1 = 4 seconds
+    # Expected frames: approximately 40 (4 * 10 fps)
+    expected_frames = 40
+    actual_frames = len(timestamps)
+
+    # Allow for timing variations
+    assert 35 <= actual_frames <= 45, f"Expected approximately {expected_frames} frames, got {actual_frames}"
+
+    # Check for gaps in timestamps that might indicate the pauses
+    # (This is a basic check - actual gaps depend on implementation details)
+    if len(timestamps) > 10:
+        intervals = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
+        max_interval = max(intervals)
+        avg_interval = np.mean(intervals)
+
+        # The maximum interval might be larger due to pauses, but shouldn't be
+        # excessive (e.g., not more than 10x the average for this controlled test)
+        assert max_interval < avg_interval * 10, "Detected unexpectedly large gap in timestamps"
+
+
+def test_camera_timestamp_extraction_empty_log(data_logger, tmp_path) -> None:
+    """Tests timestamp extraction when no frames were saved (empty timestamp log).
+
+    This verifies that the extraction function handles the case where a VideoSystem
+    was started but no frames were actually saved.
+    """
+    from ataraxis_data_structures import assemble_log_archives
+    from ataraxis_time import PrecisionTimer
+
+    system_id = np.uint8(77)
+
+    # Create VideoSystem but don't enable frame saving
+    output_directory = tmp_path.joinpath("test_empty_timestamps")
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    video_system = VideoSystem(
+        system_id=system_id,
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.MOCK,
+        frame_rate=30,
+    )
+
+    # Start but never enable frame saving
+    data_logger.start()
+    video_system.start()
+
+    timer = PrecisionTimer("s")
+    timer.delay(delay=1, allow_sleep=True, block=False)
+
+    video_system.stop()
+    data_logger.stop()
+
+    # Process logs
+    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
+
+    # Extracts timestamps from the log with only the onset message
+    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
+
+    if log_file_path.exists():
+        timestamps = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+
+        # Should return an empty tuple when no frames were saved
+        assert timestamps == (), f"Expected empty tuple, got {len(timestamps)} timestamps"

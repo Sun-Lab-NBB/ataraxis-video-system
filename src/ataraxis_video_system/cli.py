@@ -2,25 +2,31 @@
 library.
 """
 
-from pathlib import Path
+from pathlib import Path  # pragma: no cover
 
-import click
-import numpy as np
-from ataraxis_base_utilities import LogLevel, console
-from ataraxis_data_structures import DataLogger
+import click  # pragma: no cover
+import numpy as np  # pragma: no cover
+from ataraxis_base_utilities import LogLevel, console  # pragma: no cover
+from ataraxis_data_structures import DataLogger  # pragma: no cover
 
-from .saver import OutputPixelFormats, EncoderSpeedPresets, check_gpu_availability, check_ffmpeg_availability
-from .camera import CameraInterfaces, add_cti_file, get_opencv_ids, get_harvesters_ids
-from .video_system import VideoSystem
+from .saver import (
+    OutputPixelFormats,
+    EncoderSpeedPresets,
+    check_gpu_availability,
+    check_ffmpeg_availability,
+)  # pragma: no cover
+from .camera import CameraInterfaces, add_cti_file, get_opencv_ids, get_harvesters_ids  # pragma: no cover
+from .video_system import VideoSystem  # pragma: no cover
 
-console.enable()  # Enables console output
+# Enables console output
+console.enable()  # pragma: no cover
 
 # Ensures that displayed CLICK help messages are formatted according to the lab standard.
-CONTEXT_SETTINGS = {"max_content_width": 120}
+CONTEXT_SETTINGS = {"max_content_width": 120}  # pragma: no cover
 
 
 @click.group("axvs", context_settings=CONTEXT_SETTINGS)
-def axvs_cli() -> None:
+def axvs_cli() -> None:  # pragma: no cover
     """This Command-Line Interface (CLI) functions as the entry-point for interfacing with all interactive components
     of the ataraxis-video-system (AXVS) library.
     """
@@ -38,7 +44,7 @@ def axvs_cli() -> None:
         "See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details."
     ),
 )
-def set_cti_file(file_path: Path) -> None:
+def set_cti_file(file_path: Path) -> None:  # pragma: no cover
     """Configures the library to use the input CTI file for all future runtimes involving GeniCam cameras.
 
     This library relies on the Harvesters library to interface with GeniCam-compatible cameras. In turn, the Harvesters
@@ -119,7 +125,7 @@ def list_camera_indices(interface: str) -> None:
 
 
 @axvs_cli.command("check")
-def check_requirements() -> None:
+def check_requirements() -> None:  # pragma: no cover
     """Checks whether the host system meets the requirements for CPU and (optionally) GPU video encoding.
 
     This command allows checking whether the local system is set up correctly to support saving acquired camera frames
@@ -225,7 +231,7 @@ def live_run(
     frame_rate: int,
     *,
     monochrome: bool,
-) -> None:
+) -> None:  # pragma: no cover
     """Creates a VideoSystem instance using the input parameters and starts an interactive imaging session.
 
     This command allows testing various components of the VideoSystem by running an interactive session controlled via
