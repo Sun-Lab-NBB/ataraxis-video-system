@@ -15,17 +15,18 @@ ___
 
 ## Detailed Description
 
-This library abstracts all necessary steps for acquiring and saving video data: it interfaces with the camera to 
-grab the raw frames and encodes them as a video file stored in the non-volatile memory. The library is specifically 
-designed for working with multiple cameras at the same time and can be customized to precisely balance the resultant 
-video quality and real-time throughput for a wide range of video recording applications.
+This library abstracts all necessary steps for acquiring and saving video data. During each runtime, it interfaces with 
+one or more cameras to grab the raw frames and encodes them as video files stored in the non-volatile memory. The 
+library is specifically designed for working with multiple cameras at the same time and supports fine-tuning the 
+acquisition and saving parameters to precisely balance the resultant video quality and real-time throughput for 
+a wide range of applications.
 
 ___
 
 ## Features
 
 - Supports Windows, Linux, and macOS.
-- Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial and scientific cameras.
+- Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
 - GPL 3 License.
@@ -47,182 +48,172 @@ ___
 
 ## Dependencies
 
-- [FFMPEG](https://www.ffmpeg.org/download.html). Make sure that the installed FFMPEG is available in your system’s 
-  path, and Python has permissions to call FFMPEG. We recommend using the latest stable release of FFMPEG, although the
-  minimal requirement is support for H254 and H265 codecs.
-- [Harvesters Dependencies](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst) if you intend to use 
-  Harvesters camera backend. Primarily, this only includes the ***GenTL Producer CTI***, as all other dependencies are 
-  installed automatically. If your camera vendor supplies a .cti file for that camera, use that file. Otherwise, we 
-  recommend using the [MvImpactAcquire](https://assets-2.balluff.com/mvIMPACT_Acquire/). This producer requires 
-  licensing for versions at or above **3.0.0**, but lower versions seem to function well with all tested hardware. This 
-  library has been tested using version **2.9.2**.
+- [FFMPEG](https://www.ffmpeg.org/download.html) version **n8.0**. The installed FFMPEG must be available on the 
+  system’s path and callable from Python processes.
+- A [GenTL Producer](https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf) interface compatible with the 
+  [Harvesters](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst#installing-a-gentl-producer) library 
+  if the target camera requires the 'harvesters' camera interface. It is recommended to use the CTI interface supplied 
+  by the camera’s vendor, if possible, as this typically ensures that the camera performs as advertised. If the 
+  camera-specific CTI file is not available, it is possible to instead use a general interface, such as 
+  [MvImpactAcquire](https://assets-2.balluff.com/mvIMPACT_Acquire/). This library has been tested using MvImpactAcquire 
+  version **2.9.2**.
 
 For users, all other library dependencies are installed automatically by all supported installation methods 
-(see [Installation](#installation) section).
+(see the [Installation](#installation) section).
 
-For developers, see the [Developers](#developers) section for information on installing additional development 
-dependencies.
+***Note!*** Developers should see the [Developers](#developers) section for information on installing additional 
+development dependencies.
+
 ___
 
 ## Installation
 
 ### Source
 
-Note, installation from source is ***highly discouraged*** for everyone who is not an active project developer.
-Developers should see the [Developers](#Developers) section for more details on installing from source. The instructions
-below assume you are ***not*** a developer.
+Note, installation from source is ***highly discouraged*** for anyone who is not an active project developer.
 
-1. Download this repository to your local machine using your preferred method, such as Git-cloning. Use one
-   of the stable releases from [GitHub](https://github.com/Sun-Lab-NBB/ataraxis-video-system/releases).
-2. Unpack the downloaded zip and note the path to the binary wheel (`.whl`) file contained in the archive.
-3. Run ```python -m pip install WHEEL_PATH```, replacing 'WHEEL_PATH' with the path to the wheel file, to install the 
-   wheel into the active python environment.
+1. Download this repository to the local machine using the preferred method, such as git-cloning. Use one of the 
+   [stable releases](https://github.com/Sun-Lab-NBB/ataraxis-video-system/tags) that include precompiled binary and 
+   source code distribution (sdist) wheels.
+2. If the downloaded distribution is stored as a compressed archive, unpack it using the appropriate decompression tool.
+3. ```cd``` to the root directory of the prepared project distribution.
+4. Run ```python -m pip install .``` to install the project. Alternatively, if using a distribution with precompiled
+   binaries, use ```python -m pip install WHEEL_PATH```, replacing 'WHEEL_PATH' with the path to the wheel file.
 
 ### pip
-Use the following command to install the library using pip: ```pip install ataraxis-video-system```.
+
+Use the following command to install the library using pip: ```pip install ataraxis-video-system```
+
 ___
 
 ## Usage
 
-### OS support status
+### OS Support Status
+
+While this library works on all major operating systems, it is largely up to the maintainers of the low-level library 
+components (OpenCV, Harvesters, FFMPEG) to ensure that the operation is smooth on each supported OS. That, in turn, is 
+not always possible for many nuanced reasons. This section summarizes the current state of the library for the three 
+explicitly supported operating systems: macOS, Windows, and Linux.
+
+#### Linux
 This library was primarily written on and for Linux systems. It is extensively tested on Linux and performs well under
-all test conditions. It is very likely that Linux users will not experience any issues outside the usual possibility of
-encountering bugs missed during initial testing.
+all test conditions. It is very likely that Linux users will not experience any issues specific to this library.
 
-Windows bindings also work as expected, but require additional setup. Make sure FFMPEG is updated to the latest version,
-as we found issues using FFMPEG built in 2023, where it drastically slowed the speed of video encoding to the point 
-where VideoSystem could not operate for prolonged periods of time. We also had to disable the OpenCV MSMF HW 
-transformations, as MSMF took a very long time to establish camera connection with this flag enabled. This latter issue
-is well known to the community.
+#### Windows
+The library is mostly stable on Windows systems, but requires additional setup to ensure smooth operation. First, the 
+FFMPEG **has** to be updated to the latest stable version, as older versions may have a drastically reduced encoding 
+speed even with hardware acceleration. Additionally, some of the advanced OpenCV’s features, such as the MSMF HW 
+transformations, have to be disabled to support smooth runtimes on the Windows platform. Typically, the information of 
+which features to disable is readily available from the OpenCV’s Windows community.
 
-macOS mostly works as expected except for live frame displaying, which does not work. This is a known 
-issue with the OpenCV backend used to render the frame data. Similar issue is observed for other backends, such as 
-Qt5 and Tkinter that were tested as a potential replacement. Displaying the frames on macOS is disabled until we find
-a working backend.
-
-Overall, the library in its current state should be stable. Most of the outstanding issues should be resolved in the 
-future with updates to OpenCV and other dependencies.
+#### macOS
+macOS mostly works as expected except for live frame displaying, which does not work for some macOS versions. This is a 
+known issue with the OpenCV backend used to render the frame data. As such, some OpenCV and macOS combinations must 
+disable the 'live' video rendering feature of the VideoSystem class to work with the video data in non-interactive mode.
 
 ### Quickstart
 This is a minimal example of how to use this library. It is also available as a [script](examples/quickstart.py).
-This example is intentionally kept minimal, consult 
-[API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for more details.
+This example is intentionally kept minimal, consult the
+[API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for all available VideoSystem configuration 
+parameters.
+
+Most library functionality is accessible through the **VideoSystem** class:
 ```
 from pathlib import Path
 
 import numpy as np
+import tempfile
 from ataraxis_time import PrecisionTimer
-from ataraxis_data_structures import DataLogger
+from ataraxis_data_structures import DataLogger, assemble_log_archives
+from ataraxis_base_utilities import console, LogLevel
 
-from ataraxis_video_system import VideoSystem, InputPixelFormats
+from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces, extract_logged_camera_timestamps
 
-# Since most classes used in this example use multiprocessing, they have to run inside the __main__ guard
+# Since the VideoSystem and DataLogger classes use multiprocessing under-the-hood, the runtime must be protected by the
+# __main__ guard.
 if __name__ == "__main__":
-    # The directory where to output the recorded frames and the acquisition timestamps
-    output_directory = Path("/Users/InfamousOne/Desktop/vid_test")
 
-    # The DataLogger is used to save frame acquisition timestamps to disk. During runtime, it logs frame timestamps as
-    # uncompressed NumPy arrays (.npy), and after runtime it can compress log entries into one .npz archive.
-    logger = DataLogger(output_directory=output_directory, instance_name="webcam", exist_ok=True)
+    # Enables the console module to communicate the example's runtime progress via the terminal.
+    console.enable()
 
-    # DataLogger uses a parallel process to write log entries to disk. It has to be started before it can save any log
-    # entries.
+    # Specifies the directory where to save the acquired video frames and timestamps.
+    tempdir = tempfile.TemporaryDirectory()  # Creates a temporary directory for illustration purposes
+    output_directory = Path(tempdir.name)
+
+    # The DataLogger is used to save frame acquisition timestamps to disk as uncompressed .npy files.
+    logger = DataLogger(output_directory=output_directory, instance_name="webcam")
+
+    # The DataLogger has to be started before it can save any log entries.
     logger.start()
 
     # The VideoSystem minimally requires an ID and a DataLogger instance. The ID is critical, as it is used to identify
     # the log entries generated by the VideoSystem. For VideoSystems that will be saving frames, output_directory is
     # also required
-    vs = VideoSystem(system_id=np.uint8(101), data_logger=logger, output_directory=output_directory)
-
-    # By default, all added cameras are interfaced with using OpenCV backend. Check the API documentation to learn about
-    # all available camera configuration options and supported backends. This camera is configured to save frames and to
-    # display the live video feed to the user at 25 fps. The display framerate can be the same or lower as the
-    # acquisition framerate.
-    vs.add_camera(
-        save_frames=True,
-        acquisition_frame_rate=30,
-        display_frames=True,
-        display_frame_rate=15,
+    vs = VideoSystem(
+        system_id=np.uint8(101),
+        data_logger=logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.OPENCV,  # OpenCV interface for webcameras
+        display_frame_rate=15,  # Displays the acquired data at a rete of 15 frames per second
         color=False,  # Acquires images in MONOCHROME mode
+        video_encoder=VideoEncoders.H264,  # Uses H264 CPU video encoder.
+        quantization_parameter=25,  # Increments the default qp parameter to reflect using the H264 encoder.
     )
-
-    # To save the frames acquired by the system, we need to add a saver. Here, we demonstrate adding a video saver, but
-    # you can also use the add_image_saver() method to output frames as images. The default video saver uses CPU and
-    # H265 codec to encode frames as an MP4 video.
-    vs.add_video_saver(input_pixel_format=InputPixelFormats.MONOCHROME)
 
     # Calling this method arms the video system and starts frame acquisition. However, the frames are not initially
     # saved to disk.
     vs.start()
+    console.echo(f"VideoSystem: Started", level=LogLevel.SUCCESS)
 
+    console.echo(f"Acquiring frames without saving...")
     timer = PrecisionTimer("s")
-    timer.delay_noblock(delay=2)  # During this delay, camera frames are displayed to the user but are not saved
+    timer.delay(delay=5, block=False)  # During this delay, camera frames are displayed to the user but are not saved
 
     # Begins saving frames to disk as an MP4 video file
+    console.echo(f"Saving the acquired frames to disk...")
     vs.start_frame_saving()
-    timer.delay_noblock(delay=5)  # Records frames for 5 seconds, generating ~150 frames
+    timer.delay(delay=5, block=False)  # Records frames for 5 seconds, generating ~150 frames
     vs.stop_frame_saving()
 
-    # Frame acquisition can be started and stopped as needed, although all frames will be written to the same output
-    # video file. If you intend to cycle frame acquisition, it may be better to use an image saver backend.
+    # Frame acquisition can be started and stopped as needed, although all frames are written to the same output
+    # video file.
 
     # Stops the VideoSystem runtime and releases all resources
     vs.stop()
+    console.echo(f"VideoSystem: Stopped", level=LogLevel.SUCCESS)
 
-    # Stops the DataLogger and compresses acquired logs into a single .npz archive. This step is required for being
-    # able to parse the data with the VideoSystem API
+    # Stops the DataLogger and assembles all logged data into a single .npz archive file. This step is required to be
+    # able to extract the timestamps for further analysis.
     logger.stop()
-    logger.compress_logs(remove_sources=True)
+    console.echo(f"Assembling the frame timestamp log archive...")
+    assemble_log_archives(remove_sources=True, log_directory=logger.output_directory, verbose=True)
 
-    # Extracts the list of frame timestamps from the compressed log generated above. The extraction function
-    # automatically uses VideoSystem ID, DataLogger name, and the output_directory to resolve the archive path.
-    timestamps = vs.extract_logged_data()  # Returns a list of timestamps, each is given in microseconds since epoch
-    # onset
+    # Extracts the list of frame timestamps from the assembled log archive generated above. This returns a list of
+    # timestamps. Each is given in microseconds elapsed since the UTC epoch onset.
+    console.echo(f"Extracting frame acquisition timestamps from the assembled log archive...")
+    timestamps = extract_logged_camera_timestamps(log_path=logger.output_directory.joinpath(f"101_log.npz"))
 
-    # Computes and prints the actual framerate of the camera based on saved frames.
+    # Computes and prints the frame rate of the camera based on the extracted frame timestamp data.
     timestamp_array = np.array(timestamps, dtype=np.uint64)
     time_diffs = np.diff(timestamp_array)
     fps = 1 / (np.mean(time_diffs) / 1e6)
-    print(fps)
+    console.echo(
+        message=(
+            f"According to the extracted timestamps, the interfaced camera had an acquisition frame rate of "
+            f"approximately {fps:.2f} frames / second."
+        ),
+        level=LogLevel.SUCCESS,
+    )
 
-    # You can also check the output directory for the created video.
-```
-
-### Image to Video Conversion
-Some use cases may require capturing frames with an ImageSaver class, rather than the default VideoSaver. This approach
-often achieves the highest acquisition rate and data quality as it allows capturing frames with no processing overhead. 
-However, this format is extremely space-inefficient, so it may be desirable to encode captured frames as a video 
-post-runtime, when runtime speed is no longer a critical factor. The VideoSystem supports such conversions via the 
-encode_video_from_images() method:
-```
-from ataraxis_data_structures import DataLogger
-from ataraxis_video_system import VideoSystem
-import numpy as np
-from tempfile import mkdtemp
-from pathlib import Path
-
-# Initializes the logger, which is not used for anything other than initializing the VideoSystem
-output_directory = Path("/home/cybermouse/Desktop/vid_test")
-logger = DataLogger(output_directory)
-
-# When the VideoSystem is used to encode images as video, it only needs to be equipped with the VideoSaver.
-vs = VideoSystem(system_id=np.uint(1), data_logger=logger)
-vs.add_video_saver()
-
-# The path should point to a folder with png, tiff or jpg files named in a way that allows deducing the sequence they
-# were acquired in (e.g: 0001.png). The VideoSystem will then encode the frames as video and output the generated file
-# in the output_directory
-image_directory = Path("/home/cybermouse/Desktop/vid_test/images")
-vs.encode_video_from_images(directory=image_directory, target_fps=15, video_name='test_video')
-
+    # Cleans up the temporary directory before shutting the runtime down.
+    tempdir.cleanup()
 ```
 
 ### Data Logging
-Like some other Ataraxis libraries, this library relies on the 
+Like some other high-level Ataraxis libraries, this library relies on the 
 [DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-data-structures#datalogger) class to save frame acquisition 
-timestamps to disk during runtime. The timestamps are serialized and saved as `.npy` files. It is **highly** advised 
-to study the documentation for the class before using this library, especially if you want to parse the logged data
-manually instead of using the method exposed by the VideoSystem class.
+timestamps to disk during runtime. Each **saved** frame’s acquisition timestamp is serialized and saved as an 
+uncompressed **.npy** file.
 
 The DataLogger may be shared by multiple Ataraxis classes that generate log entries, such as 
 [MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) classes. To support using 
@@ -273,81 +264,67 @@ function `extract_logged_video_system_data()`. This function behaves exactly lik
 method does, but can be used to parse logged data without the need to have an initialized VideoSystem instance. You can
 use the `log_path` property of an initialized VideoSystem instance to get the path to the .npz archive that stores 
 logged data after compression, which is a required argument for the instance-independent log extraction function.
+
 ___
 
 ## API Documentation
 
 See the [API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for the
 detailed description of the methods and classes exposed by components of this library.
+
+**Note!** The API documentation also includes the details about the `axvs` CLI interface exposed by this library.
+
 ___
 
 ## Developers
 
-This section provides installation, dependency, and build-system instructions for the developers that want to
-modify the source code of this library.
+This section provides installation, dependency, and build-system instructions for project developers.
 
-### Installing the library
+### Installing the Project
 
-The easiest way to ensure you have the most recent development dependencies and library source files is to install the 
-python environment for your OS (see below). All environments used during development are exported as .yml files and as 
-spec.txt files to the [envs](envs) folder. The environment snapshots were taken on each of the three explicitly 
-supported OS families: Windows 11, OSx Darwin, and GNU Linux.
+***Note!*** This installation method requires **mamba version 2.3.2 or above**. Currently, all Sun lab automation 
+pipelines require that mamba is installed through the [miniforge3](https://github.com/conda-forge/miniforge) installer.
 
-**Note!** Since the OSx environment was built for the Darwin platform (Apple Silicon), it may not work on Intel-based 
-Apple devices.
-
-1. If you do not already have it installed, install [tox](https://tox.wiki/en/latest/user_guide.html) into the active
-   python environment. The rest of this installation guide relies on the interaction of local tox installation with the
-   configuration files included in with this library.
-2. Download this repository to your local machine using your preferred method, such as git-cloning. If necessary, unpack
-   and move the project directory to the appropriate location on your system.
-3. ```cd``` to the root directory of the project using your command line interface of choice. Make sure it contains
-   the `tox.ini` and `pyproject.toml` files.
-4. Run ```tox -e import``` to automatically import the os-specific development environment included with the source 
-   distribution. Alternatively, you can use ```tox -e create``` to create the environment from scratch and automatically
-   install the necessary dependencies using pyproject.toml file. 
-5. If either step 4 command fails, use ```tox -e provision``` to fix a partially installed environment.
-
-**Hint:** while only the platforms mentioned above were explicitly evaluated, this project will likely work on any 
-common OS but may require additional configuration steps.
+1. Download this repository to the local machine using the preferred method, such as git-cloning.
+2. If the downloaded distribution is stored as a compressed archive, unpack it using the appropriate decompression tool.
+3. ```cd``` to the root directory of the prepared project distribution.
+4. Install the core Sun lab development dependencies into the ***base*** mamba environment via the 
+   ```mamba install tox uv tox-uv``` command.
+5. Use the ```tox -e create``` command to create the project-specific development environment followed by 
+   ```tox -e install``` command to install the project into that environment as a library.
 
 ### Additional Dependencies
 
-In addition to installing the required python packages, separately install the following dependencies:
+In addition to installing the project and all user dependencies, install the following dependencies:
 
-1. [Python](https://www.python.org/downloads/) distributions, one for each version that you intend to support. These 
-   versions will be installed in-addition to the main Python version installed in the development environment.
-   The easiest way to get tox to work as intended is to have separate python distributions, but using 
-   [pyenv](https://github.com/pyenv/pyenv) is a good alternative. This is needed for the 'test' task to work as 
-   intended.
+1. [Python](https://www.python.org/downloads/) distributions, one for each version supported by the developed project. 
+   Currently, this library supports the three latest stable versions. It is recommended to use a tool like 
+   [pyenv](https://github.com/pyenv/pyenv) to install and manage the required versions.
 
 ### Development Automation
 
 This project comes with a fully configured set of automation pipelines implemented using 
-[tox](https://tox.wiki/en/latest/user_guide.html). Check [tox.ini file](tox.ini) for details about 
+[tox](https://tox.wiki/en/latest/user_guide.html). Check the [tox.ini file](tox.ini) for details about the 
 available pipelines and their implementation. Alternatively, call ```tox list``` from the root directory of the project
 to see the list of available tasks.
 
-**Note!** All commits to this project have to successfully complete the ```tox``` task before being pushed to GitHub. 
-To minimize the runtime for this task, use ```tox --parallel```.
-
-For more information, you can also see the 'Usage' section of the 
-[ataraxis-automation project](https://github.com/Sun-Lab-NBB/ataraxis-automation#Usage) documentation.
+**Note!** All pull requests for this project have to successfully complete the ```tox``` task before being merged. 
+To expedite the task’s runtime, use the ```tox --parallel``` command to run some tasks in-parallel.
 
 ### Automation Troubleshooting
 
-Many packages used in 'tox' automation pipelines (uv, mypy, ruff) and 'tox' itself are prone to various failures. In 
-most cases, this is related to their caching behavior. Despite a considerable effort to disable caching behavior known 
-to be problematic, in some cases it cannot or should not be eliminated. If you run into an unintelligible error with 
+Many packages used in 'tox' automation pipelines (uv, mypy, ruff) and 'tox' itself may experience runtime failures. In 
+most cases, this is related to their caching behavior. If an unintelligible error is encountered with 
 any of the automation components, deleting the corresponding .cache (.tox, .ruff_cache, .mypy_cache, etc.) manually 
-or via a cli command is very likely to fix the issue.
+or via a CLI command typically solves the issue.
 
 ___
 
 ## Versioning
 
-We use [semantic versioning](https://semver.org/) for this project. For the versions available, see the 
-[tags on this repository](https://github.com/Sun-Lab-NBB/ataraxis-video-system/tags).
+This project uses [semantic versioning](https://semver.org/). See the 
+[tags on this repository](https://github.com/Sun-Lab-NBB/ataraxis-video-system/tags) for the available project 
+releases.
 
 ---
 
@@ -362,12 +339,13 @@ ___
 ## License
 
 This project is licensed under the GPL3 License: see the [LICENSE](LICENSE) file for details.
+
 ___
 
 ## Acknowledgments
 
 - All Sun lab [members](https://neuroai.github.io/sunlab/people) for providing the inspiration and comments during the
   development of this library.
-- The creators of all other projects used in our development automation pipelines [see pyproject.toml](pyproject.toml).
+- The creators of all other dependencies and projects listed in the [pyproject.toml](pyproject.toml) file.
 
 ---

@@ -1,31 +1,37 @@
 """This example script demonstrates how to use the library to record and display the frames acquired by a personal
-webcam. It is intentionally kept minimalistic.
+webcam.
 See API documentation at https://ataraxis-video-system-api-docs.netlify.app/ for additional configuration options
 exposed by VideoSystem interface.
 See https://github.com/Sun-Lab-NBB/ataraxis-video-system?tab=readme-ov-file#usage for more details on how to use this
 library.
-Authors: Ivan Kondratyev, Jacob Groner (Jgroner11), Natalie Yeung
+Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 """
 
 from pathlib import Path
 
 import numpy as np
+import tempfile
 from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import DataLogger, assemble_log_archives
+from ataraxis_base_utilities import console, LogLevel
 
-from ataraxis_video_system import VideoSystem, extract_logged_camera_timestamps
+from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces, extract_logged_camera_timestamps
 
-# Since most classes used in this example use multiprocessing, they have to run inside the __main__ guard
+# Since the VideoSystem and DataLogger classes use multiprocessing under-the-hood, the runtime must be protected by the
+# __main__ guard.
 if __name__ == "__main__":
-    # The directory where to output the recorded frames and the acquisition timestamps
-    output_directory = Path("/mnt/data/camera_test")
 
-    # The DataLogger is used to save frame acquisition timestamps to disk. During runtime, it logs frame timestamps as
-    # uncompressed NumPy arrays (.npy), and after runtime it can compress log entries into one .npz archive.
+    # Enables the console module to communicate the example's runtime progress via the terminal.
+    console.enable()
+
+    # Specifies the directory where to save the acquired video frames and timestamps.
+    tempdir = tempfile.TemporaryDirectory()  # Creates a temporary directory for illustration purposes
+    output_directory = Path(tempdir.name)
+
+    # The DataLogger is used to save frame acquisition timestamps to disk as uncompressed .npy files.
     logger = DataLogger(output_directory=output_directory, instance_name="webcam")
 
-    # DataLogger uses a parallel process to write log entries to disk. It has to be started before it can save any log
-    # entries.
+    # The DataLogger has to be started before it can save any log entries.
     logger.start()
 
     # The VideoSystem minimally requires an ID and a DataLogger instance. The ID is critical, as it is used to identify
@@ -35,44 +41,57 @@ if __name__ == "__main__":
         system_id=np.uint8(101),
         data_logger=logger,
         output_directory=output_directory,
-        frame_rate=30,
-        display_frame_rate=15,
+        camera_interface=CameraInterfaces.OPENCV,  # OpenCV interface for webcameras
+        display_frame_rate=15,  # Displays the acquired data at a rete of 15 frames per second
         color=False,  # Acquires images in MONOCHROME mode
+        video_encoder=VideoEncoders.H264,  # Uses H264 CPU video encoder.
+        quantization_parameter=25,  # Increments the default qp parameter to reflect using the H264 encoder.
     )
 
     # Calling this method arms the video system and starts frame acquisition. However, the frames are not initially
     # saved to disk.
     vs.start()
+    console.echo(f"VideoSystem: Started", level=LogLevel.SUCCESS)
 
+    console.echo(f"Acquiring frames without saving...")
     timer = PrecisionTimer("s")
-    timer.delay(delay=2, block=False)  # During this delay, camera frames are displayed to the user but are not saved
+    timer.delay(delay=5, block=False)  # During this delay, camera frames are displayed to the user but are not saved
 
     # Begins saving frames to disk as an MP4 video file
+    console.echo(f"Saving the acquired frames to disk...")
     vs.start_frame_saving()
     timer.delay(delay=5, block=False)  # Records frames for 5 seconds, generating ~150 frames
     vs.stop_frame_saving()
 
-    # Frame acquisition can be started and stopped as needed, although all frames will be written to the same output
-    # video file. If you intend to cycle frame acquisition, it may be better to use an image saver backend.
+    # Frame acquisition can be started and stopped as needed, although all frames are written to the same output
+    # video file.
 
     # Stops the VideoSystem runtime and releases all resources
     vs.stop()
+    console.echo(f"VideoSystem: Stopped", level=LogLevel.SUCCESS)
 
-    # Stops the DataLogger and compresses acquired logs into a single .npz archive. This step is required for being
-    # able to parse the data with the VideoSystem API
+    # Stops the DataLogger and assembles all logged data into a single .npz archive file. This step is required to be
+    # able to extract the timestamps for further analysis.
     logger.stop()
+    console.echo(f"Assembling the frame timestamp log archive...")
     assemble_log_archives(remove_sources=True, log_directory=logger.output_directory, verbose=True)
 
-    # Extracts the list of frame timestamps from the compressed log generated above. The extraction function
-    # automatically uses VideoSystem ID, DataLogger name, and the output_directory to resolve the archive path.
-
-    # Returns a list of timestamps, each is given in microseconds since epoch onset
+    # Extracts the list of frame timestamps from the assembled log archive generated above. This returns a list of
+    # timestamps. Each is given in microseconds elapsed since the UTC epoch onset.
+    console.echo(f"Extracting frame acquisition timestamps from the assembled log archive...")
     timestamps = extract_logged_camera_timestamps(log_path=logger.output_directory.joinpath(f"101_log.npz"))
 
-    # Computes and prints the actual frame rate of the camera based on saved frames.
+    # Computes and prints the frame rate of the camera based on the extracted frame timestamp data.
     timestamp_array = np.array(timestamps, dtype=np.uint64)
     time_diffs = np.diff(timestamp_array)
     fps = 1 / (np.mean(time_diffs) / 1e6)
-    print(fps)
+    console.echo(
+        message=(
+            f"According to the extracted timestamps, the interfaced camera had an acquisition frame rate of "
+            f"approximately {fps:.2f} frames / second."
+        ),
+        level=LogLevel.SUCCESS,
+    )
 
-    # You can also check the output directory for the created video.
+    # Cleans up the temporary directory before shutting the runtime down.
+    tempdir.cleanup()
