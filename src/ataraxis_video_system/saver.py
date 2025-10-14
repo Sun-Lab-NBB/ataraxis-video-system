@@ -7,7 +7,7 @@ from enum import IntEnum, StrEnum
 from typing import Any, ClassVar
 from pathlib import Path
 import subprocess
-from subprocess import Popen, TimeoutExpired, CalledProcessError
+from subprocess import Popen, TimeoutExpired
 
 import numpy as np
 from numpy.typing import NDArray

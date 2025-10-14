@@ -7,5 +7,5 @@
     <option name="pathToExecutable" value="$USER_HOME$/miniforge3/envs/axds_dev_lin/bin/ruff" />
     <option name="sdkName" value="axvs_dev_lin" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="axvs_dev_osx" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="axvs_dev_win" project-jdk-type="Python SDK" />
 </project>
