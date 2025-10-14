@@ -110,7 +110,7 @@ which features to disable is readily available from the OpenCV’s Windows commu
 macOS mostly works as expected except for live frame displaying, which does not work for modern macOS devices. The issue
 is due to the OS restriction on drawing certain GUI elements outside the main thread of the application. The restriction
 interferes with the library, as it displays the acquired frames from the same process that interfaces with the camera 
-to mininmize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
+to minimize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
 be fixed any time soon.
 
 ### Quickstart
