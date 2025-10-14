@@ -4,8 +4,8 @@ import importlib_metadata
 # -- Project information -----------------------------------------------------
 project = 'ataraxis-video-system'
 # noinspection PyShadowingBuiltins
-copyright = '2024, Ivan Kondratyev (Inkaros) & Sun Lab'
-authors = ['Ivan Kondratyev (Inkaros)', 'Jacob Groner', 'Natalie Yeung']
+copyright = '2025, Sun (NeuroAI) lab'
+authors = ['Ivan Kondratyev', 'Jacob Groner', 'Natalie Yeung']
 release = importlib_metadata.version("ataraxis-video-system")  # Extracts the project version from the .toml file.
 
 # -- General configuration ---------------------------------------------------
@@ -25,8 +25,8 @@ exclude_patterns = []
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
 napoleon_include_init_with_doc = False
-napoleon_include_private_with_doc = True
-napoleon_include_special_with_doc = True
+napoleon_include_private_with_doc = False
+napoleon_include_special_with_doc = False
 napoleon_use_admonition_for_examples = False
 napoleon_use_admonition_for_notes = False
 napoleon_use_admonition_for_references = False
