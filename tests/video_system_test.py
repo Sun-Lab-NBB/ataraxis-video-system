@@ -18,6 +18,7 @@ from ataraxis_video_system.saver import (
 )
 from ataraxis_video_system.camera import CameraInterfaces, get_harvesters_ids, get_opencv_ids
 from ataraxis_video_system.video_system import extract_logged_camera_timestamps
+from random import randint
 
 
 @pytest.fixture(scope="session")
@@ -66,7 +67,7 @@ def has_nvidia():
 @pytest.fixture
 def data_logger(tmp_path) -> DataLogger:
     """Creates a DataLogger instance and returns it to the caller."""
-    data_logger = DataLogger(output_directory=tmp_path, instance_name=str(tmp_path.stem))
+    data_logger = DataLogger(output_directory=tmp_path, instance_name=str(randint(0, 100000000000)))
     return data_logger
 
 

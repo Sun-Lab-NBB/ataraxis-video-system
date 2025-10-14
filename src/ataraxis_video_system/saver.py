@@ -31,7 +31,7 @@ def check_gpu_availability() -> bool:
             text=True,
             check=True,
         )
-    except CalledProcessError:
+    except Exception:
         return False
     else:
         return True
@@ -48,7 +48,7 @@ def check_ffmpeg_availability() -> bool:
     try:
         # Runs ffmpeg version command, uses check to trigger CalledProcessError exception if runtime fails
         subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
-    except CalledProcessError:
+    except Exception:
         return False
     else:
         return True

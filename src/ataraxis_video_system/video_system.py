@@ -291,17 +291,6 @@ class VideoSystem:
         # instantiated.
         self._camera.disconnect()
 
-        # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
-        if display_frame_rate is not None and "darwin" in sys.platform:
-            warnings.warn(
-                message=(
-                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details. "
-                    f"Disabling frame display for the VideoSystem with id {self._system_id}."
-                ),
-                stacklevel=2,
-            )
-            display_frame_rate = None
-
         # If the system is configured to display the acquired frames to the user, ensures that the display frame rate
         # is valid and works with the managed camera's frame acquisition rate.
         if (display_frame_rate is not None and not isinstance(display_frame_rate, int)) or (
@@ -315,6 +304,17 @@ class VideoSystem:
                 f"integer that does not exceed the camera acquisition frame rate ({self._camera.frame_rate})."
             )
             console.error(error=TypeError, message=message)
+
+        # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
+        if display_frame_rate is not None and "darwin" in sys.platform:
+            warnings.warn(
+                message=(
+                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details. "
+                    f"Disabling frame display for the VideoSystem with id {self._system_id}."
+                ),
+                stacklevel=2,
+            )
+            display_frame_rate = None
 
         # Ensures that the display frame rate is stored as an integer and saves it to an attribute.
         self._display_frame_rate: int = display_frame_rate if display_frame_rate is not None else 0
