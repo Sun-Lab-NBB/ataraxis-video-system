@@ -47,9 +47,9 @@ dependencies = [
     "numpy>=2,<3",
     "opencv-python>=4,<5",
     "harvesters>=1,<2",
-    "ataraxis-time>=4,<5",
-    "ataraxis-base-utilities>=4,<5",
-    "ataraxis-data-structures>=4,<5",
+    "ataraxis-time>=5,<6",
+    "ataraxis-base-utilities>=5,<6",
+    "ataraxis-data-structures>=5,<6",
     "click>=8,<9",
     "appdirs>=1,<2",
 ]

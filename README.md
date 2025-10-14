@@ -210,60 +210,63 @@ if __name__ == "__main__":
 ```
 
 ### Data Logging
-Like some other high-level Ataraxis libraries, this library relies on the 
-[DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-data-structures#datalogger) class to save frame acquisition 
-timestamps to disk during runtime. Each **saved** frame’s acquisition timestamp is serialized and saved as an 
-uncompressed **.npy** file.
+This library relies on the [DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-data-structures#datalogger) class to 
+save frame acquisition timestamps to disk during runtime. Each **saved** frame’s acquisition timestamp is serialized 
+and saved as an uncompressed **.npy** file.
 
-The DataLogger may be shared by multiple Ataraxis classes that generate log entries, such as 
-[MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) classes. To support using 
-the same logger class for multiple sources, each source (class) active at the same time has to use a unique byte-ID
-(system id). These id-codes are used to identify the source class in log files and during further processing.
+The same DataLogger instance as used by the VideoSystem instances may be shared by multiple other Ataraxis assets that 
+generate log entries, such as 
+[MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) instances. To support using 
+the same logger instance for multiple concurrently active sources, **each source has to use a unique identifier value
+(system id) when sending data to the logger instance**.
 
-#### Log entries format
-Each timestamp is logged as a one-dimensional numpy uint8 array (.npy file). Inside the array, the data is organized in 
-the following order:
-1. The uint8 id of the data source. For this library, the source ID is the ID code of the VideoSystem that submits the 
-   data to be logged. The ID occupies the first byte of each logged array.
-2. The uint64 timestamp that specifies the number of microseconds relative to the **onset** timestamp (see below). The 
-   timestamp occupies **8** bytes following the ID byte. This is the frame acquisition timestamp.
+#### Log Format
+Each frame’s acquisition timestamp is logged as a one-dimensional numpy uint8 array, saved as an .npy file. Inside the 
+array, the data is organized in the following order:
+1. The uint8 id of the data source (video system instance). The ID occupies the first byte of each log entry.
+2. The uint64 timestamp that specifies the number of microseconds elapsed since the acquisition of the **onset** 
+   timestamp (see below). The timestamp occupies **8** bytes following the ID byte. This value communicates when each 
+   saved camera frame has been acquired.
 
 **Note:** Timestamps are generated at frame acquisition but are only submitted to the logger when the corresponding 
-frame is saved to disk. Therefore, the timestamps always match the order the saved frames appear in the video file or 
-are saved to disk as image files.
+frame is saved to disk. Therefore, the timestamps always match the order that the saved frames appear in the video file.
 
-#### Onset timestamp:
-Each VideoSystem that logs its data generates an `onset` timestamp as part of its `start()` method runtime.
-This log entry uses a modified data order and stores the current UTC time, accurate to microseconds. All further log 
-entries for the same source use the timestamp section of their payloads to communicate the number of microseconds 
-elapsed since the onset timestamp acquisition. The onset log entries follow the following order:
-1. The uint8 id of the data source.
-2. The uint64 value **0** that occupies 8 bytes following the source id. This is the only time when the timestamp value 
-   of a log entry can be set to 0.
-3. The uint64 value that stores the number of microseconds elapsed since the UTC epoch. This value specifies the 
+#### Onset Timestamp
+Each VideoSystem generates an `onset` timestamp as part of its `start()` method runtime. This log entry uses a modified 
+data order and stores the current UTC time, accurate to microseconds, as the total number of microseconds elapsed since
+the UTC epoch onset. All further log entries for the same source use the timestamp section of their payloads to 
+communicate the number of microseconds elapsed since the onset timestamp acquisition. 
+
+The onset log entry uses the following data organization order:
+1. The uint8 id of the data source (video system instance).
+2. The uint64 value **0** that occupies 8 bytes following the source id. A 'timestamp' value of 0 universally indicates 
+   that the log entry stores the onset timestamp.
+3. The uint64 value that stores the number of microseconds elapsed since the UTC epoch onset. This value specifies the 
    current time when the onset timestamp was generated.
 
-#### Starting and stopping logging
-Until the DataLogger is started through its `start()` method, the log entries will be buffered in the multiprocessing 
-queue, which uses the host-computer’s RAM. To avoid running out of buffer space, **make sure** the DataLogger's 
-`start()` method is called before calling the `start()` method of any VideoSystem class. Once ***all*** sources
-using the same DataLogger have finished their runtime, call the `stop()` method to end log saving and then call the
-`compress_logs()` method to compress all individual `.npy` entries into an `.npz` archive. Compressing the logs is 
-required to later parse the frame acquisition timestamps for further analysis (see [quickstart](#quickstart)).
+#### Working with VideoSystem Logs
+See the [quickstart](#quickstart) example above for a demonstration on how to assemble and parse the frame acquisition
+log archives generated by the VideoSystem instance at runtime. 
 
-#### Reading timestamps from logs
-The VideoSystem class exposes the `extract_logged_data()` method that allows parsing the timestamps for all frames 
-saved by the class during runtime.
+**Note!** The parsed frame acquisition timestamps are returned as a tuple of values that match the order in which the 
+frames were saved to disk as an .np4 file. Each timestamp is given as the number of microseconds elapsed since the UTC 
+epoch onset.
 
-***Note:*** to parse logged data, the VideoSystem has to be initialized and provided with an initialized DataLogger
-class. Overall, it is advised to parse logged data immediately after finishing the acquisition runtime, as the class 
-would be configured correctly for the parsing to work as intended.
+### CLI
 
-***Attention!*** Since version 1.1.0 the library exposes a global, multiprocessing-safe, and instance-independent 
-function `extract_logged_video_system_data()`. This function behaves exactly like the instance-bound log extraction 
-method does, but can be used to parse logged data without the need to have an initialized VideoSystem instance. You can
-use the `log_path` property of an initialized VideoSystem instance to get the path to the .npz archive that stores 
-logged data after compression, which is a required argument for the instance-independent log extraction function.
+This library exposes the `axvs` Command-Line Interface (CLI) as part of its installation into a Python environment. To 
+see the list of available CLI commands, call the `axvs --help` command from the environment that has the library 
+installed or see the API documentation below.
+
+### Using GeniCam Compatible Cameras
+This library supports all cameras compatible with the [GeniCam](https://www.emva.org/standards-technology/genicam/) 
+standard, which includes most GigE+ scientific and machine vision cameras. 
+
+**Note!** Before using the library with a GeniCam camera, it must be provided with the path to the .cti GenTL Producer
+Interface file. Without an interface, the library is not able to interface with the GeniCam cameras. Use the 
+`axtl cti` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a 
+general .cti file, such as [mvImpactAcquire](#dependencies). This command only needs to be called once, as the library 
+remembers and reuses the provided .cti file for all future runtimes.
 
 ___
 

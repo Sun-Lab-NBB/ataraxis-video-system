@@ -20,7 +20,6 @@ from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces, 
 # Since the VideoSystem and DataLogger classes use multiprocessing under-the-hood, the runtime must be protected by the
 # __main__ guard.
 if __name__ == "__main__":
-
     # Enables the console module to communicate the example's runtime progress via the terminal.
     console.enable()
 

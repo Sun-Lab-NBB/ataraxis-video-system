@@ -146,7 +146,7 @@ def check_requirements() -> None:  # pragma: no cover
         )
     else:
         console.echo(
-            message=("Video saving requirements: Fully met. The system supports both CPU and GPU video encoding."),
+            message="Video saving requirements: Fully met. The system supports both CPU and GPU video encoding.",
             level=LogLevel.SUCCESS,
         )
 
