@@ -1,10 +1,7 @@
 from enum import IntEnum, StrEnum
 from typing import Any, ClassVar
 from pathlib import Path
-from subprocess import (
-    Popen,
-    CalledProcessError as CalledProcessError,
-)
+from subprocess import Popen
 
 import numpy as np
 from numpy.typing import NDArray as NDArray

@@ -7,7 +7,7 @@ from pathlib import Path  # pragma: no cover
 import click  # pragma: no cover
 import numpy as np  # pragma: no cover
 from ataraxis_base_utilities import LogLevel, console  # pragma: no cover
-from ataraxis_data_structures import DataLogger  # pragma: no cover
+from ataraxis_data_structures import DataLogger, assemble_log_archives  # pragma: no cover
 
 from .saver import (
     OutputPixelFormats,
@@ -304,7 +304,10 @@ def live_run(
                 f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
             )
             console.echo(message, level=LogLevel.WARNING)
+    video_system.stop()
+    logger.stop()
     console.echo(
         message=f"VideoSystem: Terminated. Saved frames (if any) are available from the {output_directory} directory.",
         level=LogLevel.SUCCESS,
     )
+    assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, verbose=True)
