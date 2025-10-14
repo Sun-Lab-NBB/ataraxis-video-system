@@ -107,9 +107,11 @@ transformations, have to be disabled to support smooth runtimes on the Windows p
 which features to disable is readily available from the OpenCV’s Windows community.
 
 #### macOS
-macOS mostly works as expected except for live frame displaying, which does not work for some macOS versions. This is a 
-known issue with the OpenCV backend used to render the frame data. As such, some OpenCV and macOS combinations must 
-disable the 'live' video rendering feature of the VideoSystem class to work with the video data in non-interactive mode.
+macOS mostly works as expected except for live frame displaying, which does not work for modern macOS devices. The issue
+is due to the OS restriction on drawing certain GUI elements outside the main thread of the application. The restriction
+interferes with the library, as it displays the acquired frames from the same process that interfaces with the camera 
+to mininmize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
+be fixed any time soon.
 
 ### Quickstart
 This is a minimal example of how to use this library. It is also available as a [script](examples/quickstart.py).

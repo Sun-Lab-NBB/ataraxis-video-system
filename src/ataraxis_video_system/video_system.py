@@ -291,16 +291,16 @@ class VideoSystem:
         # instantiated.
         self._camera.disconnect()
 
-        # Disables frame displaying on macOS until OpenCV backend issues are fixed
-        # if display_frame_rate is not None and "darwin" in sys.platform:
-        #     warnings.warn(
-        #         message=(
-        #             f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details. "
-        #             f"Disabling frame display for the VideoSystem with id {self._system_id}."
-        #         ),
-        #         stacklevel=2,
-        #     )
-        #     display_frame_rate = None
+        # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
+        if display_frame_rate is not None and "darwin" in sys.platform:
+            warnings.warn(
+                message=(
+                    f"Displaying frames is currently not supported for Apple Silicon devices. See ReadMe for details. "
+                    f"Disabling frame display for the VideoSystem with id {self._system_id}."
+                ),
+                stacklevel=2,
+            )
+            display_frame_rate = None
 
         # If the system is configured to display the acquired frames to the user, ensures that the display frame rate
         # is valid and works with the managed camera's frame acquisition rate.
