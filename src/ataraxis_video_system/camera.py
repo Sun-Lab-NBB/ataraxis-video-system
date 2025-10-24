@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import appdirs
 from numpy.typing import NDArray
-from ataraxis_time import PrecisionTimer
+from ataraxis_time import PrecisionTimer, TimerPrecisions
 from harvesters.core import Harvester, ImageAcquirer  # type: ignore[import-untyped]
 from harvesters.util.pfnc import (  # type: ignore[import-untyped]
     bgr_formats,
@@ -816,7 +816,7 @@ class MockCamera:
 
         # Uses millisecond precision, which supports simulating up to 1000 fps. The time has to be initialized here to
         # make the class compatible with the VideoSystem class that uses multiprocessing.
-        self._timer = PrecisionTimer("ms")
+        self._timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
     def disconnect(self) -> None:
         """Simulates disconnecting from the camera hardware."""
@@ -891,7 +891,7 @@ class MockCamera:
 
         # Fallback to appease mypy, the time should always be initialized at this point
         if self._timer is None:
-            self._timer = PrecisionTimer("ms")
+            self._timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # All camera interfaces are designed to block in-place if the frame is not available. Here, this behavior
         # is simulated by using the timer class to 'force' the method to work at a certain frame rate.

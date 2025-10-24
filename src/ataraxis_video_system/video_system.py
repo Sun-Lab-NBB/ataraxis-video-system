@@ -20,10 +20,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import cv2
 from tqdm import tqdm
 import numpy as np
-from ataraxis_time import PrecisionTimer
+from ataraxis_time import PrecisionTimer, TimerPrecisions, TimestampFormats, convert_time, get_timestamp
 from ataraxis_base_utilities import console, chunk_iterable
 from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
-from ataraxis_time.time_helpers import TimestampFormats, convert_time, get_timestamp
 
 from .saver import (
     VideoSaver,
@@ -440,7 +439,7 @@ class VideoSystem:
             return
 
         # This timer is used to forcibly terminate processes that stall at initialization.
-        initialization_timer = PrecisionTimer(precision="s")
+        initialization_timer = PrecisionTimer(precision=TimerPrecisions.SECOND)
 
         # Instantiates a SharedMemoryArray used to control the runtime of the child processes.
         # Index 0 (element 1) is used to issue the global process termination command.
@@ -556,7 +555,7 @@ class VideoSystem:
             return
 
         # This timer is used to forcibly terminate the process that gets stuck in the shutdown sequence.
-        shutdown_timer = PrecisionTimer(precision="s")
+        shutdown_timer = PrecisionTimer(precision=TimerPrecisions.SECOND)
 
         # This inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
         self._started = False
@@ -667,7 +666,7 @@ class VideoSystem:
         terminator_array.connect()
 
         # Creates a timer that time-stamps acquired frames.
-        frame_timer: PrecisionTimer = PrecisionTimer("us")
+        frame_timer: PrecisionTimer = PrecisionTimer(precision=TimerPrecisions.MICROSECOND)
 
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all future time
         # readouts.
@@ -694,7 +693,7 @@ class VideoSystem:
             # between displaying any two consecutive frames, which is used to limit how frequently the displayed image
             # updates.
             show_time = convert_time(time=1 / display_frame_rate, from_units="s", to_units="us", as_float=True)
-            show_timer = PrecisionTimer("us")
+            show_timer = PrecisionTimer(precision=TimerPrecisions.MICROSECOND)
 
         camera.connect()  # Connects to the hardware of the camera.
 
@@ -838,7 +837,7 @@ class VideoSystem:
             necessary resource cleanup steps before raising the error and terminating the overall runtime.
         """
         # Initializes the timer used to space out the process state checks.
-        timer = PrecisionTimer(precision="ms")
+        timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # The watchdog function runs until the global shutdown signal is emitted.
         while self._terminator_array is not None and not self._terminator_array[0]:
