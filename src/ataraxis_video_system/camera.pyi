@@ -84,7 +84,7 @@ class HarvestersCamera:
     _frame_rate: int
     _frame_width: int
     _frame_height: int
-    _harvester: Harvester
+    _harvester: Harvester | None
     _camera: ImageAcquirer | None
     _color: bool
     def __init__(

@@ -531,11 +531,10 @@ class HarvestersCamera:
         self._frame_width: int = 0 if frame_width is None else frame_width
         self._frame_height: int = 0 if frame_height is None else frame_height
 
-        # Initializes the Harvester class to discover the list of available cameras.
-        self._harvester: Harvester = Harvester()
-        # Adds the .cti file to the class. This also verifies the file's existence and validity.
-        self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
-        self._harvester.update()  # Discovers compatible cameras using the GenTL interface specified by the CTI file.
+        # Pre-creates the attribute to store the initialized Harvester class to discover the list of available cameras.
+        # While the object was pickleable in earlier Harvesters versions, it is now not pickleable and must be handled
+        # similar to how ImageAcquirer objects are handled.
+        self._harvester: Harvester | None = None
 
         # Pre-creates the attribute to store the initialized ImageAcquirer object for the connected camera.
         self._camera: ImageAcquirer | None = None
@@ -546,7 +545,6 @@ class HarvestersCamera:
     def __del__(self) -> None:
         """Releases the underlying ImageAcquirer object when the instance is garbage-collected."""
         self.disconnect()  # Releases the camera object
-        self._harvester.reset()  # Releases the Harvester class resources
 
     def __repr__(self) -> str:
         """Returns the string representation of the HarvestersCamera instance."""
@@ -562,6 +560,12 @@ class HarvestersCamera:
         # Prevents connecting to an already connected camera.
         if self._camera is not None:
             return
+
+        # Initializes the Harvester class to discover the list of available cameras.
+        self._harvester = Harvester()
+        # Adds the .cti file to the class. This also verifies the file's existence and validity.
+        self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
+        self._harvester.update()  # Discovers compatible cameras using the GenTL interface specified by the CTI file.
 
         # Initializes an ImageAcquirer camera interface object to interface with the camera's hardware.
         self._camera = self._harvester.create(search_key=self._camera_index)
@@ -584,7 +588,7 @@ class HarvestersCamera:
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
         # Precents disconnecting from an already disconnected camera.
-        if self._camera is None:
+        if self._camera is None or self._harvester is None:
             return
 
         self._camera.stop()  # Stops image acquisition
@@ -595,6 +599,8 @@ class HarvestersCamera:
 
         self._camera.destroy()  # Releases the camera object
         self._camera = None  # Sets the camera object to None
+        self._harvester.reset()  # Resets and removes the Harvester object
+        self._harvester = None
 
     @property
     def is_connected(self) -> bool:
