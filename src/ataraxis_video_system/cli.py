@@ -71,7 +71,7 @@ def list_camera_indices() -> None:
 
     # If no cameras are discovered, displays an error message and advances to Harvesters verification.
     if len(opencv_cameras) == 0:
-        console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.ERROR)
+        console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.WARNING)
 
     else:
         # Otherwise, lists the data for all discovered cameras.
@@ -96,7 +96,7 @@ def list_camera_indices() -> None:
         harvesters_cameras = get_harvesters_ids()
 
         if len(harvesters_cameras) == 0:
-            console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.ERROR)
+            console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.WARNING)
             return
 
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
@@ -111,7 +111,8 @@ def list_camera_indices() -> None:
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
             )
-    except Exception:
+    # Intercepts error messages resulting from not having a valid CTI interface file.
+    except FileNotFoundError:
         console.echo(
             message=(
                 "Unable to discover Harvesters-compatible cameras, as the library has not been provided with a CTI "
