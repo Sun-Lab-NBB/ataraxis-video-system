@@ -3,10 +3,13 @@ Primarily, these interfaces abstract the necessary procedures to connect to the 
 acquired frames.
 """
 
+import os
 from enum import StrEnum
 from typing import Any
 from pathlib import Path
+from contextlib import contextmanager
 from dataclasses import dataclass
+from collections.abc import Generator
 
 import cv2
 import numpy as np
@@ -22,6 +25,31 @@ from harvesters.util.pfnc import (  # type: ignore[import-untyped]
 from ataraxis_base_utilities import console, ensure_directory_exists
 
 from .saver import InputPixelFormats
+
+
+@contextmanager
+def _suppress_output() -> Generator[None, None, None]:
+    """Silences verbose outputs from the Harvesters library by redirecting stdout and stderr to os.devnull.
+
+    The Harvesters library prints messages about missing features in the CTI file when calling update(). This context
+    manager suppresses those printouts by temporarily redirecting stdout and stderr at the file descriptor level.
+    """
+    # Redirects stdout (fd 1) and stderr (fd 2) to devnull
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stdout = os.dup(1)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    try:
+        yield
+    finally:
+        # Restores stdout and stderr
+        os.dup2(old_stdout, 1)
+        os.dup2(old_stderr, 2)
+        os.close(devnull)
+        os.close(old_stdout)
+        os.close(old_stderr)
+
 
 # Repackages Harvesters color formats into sets to optimize the efficiency of the HarvestersCamera grab_frames() method:
 _mono_formats = set(mono_location_formats)
@@ -151,8 +179,9 @@ def get_harvesters_ids() -> tuple[CameraInformation, ...]:
     harvester = Harvester()
     harvester.add_file(file_path=str(_get_cti_path()))
 
-    # Gets the list of accessible cameras
-    harvester.update()
+    # Gets the list of accessible cameras. Suppresses stdout to avoid verbose printouts about missing CTI features.
+    with _suppress_output():
+        harvester.update()
 
     # Loops over all discovered cameras and retrieves detailed information from each camera
     working_ids: list[CameraInformation] = []
@@ -565,7 +594,9 @@ class HarvestersCamera:
         self._harvester = Harvester()
         # Adds the .cti file to the class. This also verifies the file's existence and validity.
         self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
-        self._harvester.update()  # Discovers compatible cameras using the GenTL interface specified by the CTI file.
+        # Discovers compatible cameras using the GenTL interface. Suppresses stdout to avoid verbose CTI printouts.
+        with _suppress_output():
+            self._harvester.update()
 
         # Initializes an ImageAcquirer camera interface object to interface with the camera's hardware.
         self._camera = self._harvester.create(search_key=self._camera_index)
