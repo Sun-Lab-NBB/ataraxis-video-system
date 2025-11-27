@@ -15,7 +15,7 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )  # pragma: no cover
-from .camera import CameraInterfaces, add_cti_file, get_opencv_ids, get_harvesters_ids  # pragma: no cover
+from .camera import CameraInterfaces, add_cti_file, discover_camera_ids  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 
 # Enables console output
@@ -66,15 +66,17 @@ def list_camera_indices() -> None:
     indices of each camera in the list of all cameras discoverable by each supported interface. The discovered indices
     can then be used to initialize the VideoSystem instances to interface with the discovered cameras.
     """
-    # Discovers compatible OpenCV cameras
-    opencv_cameras = get_opencv_ids()
+    # Discovers all compatible cameras from both interfaces.
+    all_cameras = discover_camera_ids()
 
-    # If no cameras are discovered, displays an error message and advances to Harvesters verification.
+    # Separates cameras by interface for display purposes.
+    opencv_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
+    harvesters_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
+
+    # Displays OpenCV camera information.
     if len(opencv_cameras) == 0:
         console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.WARNING)
-
     else:
-        # Otherwise, lists the data for all discovered cameras.
         console.echo(
             message=(
                 "Warning! Currently, it is impossible to resolve camera models or serial numbers through the "
@@ -92,15 +94,13 @@ def list_camera_indices() -> None:
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
             )
-    try:
-        harvesters_cameras = get_harvesters_ids()
 
-        if len(harvesters_cameras) == 0:
-            console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.WARNING)
-            return
-
+    # Displays Harvesters camera information.
+    if len(harvesters_cameras) == 0:
+        console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.WARNING)
+    else:
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
-        # mao discovered indices to physical hardware.
+        # map discovered indices to physical hardware.
         console.echo("Available Harvesters cameras:", level=LogLevel.SUCCESS)
         for num, camera_data in enumerate(harvesters_cameras, start=1):
             console.echo(
@@ -111,16 +111,6 @@ def list_camera_indices() -> None:
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
             )
-    # Intercepts error messages resulting from not having a valid CTI interface file.
-    except FileNotFoundError:
-        console.echo(
-            message=(
-                "Unable to discover Harvesters-compatible cameras, as the library has not been provided with a CTI "
-                "interface file. Use the 'axvs cti' command to set the path to the CTI file before calling this "
-                "command."
-            ),
-            level=LogLevel.ERROR,
-        )
 
 
 @axvs_cli.command("check")

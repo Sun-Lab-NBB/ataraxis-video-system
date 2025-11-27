@@ -22,7 +22,7 @@ from harvesters.util.pfnc import (  # type: ignore[import-untyped]
     rgb_formats,
     mono_location_formats,
 )
-from ataraxis_base_utilities import console, ensure_directory_exists
+from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
 
 from .saver import InputPixelFormats
 
@@ -106,7 +106,7 @@ class CameraInformation:
     """Only for Harvesters-discoverable cameras. Contains the camera's model name."""
 
 
-def get_opencv_ids() -> tuple[CameraInformation, ...]:
+def _get_opencv_ids() -> tuple[CameraInformation, ...]:
     """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible through
     the OpenCV library.
 
@@ -130,28 +130,37 @@ def get_opencv_ids() -> tuple[CameraInformation, ...]:
         # This loop iterates over IDs until it discovers 5 non-working IDs. The loop is designed to evaluate 100 IDs at
         # maximum to prevent infinite execution.
         for evaluated_id in range(100):
-            # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension data
-            # from the connected camera (if any was connected).
-            camera = cv2.VideoCapture(evaluated_id)
+            try:
+                # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension
+                # data from the connected camera (if any was connected).
+                camera = cv2.VideoCapture(evaluated_id)
 
-            # If the evaluated camera can be connected and returns images, it's index is appended to the ID list
-            if camera.isOpened() and camera.read()[0]:
-                frame_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
-                frame_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                acquisition_rate = int(camera.get(cv2.CAP_PROP_FPS))
-                camera_data = CameraInformation(
-                    camera_index=evaluated_id,
-                    interface=CameraInterfaces.OPENCV,
-                    frame_width=frame_width,
-                    frame_height=frame_height,
-                    acquisition_frame_rate=acquisition_rate,
+                # If the evaluated camera can be connected and returns images, it's index is appended to the ID list
+                if camera.isOpened() and camera.read()[0]:
+                    frame_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    frame_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    acquisition_rate = int(camera.get(cv2.CAP_PROP_FPS))
+                    camera_data = CameraInformation(
+                        camera_index=evaluated_id,
+                        interface=CameraInterfaces.OPENCV,
+                        frame_width=frame_width,
+                        frame_height=frame_height,
+                        acquisition_frame_rate=acquisition_rate,
+                    )
+                    working_ids.append(camera_data)
+                    non_working_count = 0  # Resets non-working count whenever a working camera is found.
+                else:
+                    non_working_count += 1
+
+                camera.release()  # Releases the camera object to recreate it above for the next cycle
+
+            except Exception as e:
+                # Marks any ID that raises a runtime error as non-working and notifies the user.
+                console.echo(
+                    message=f"OpenCV camera discovery: Failed to evaluate camera index {evaluated_id}. Error: {e}",
+                    level=LogLevel.WARNING,
                 )
-                working_ids.append(camera_data)
-                non_working_count = 0  # Resets non-working count whenever a working camera is found.
-            else:
                 non_working_count += 1
-
-            camera.release()  # Releases the camera object to recreate it above for the next cycle
 
             # Breaks the loop early if more than 5 non-working IDs are found consecutively
             if non_working_count >= _MAXIMUM_NON_WORKING_IDS:
@@ -164,7 +173,7 @@ def get_opencv_ids() -> tuple[CameraInformation, ...]:
         cv2.setLogLevel(prev_log_level)
 
 
-def get_harvesters_ids() -> tuple[CameraInformation, ...]:
+def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible
     through the Harvesters library.
 
@@ -186,32 +195,72 @@ def get_harvesters_ids() -> tuple[CameraInformation, ...]:
     # Loops over all discovered cameras and retrieves detailed information from each camera
     working_ids: list[CameraInformation] = []
     for index, camera_info in enumerate(harvester.device_info_list):
-        # Accesses the remote device node map to get camera properties
-        camera = harvester.create(search_key=index)
-        node_map = camera.remote_device.node_map
+        try:
+            # Accesses the remote device node map to get camera properties
+            camera = harvester.create(search_key=index)
+            node_map = camera.remote_device.node_map
 
-        # Retrieves frame dimensions and acquisition rate from the camera's node map.
-        frame_width = int(node_map.Width.value)
-        frame_height = int(node_map.Height.value)
-        acquisition_rate = int(round(number=node_map.AcquisitionFrameRate.value, ndigits=0))
+            # Retrieves frame dimensions and acquisition rate from the camera's node map.
+            frame_width = int(node_map.Width.value)
+            frame_height = int(node_map.Height.value)
+            acquisition_rate = int(round(number=node_map.AcquisitionFrameRate.value, ndigits=0))
 
-        # Creates CameraInformation instance with all retrieved data
-        camera_data = CameraInformation(
-            camera_index=index,  # Uses the enumerated index as the camera index
-            interface=CameraInterfaces.HARVESTERS,
-            frame_width=frame_width,
-            frame_height=frame_height,
-            acquisition_frame_rate=acquisition_rate,
-            serial_number=camera_info.serial_number,
-            model=camera_info.model,
-        )
-        working_ids.append(camera_data)
+            # Creates CameraInformation instance with all retrieved data
+            camera_data = CameraInformation(
+                camera_index=index,  # Uses the enumerated index as the camera index
+                interface=CameraInterfaces.HARVESTERS,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                acquisition_frame_rate=acquisition_rate,
+                serial_number=camera_info.serial_number,
+                model=camera_info.model,
+            )
+            working_ids.append(camera_data)
+
+        except Exception as e:
+            # Skips any device that cannot be connected or queried for any reason and notifies the user.
+            console.echo(
+                message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {e}",
+                level=LogLevel.WARNING,
+            )
+            continue
 
     # Resets the harvester instance after discovering the camera IDs.
     harvester.remove_file(file_path=str(_get_cti_path()))
     harvester.reset()
 
     return tuple(working_ids)  # Converts to tuple before returning to caller.
+
+
+def discover_camera_ids() -> tuple[CameraInformation, ...]:
+    """Discovers and reports the identifier (indices) and descriptive information about all accessible cameras.
+
+    This function discovers cameras through both OpenCV and Harvesters interfaces and returns a combined tuple of
+    CameraInformation instances. OpenCV cameras are discovered first, followed by Harvesters cameras (if a CTI file
+    has been configured).
+
+    Notes:
+        For OpenCV cameras, it is impossible to retrieve serial numbers or camera models. It is advised to test each
+        discovered OpenCV camera with the 'axvs run' CLI command to identify the mapping between the discovered indices
+        and physical cameras.
+
+        For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
+        function or the 'axvs cti' CLI command. If no CTI file is configured, Harvesters camera discovery is skipped.
+
+    Returns:
+        A tuple of CameraInformation instances for all discovered cameras from both interfaces.
+    """
+    # Discovers OpenCV-compatible cameras.
+    opencv_cameras = _get_opencv_ids()
+
+    # Attempts to discover Harvesters-compatible cameras. Skips if no CTI file is configured.
+    try:
+        harvesters_cameras = _get_harvesters_ids()
+    except FileNotFoundError:
+        # No CTI file configured, skips Harvesters discovery.
+        harvesters_cameras = ()
+
+    return opencv_cameras + harvesters_cameras
 
 
 def add_cti_file(cti_path: Path) -> None:
