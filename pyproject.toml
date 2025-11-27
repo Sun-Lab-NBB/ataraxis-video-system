@@ -1,6 +1,6 @@
 # Defines the build system used for the project.
 [build-system]
-requires = ["hatchling==1.27.0"]
+requires = ["hatchling==1.28.0"]
 build-backend = "hatchling.build"
 
 # Project metdata section. Provides the genral ID information about the project.
