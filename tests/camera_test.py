@@ -8,8 +8,7 @@ from ataraxis_video_system.camera import (
     MockCamera,
     OpenCVCamera,
     HarvestersCamera,
-    get_opencv_ids,
-    get_harvesters_ids,
+    discover_camera_ids,
     CameraInformation,
     CameraInterfaces,
 )
@@ -19,7 +18,8 @@ from ataraxis_video_system.camera import (
 def has_opencv():
     """Checks for OpenCV camera availability in the test environment."""
     try:
-        opencv_ids = get_opencv_ids()
+        all_cameras = discover_camera_ids()
+        opencv_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
         if len(opencv_ids) > 0:
             return True
         else:
@@ -33,7 +33,8 @@ def has_harvesters():
     """Checks for Harvesters camera availability in the test environment."""
     try:
         # Attempts to discover Harvesters cameras using the internally stored CTI path
-        harvesters_ids = get_harvesters_ids()
+        all_cameras = discover_camera_ids()
+        harvesters_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
         if len(harvesters_ids) > 0:
             return True
         else:
