@@ -34,6 +34,7 @@ def start_video_session(
     height: int = 400,
     frame_rate: int = 30,
     gpu_index: int = -1,
+    display_frame_rate: int | None = 25,
     *,
     monochrome: bool = False,
 ) -> str: ...

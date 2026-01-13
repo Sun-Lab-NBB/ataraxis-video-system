@@ -23,3 +23,4 @@ See @SUN_LAB_STYLE_GUIDE.md for complete guidelines.
 - **Error handling**: Use `console.error()` from `ataraxis_base_utilities`
 - **Numba**: Always use `cache=True`; use `parallel=True` with `prange` only when safe
 - **Line length**: Maximum 120 characters
+- **MCP responses**: Concise single-line output; use `Key: value | Key: value` format

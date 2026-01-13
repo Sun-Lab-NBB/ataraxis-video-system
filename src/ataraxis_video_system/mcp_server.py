@@ -43,35 +43,20 @@ def list_cameras() -> str:
     if len(all_cameras) == 0:
         return "No cameras discovered on the system."
 
-    # Separates cameras by interface for display purposes.
-    opencv_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
-    harvesters_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
+    lines: list[str] = []
 
-    result_lines: list[str] = []
+    for cam in all_cameras:
+        if cam.interface == CameraInterfaces.OPENCV:
+            lines.append(
+                f"OpenCV #{cam.camera_index}: {cam.frame_width}x{cam.frame_height}@{cam.acquisition_frame_rate}fps"
+            )
+        else:
+            lines.append(
+                f"Harvesters #{cam.camera_index}: {cam.model} ({cam.serial_number}) "
+                f"{cam.frame_width}x{cam.frame_height}@{cam.acquisition_frame_rate}fps"
+            )
 
-    # Formats OpenCV camera information.
-    if len(opencv_cameras) > 0:
-        result_lines.append("OpenCV Cameras:")
-        for num, camera_data in enumerate(opencv_cameras, start=1):
-            result_lines.append(f"  {num}. Camera {camera_data.camera_index}")
-            result_lines.append(f"     • Resolution: {camera_data.frame_width}×{camera_data.frame_height} px")
-            result_lines.append(f"     • Frame rate: {camera_data.acquisition_frame_rate} fps")
-    else:
-        result_lines.append("OpenCV Cameras: None discovered")
-
-    # Formats Harvesters camera information.
-    if len(harvesters_cameras) > 0:
-        result_lines.append("\nHarvesters Cameras:")
-        for num, camera_data in enumerate(harvesters_cameras, start=1):
-            result_lines.append(f"  {num}. Camera {camera_data.camera_index}")
-            result_lines.append(f"     • Model: {camera_data.model}")
-            result_lines.append(f"     • Serial: {camera_data.serial_number}")
-            result_lines.append(f"     • Resolution: {camera_data.frame_width}×{camera_data.frame_height} px")
-            result_lines.append(f"     • Frame rate: {camera_data.acquisition_frame_rate} fps")
-    else:
-        result_lines.append("\nHarvesters Cameras: None discovered")
-
-    return "\n".join(result_lines)
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -84,8 +69,8 @@ def get_cti_status() -> str:
     cti_path = check_cti_file()
 
     if cti_path is not None:
-        return f"CTI Status: Configured\n• Path: {cti_path}"
-    return "CTI Status: Not configured\n• Use set_cti_file to configure a GenTL Producer (.cti) file"
+        return f"CTI: {cti_path}"
+    return "CTI: Not configured"
 
 
 @mcp.tool()
@@ -103,17 +88,17 @@ def set_cti_file(file_path: str) -> str:
     path = Path(file_path)
 
     if not path.exists():
-        return f"Error: File not found\n• Path: {file_path}"
+        return f"Error: File not found at {file_path}"
 
     if not path.is_file():
-        return f"Error: Not a file\n• Path: {file_path}"
+        return f"Error: Path is not a file: {file_path}"
 
     try:
         add_cti_file(cti_path=path)
     except Exception as e:
-        return f"Error: Configuration failed\n• Details: {e}"
+        return f"Error: {e}"
     else:
-        return f"CTI File Configured\n• Path: {path}"
+        return f"CTI configured: {path}"
 
 
 @mcp.tool()
@@ -128,25 +113,11 @@ def check_runtime_requirements() -> str:
     gpu_available = check_gpu_availability()
     cti_path = check_cti_file()
 
-    # Builds the status string based on available components.
-    ffmpeg_status = "Available" if ffmpeg_available else "Not installed or not accessible"
-    gpu_status = "Available" if gpu_available else "Not available (no Nvidia GPU detected)"
-    cti_status = f"Configured ({cti_path})" if cti_path is not None else "Not configured"
+    ffmpeg_status = "OK" if ffmpeg_available else "Missing"
+    gpu_status = "OK" if gpu_available else "None"
+    cti_status = "OK" if cti_path is not None else "None"
 
-    # Determines overall status.
-    if not ffmpeg_available:
-        overall_status = "NOT MET"
-    elif not gpu_available or cti_path is None:
-        overall_status = "PARTIAL"
-    else:
-        overall_status = "FULLY MET"
-
-    return (
-        f"Runtime Requirements: {overall_status}\n"
-        f"• FFMPEG: {ffmpeg_status}\n"
-        f"• GPU Encoding: {gpu_status}\n"
-        f"• CTI File: {cti_status}"
-    )
+    return f"FFMPEG: {ffmpeg_status} | GPU: {gpu_status} | CTI: {cti_status}"
 
 
 @mcp.tool()
@@ -187,18 +158,15 @@ def start_video_session(
     """
     global _active_session, _active_logger
 
-    # Checks if a session is already active.
     if _active_session is not None:
-        return "Error: Session already active\n• Stop the current session before starting a new one"
+        return "Error: Session already active"
 
-    # Validates the output directory.
     output_path = Path(output_directory)
     if not output_path.exists():
-        return f"Error: Directory not found\n• Path: {output_directory}"
+        return f"Error: Directory not found: {output_directory}"
     if not output_path.is_dir():
-        return f"Error: Not a directory\n• Path: {output_directory}"
+        return f"Error: Not a directory: {output_directory}"
 
-    # Resolves the camera interface.
     if interface.lower() == "mock":
         camera_interface = CameraInterfaces.MOCK
     elif interface.lower() == "harvesters":
@@ -207,11 +175,9 @@ def start_video_session(
         camera_interface = CameraInterfaces.OPENCV
 
     try:
-        # Initializes and starts the DataLogger.
         _active_logger = DataLogger(output_directory=output_path, instance_name="mcp_video_session")
         _active_logger.start()
 
-        # Initializes the VideoSystem.
         _active_session = VideoSystem(
             system_id=np.uint8(112),
             data_logger=_active_logger,
@@ -229,28 +195,16 @@ def start_video_session(
             output_pixel_format=OutputPixelFormats.YUV420,
             quantization_parameter=15,
         )
-
-        # Starts the video system.
         _active_session.start()
 
     except Exception as e:
-        # Cleans up on failure.
         if _active_logger is not None:
             _active_logger.stop()
             _active_logger = None
         _active_session = None
-        return f"Error: Failed to start session\n• Details: {e}"
+        return f"Error: {e}"
     else:
-        display_status = f"{display_frame_rate} fps" if display_frame_rate is not None else "Disabled"
-        return (
-            f"Video Session Started\n"
-            f"• Interface: {interface}\n"
-            f"• Camera: {camera_index}\n"
-            f"• Resolution: {width}×{height} px\n"
-            f"• Frame rate: {frame_rate} fps\n"
-            f"• Display: {display_status}\n"
-            f"• Output: {output_directory}"
-        )
+        return f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps -> {output_directory}"
 
 
 @mcp.tool()
@@ -262,19 +216,19 @@ def stop_video_session() -> str:
     global _active_session, _active_logger
 
     if _active_session is None:
-        return "Error: No active session\n• No video session is currently running"
+        return "Error: No active session"
 
     try:
         _active_session.stop()
         if _active_logger is not None:
             _active_logger.stop()
     except Exception as e:
-        return f"Error: Failed to stop session\n• Details: {e}"
+        return f"Error: {e}"
     finally:
         _active_session = None
         _active_logger = None
 
-    return "Video Session Stopped\n• Camera released\n• Resources freed"
+    return "Session stopped"
 
 
 @mcp.tool()
@@ -284,14 +238,14 @@ def start_frame_saving() -> str:
     Begins writing acquired frames to an MP4 video file in the output directory. A video session must be active.
     """
     if _active_session is None:
-        return "Error: No active session\n• Start a video session first using start_video_session"
+        return "Error: No active session"
 
     try:
         _active_session.start_frame_saving()
     except Exception as e:
-        return f"Error: Failed to start recording\n• Details: {e}"
+        return f"Error: {e}"
     else:
-        return "Recording Started\n• Frames are being saved to video file"
+        return "Recording started"
 
 
 @mcp.tool()
@@ -301,14 +255,14 @@ def stop_frame_saving() -> str:
     Stops writing frames to the video file while keeping the session active. Frame acquisition continues.
     """
     if _active_session is None:
-        return "Error: No active session\n• No video session is currently running"
+        return "Error: No active session"
 
     try:
         _active_session.stop_frame_saving()
     except Exception as e:
-        return f"Error: Failed to stop recording\n• Details: {e}"
+        return f"Error: {e}"
     else:
-        return "Recording Stopped\n• Session remains active\n• Frame acquisition continues"
+        return "Recording stopped"
 
 
 @mcp.tool()
@@ -318,12 +272,11 @@ def get_session_status() -> str:
     Reports whether a session is active and its current state (acquiring frames, saving frames, etc.).
     """
     if _active_session is None:
-        return "Session Status: Inactive\n• No video session is currently running"
+        return "Status: Inactive"
 
     if _active_session.started:
-        return "Session Status: Active\n• State: Running (acquiring frames)"
-    else:
-        return "Session Status: Active\n• State: Stopped"
+        return "Status: Running"
+    return "Status: Stopped"
 
 
 def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:

@@ -201,47 +201,42 @@ to use the tool. Common guidance includes:
 
 ### MCP Server Response Formatting
 
-MCP tool responses are displayed to users through AI agents. Format responses for readability
-using newlines and bullet points:
+MCP tool responses should be concise and information-dense. Avoid verbose multi-line formatting
+with bullet points. Prefer single-line responses that pack relevant information efficiently.
 
 ```python
-# Good - formatted for display
+# Good - concise, information-dense
+return f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps -> {output_directory}"
+
+# Avoid - verbose multi-line formatting
 return (
     f"Video Session Started\n"
     f"• Interface: {interface}\n"
     f"• Camera: {camera_index}\n"
-    f"• Resolution: {width}×{height} px\n"
+    f"• Resolution: {width}x{height} px\n"
     f"• Frame rate: {frame_rate} fps"
 )
-
-# Avoid - single line, hard to read
-return f"Video session started. Interface: {interface}, Camera: {camera_index}, ..."
 ```
 
 **Formatting conventions**:
 
-- **Headers**: Use title case with clear status (e.g., "Video Session Started", "Recording
-  Stopped", "Error: File not found")
-- **Properties**: Use bullet points (`•`) for individual items
-- **Line breaks**: Use `\n` to separate each item
-- **Unicode**: Use Unicode symbols for better readability (`×` instead of `x` for dimensions)
-- **Errors**: Start with "Error:" followed by a brief description, then details on subsequent
-  lines
+- **Concise output**: Keep responses to a single line when possible
+- **Key-value pairs**: Use `Key: value` format with `|` separators for multiple items
+- **Errors**: Start with "Error:" followed by a brief description
+- **Technical notation**: Use standard notation like `640x480@30fps` for resolution/framerate
 
 ```python
+# Status with multiple properties
+return f"FFMPEG: {ffmpeg_status} | GPU: {gpu_status} | CTI: {cti_status}"
+
 # Success response
-return "Recording Started\n• Frames are being saved to video file"
+return "Recording started"
 
 # Error response
-return f"Error: Directory not found\n• Path: {output_directory}"
+return f"Error: Directory not found: {output_directory}"
 
-# Status response with multiple properties
-return (
-    f"Runtime Requirements: {overall_status}\n"
-    f"• FFMPEG: {ffmpeg_status}\n"
-    f"• GPU Encoding: {gpu_status}\n"
-    f"• CTI File: {cti_status}"
-)
+# Camera listing (one per line for multiple items)
+return f"OpenCV #{cam.camera_index}: {cam.frame_width}x{cam.frame_height}@{cam.acquisition_frame_rate}fps"
 ```
 
 ### Example Script Docstrings
@@ -742,6 +737,8 @@ project type.
 8. **Dependencies**: External requirements and automatic installation notes
 9. **Installation**: Source and pip installation instructions
 10. **Usage**: Detailed usage instructions with subsections
+    - **MCP Server** *(optional)*: Document MCP server functionality if the library provides one.
+      See the MCP Server Documentation subsection below for details.
 11. **API Documentation**: Link to hosted documentation
 12. **Developers** *(optional)*: Development setup and automation. Include for public PyPI packages
     (`ataraxis-*`), omit for internal lab libraries (`sl-*`).
@@ -910,6 +907,62 @@ project releases.
 
 This project is licensed under the GPL3 License: see the [LICENSE](LICENSE) file for details.
 ```
+
+### MCP Server Documentation
+
+Libraries that provide MCP (Model Context Protocol) servers for agentic interaction should document
+this functionality in the README. Add an "MCP Server" subsection under the Usage section.
+
+**Structure**: Include the following information:
+
+1. Brief description of what the MCP server exposes
+2. How to start the server (CLI command)
+3. List of available tools with brief descriptions
+4. Configuration instructions (e.g., Claude Desktop setup)
+
+**Example**:
+
+```markdown
+### MCP Server
+
+This library provides an MCP server that exposes camera discovery, video session management, and
+runtime checks for AI agent integration.
+
+#### Starting the Server
+
+Start the MCP server using the CLI:
+
+```
+axvs mcp
+```
+
+#### Available Tools
+
+| Tool                         | Description                                    |
+|------------------------------|------------------------------------------------|
+| `list_cameras`               | Discovers all compatible cameras on the system |
+| `start_video_session`        | Starts a video capture session                 |
+| `stop_video_session`         | Stops the active video session                 |
+| `check_runtime_requirements` | Verifies FFMPEG and GPU availability           |
+
+#### Claude Desktop Configuration
+
+Add the following to the Claude Desktop configuration file:
+
+```json
+{
+  "mcpServers": {
+    "ataraxis-video-system": {
+      "command": "axvs",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+```
+
+**Table of Contents**: When an MCP Server subsection is included, add it to the table of contents
+under the Usage section anchor or as a separate entry if it warrants its own top-level section.
 
 ---
 

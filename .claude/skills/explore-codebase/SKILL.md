@@ -42,17 +42,22 @@ You MUST use the Task tool with `subagent_type: Explore` to investigate the foll
 - Understand how key dependencies are used
 - Note version constraints or compatibility requirements
 
-### 6. Testing Structure
+### 6. MCP Tools
+- Check if the project provides an MCP server
+- List all available MCP tools and their purposes
+- Note any tool dependencies or sequencing requirements (e.g., start session before recording)
+
+### 7. Testing Structure
 - Identify testing frameworks used
 - Understand test organization
 - Note any test utilities or fixtures
 
-### 7. Design Patterns & Conventions
+### 8. Design Patterns & Conventions
 - Document coding patterns used (factories, strategies, etc.)
 - Note naming conventions
 - Identify code style and formatting standards
 
-### 8. Key Files
+### 9. Key Files
 - List the most important files with brief descriptions
 - Include file paths and line counts where relevant
 
