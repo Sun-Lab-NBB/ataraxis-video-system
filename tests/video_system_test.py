@@ -506,10 +506,10 @@ def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
 
 
 def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
-    """Tests timestamp extraction with start/stop segments of frame saving.
+    """Verifies timestamp extraction with start/stop segments of frame saving.
 
-    This test verifies that timestamps are correctly extracted when frame saving
-    is enabled and disabled multiple times during a single session.
+    Ensures that timestamps are correctly extracted when frame saving is enabled and disabled
+    multiple times during a single session.
     """
 
     system_id = np.uint8(99)

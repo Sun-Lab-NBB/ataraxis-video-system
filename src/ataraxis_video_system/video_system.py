@@ -1,6 +1,7 @@
-"""This module provides the main VideoSystem class that contains methods for setting up, running, and tearing down
-interactions between camera interfaces and video saver instances. All user-oriented functionality of this library is
-available through the public methods of the VideoSystem class.
+"""Provides the main VideoSystem class that contains methods for setting up, running, and tearing down interactions
+between camera interfaces and video saver instances.
+
+All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
 """
 
 import sys
@@ -94,7 +95,7 @@ class VideoSystem:
             with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
             provided, the instance uses the default frame width of the managed camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
-            argument is not explicitly provided, the instance uses the default frame width of the managed camera.
+            argument is not explicitly provided, the instance uses the default frame height of the managed camera.
         color: Specifies whether the camera acquires colored or monochrome images. This determines how to store the
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
             a single-channel format. This argument is only used by the OpenCV and Mock camera interfaces, the
@@ -826,11 +827,10 @@ class VideoSystem:
             saver.stop()
 
     def _watchdog(self) -> None:  # pragma: no cover
-        """This method is used by the watchdog thread to ensure that the producer and consumer processes are alive
-        during runtime.
+        """Monitors the producer and consumer processes to ensure they remain alive during runtime.
 
-        This method raises RuntimeErrors if it detects that any of the processes has prematurely shut down. It verifies
-        the process state in 20-millisecond cycles and releases the GIL between state verifications.
+        Raises RuntimeErrors if any of the processes has prematurely shut down. Verifies the process state in
+        20-millisecond cycles and releases the GIL between state verifications.
 
         Notes:
             If the method detects that the consumer or producer process has terminated prematurely, it carries out the

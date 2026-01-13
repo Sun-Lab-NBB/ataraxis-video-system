@@ -10,6 +10,7 @@ from .camera import (
     CameraInterfaces as CameraInterfaces,
     CameraInformation as CameraInformation,
     add_cti_file as add_cti_file,
+    check_cti_file as check_cti_file,
     discover_camera_ids as discover_camera_ids,
 )
 from .video_system import (
@@ -26,6 +27,7 @@ __all__ = [
     "VideoEncoders",
     "VideoSystem",
     "add_cti_file",
+    "check_cti_file",
     "check_ffmpeg_availability",
     "check_gpu_availability",
     "discover_camera_ids",

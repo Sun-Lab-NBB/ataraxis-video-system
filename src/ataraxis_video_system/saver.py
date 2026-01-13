@@ -1,6 +1,7 @@
-"""This module provides a unified API that allows other library modules to save acquired camera frames via the FFMPEG
-library. Primarily, this module abstracts the configuration and flow control steps typically involved in saving acquired
-camera frames as video files in real time.
+"""Provides a unified API that allows other library modules to save acquired camera frames via the FFMPEG library.
+
+Primarily, this module abstracts the configuration and flow control steps typically involved in saving acquired camera
+frames as video files in real time.
 """
 
 from enum import IntEnum, StrEnum

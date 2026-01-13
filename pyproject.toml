@@ -1,12 +1,12 @@
 # Defines the build system used for the project.
 [build-system]
-requires = ["hatchling==1.28.0"]
+requires = ["hatchling>=1,<2"]
 build-backend = "hatchling.build"
 
-# Project metdata section. Provides the genral ID information about the project.
+# Project metadata section. Provides the general ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "2.2.0"
+version = "2.3.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -52,6 +52,9 @@ dependencies = [
     "ataraxis-data-structures>=5,<6",
     "click>=8,<9",
     "appdirs>=1,<2",
+    "tqdm>=4,<5",
+    "mcp>=1,<2",
+    "httpx>=0.27,<1",
 ]
 
 [project.urls]
@@ -71,7 +74,7 @@ dev = [
     # Development Automation
     "ataraxis-automation>=7,<8",
 
-    # Types:
+    # Types
     "types-appdirs>=1,<2",
     "types-tqdm>=4,<5",
 ]
@@ -107,12 +110,12 @@ lint.ignore = [
     "COM812",  # Conflicts with the formatter
     "ISC001",  # Conflicts with the formatter
     "TID252",  # Conflicts with library import management strategy
-    "S602",    # Conflicts with the librarie's approach to interfacing with the FFMPEG library
+    "S602",    # Conflicts with the library's approach to interfacing with the FFMPEG library
     "BLE001",  # Conflicts with the approach for intercepting and reformatting exceptions related to Python-FFMPEG pipe
     "C901",    # Sometimes complex functions are necessary
     "PLR0913", # Sometimes complex functions are necessary
     "PLR0912", # Sometimes complex functions are necessary
-    "PLR0915", # Sometimes complex type defenitions are necessary
+    "PLR0915", # Sometimes complex type definitions are necessary
     "PLR0911", # Sometimes complex return graphs are necessary
     "ANN401",  # Any returns are necessary for some library functions
     "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715

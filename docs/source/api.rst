@@ -22,6 +22,13 @@ Saver
    :members:
    :show-inheritance:
 
+MCP Server
+==========
+
+.. automodule:: ataraxis_video_system.mcp_server
+   :members:
+   :show-inheritance:
+
 Command Line Interfaces (CLIs)
 ==============================
 
