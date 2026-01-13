@@ -30,7 +30,7 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
-from .camera import CameraInterfaces, CameraInformation, add_cti_file, discover_camera_ids
+from .camera import CameraInterfaces, CameraInformation, add_cti_file, check_cti_file, discover_camera_ids
 from .video_system import VideoSystem, extract_logged_camera_timestamps
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     "VideoEncoders",
     "VideoSystem",
     "add_cti_file",
+    "check_cti_file",
     "check_ffmpeg_availability",
     "check_gpu_availability",
     "discover_camera_ids",

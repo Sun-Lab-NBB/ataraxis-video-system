@@ -1,7 +1,6 @@
-"""This module provides the Command Line Interface (CLI) installed into the python's environment together with the
-library.
-"""
+"""Provides the Command Line Interface (CLI) installed into the Python environment together with the library."""
 
+from typing import Literal  # pragma: no cover
 from pathlib import Path  # pragma: no cover
 
 import click  # pragma: no cover
@@ -15,7 +14,8 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )  # pragma: no cover
-from .camera import CameraInterfaces, add_cti_file, discover_camera_ids  # pragma: no cover
+from .camera import CameraInterfaces, add_cti_file, check_cti_file, discover_camera_ids  # pragma: no cover
+from .mcp_server import run_server as run_mcp  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 
 # Enables console output
@@ -27,8 +27,8 @@ CONTEXT_SETTINGS = {"max_content_width": 120}  # pragma: no cover
 
 @click.group("axvs", context_settings=CONTEXT_SETTINGS)
 def axvs_cli() -> None:  # pragma: no cover
-    """This Command-Line Interface (CLI) functions as the entry-point for interfacing with all interactive components
-    of the ataraxis-video-system (AXVS) library.
+    """Serves as the entry-point for interfacing with all interactive components of the ataraxis-video-system (AXVS)
+    library.
     """
 
 
@@ -55,6 +55,28 @@ def set_cti_file(file_path: Path) -> None:  # pragma: no cover
 
     # Notifies the user that the CTI file has been successfully set.
     console.echo(f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
+
+
+@axvs_cli.command("cti-check")
+def check_cti_status() -> None:  # pragma: no cover
+    """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
+
+    This command verifies if a .cti file has been configured and whether it is still valid. The Harvesters camera
+    interface requires the GenTL Producer interface (.cti) file to discover and interface with GeniCam-compatible
+    cameras. Use this command to verify the configuration status before attempting to use the Harvesters interface.
+    """
+    cti_path = check_cti_file()
+
+    if cti_path is not None:
+        console.echo(message=f"AXVS CTI file: Configured and valid. Path: {cti_path}", level=LogLevel.SUCCESS)
+    else:
+        console.echo(
+            message=(
+                "AXVS CTI file: Not configured or invalid. Use the 'axvs cti -f <path>' command to configure the "
+                "library to use a GenTL Producer interface (.cti) file."
+            ),
+            level=LogLevel.ERROR,
+        )
 
 
 @axvs_cli.command("id")
@@ -106,7 +128,7 @@ def list_camera_indices() -> None:
             console.echo(
                 message=(
                     f"Harvesters camera {num}: index={camera_data.camera_index}, model={camera_data.model}, "
-                    f"serial_code={camera_data.serial_number} frame_height={camera_data.frame_height} pixels,"
+                    f"serial_code={camera_data.serial_number}, frame_height={camera_data.frame_height} pixels, "
                     f"frame_width={camera_data.frame_width} pixels, "
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
@@ -302,3 +324,23 @@ def live_run(
         level=LogLevel.SUCCESS,
     )
     assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, verbose=True)
+
+
+@axvs_cli.command("mcp")
+@click.option(
+    "-t",
+    "--transport",
+    type=click.Choice(["stdio", "streamable-http"]),
+    default="stdio",
+    show_default=True,
+    help="The transport protocol to use for MCP communication. Use 'stdio' for standard input/output communication "
+    "(default, recommended for Claude Desktop integration) or 'streamable-http' for HTTP-based communication.",
+)
+def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # pragma: no cover
+    """Starts the Model Context Protocol (MCP) server for agentic interaction with the library.
+
+    The MCP server exposes camera discovery and CTI file management functionality through the MCP protocol, enabling
+    AI agents to programmatically interact with the library.
+    """
+    console.echo(message=f"Starting AXVS MCP server with {transport} transport...", level=LogLevel.INFO)
+    run_mcp(transport=transport)

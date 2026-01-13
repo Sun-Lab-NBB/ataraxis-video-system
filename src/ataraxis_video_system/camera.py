@@ -1,4 +1,5 @@
-"""This module provides a unified API that allows other library modules to interface with any supported camera hardware.
+"""Provides a unified API that allows other library modules to interface with any supported camera hardware.
+
 Primarily, these interfaces abstract the necessary procedures to connect to the camera and continuously grab the
 acquired frames.
 """
@@ -295,6 +296,39 @@ def add_cti_file(cti_path: Path) -> None:
         f.write(str(cti_path))
 
 
+def check_cti_file() -> Path | None:
+    """Checks whether the library is configured to use a GenTL Producer interface (.cti) file.
+
+    The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
+    compatible GenTL devices (cameras). This function checks if a valid .cti file path has been configured and returns
+    the path if it exists.
+
+    Returns:
+        The Path to the configured .cti file if one exists and is valid, or None otherwise.
+    """
+    # Resolves the path to the .cti path file using appdirs.
+    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    cti_path_file = app_dir.joinpath("cti_path.txt")
+
+    # Checks if the path file exists.
+    if not cti_path_file.exists():
+        return None
+
+    # Reads the stored .cti file path.
+    with cti_path_file.open() as f:
+        cti_path = Path(f.read().strip())
+
+    # Verifies the CTI file still exists and is valid.
+    try:
+        harvester = Harvester()
+        harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    except Exception:
+        # The configured CTI file is no longer valid.
+        return None
+    else:
+        return cti_path
+
+
 def _get_cti_path() -> Path:
     """Resolves and returns the path to the CTI file that provides the GenTL Producer interface.
 
@@ -351,7 +385,7 @@ class OpenCVCamera:
             with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
             provided, the instance uses the default frame width of the connected camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
-            argument is not explicitly provided, the instance uses the default frame width of the connected camera.
+            argument is not explicitly provided, the instance uses the default frame height of the connected camera.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -576,12 +610,12 @@ class HarvestersCamera:
             with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
             provided, the instance uses the default frame width of the connected camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
-            argument is not explicitly provided, the instance uses the default frame width of the connected camera.
+            argument is not explicitly provided, the instance uses the default frame height of the connected camera.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
-        _camera_index: Stores the index of the camera hardware in the list of all OpenCV-discoverable cameras connected
-            to the host-machine.
+        _camera_index: Stores the index of the camera hardware in the list of all Harvesters-discoverable cameras
+            connected to the host-machine.
         _frame_rate: Stores the camera's frame acquisition rate.
         _frame_width: Stores the width of the camera's frames.
         _frame_height: Stores the height of the camera's frames.
@@ -667,7 +701,7 @@ class HarvestersCamera:
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
-        # Precents disconnecting from an already disconnected camera.
+        # Prevents disconnecting from an already disconnected camera.
         if self._camera is None or self._harvester is None:
             return
 
@@ -865,7 +899,7 @@ class MockCamera:
         self._camera: bool = False
         self._acquiring: bool = False
 
-        # Creates a random number generator to be sued below
+        # Creates a random number generator to be used below
         rng = np.random.default_rng(seed=42)  # Specifies a reproducible seed.
 
         # To allow reproducible testing, the class statically generates a pool of 10 images used during the grab_frame()
@@ -990,8 +1024,8 @@ class MockCamera:
         # Resets the timer to measure the time elapsed since the last frame acquisition.
         self._timer.reset()
 
-        # Increments the flame pool index. When the index reaches the end of the pool, this resets it back to the
-        # starts of the popol. This simulates the behavior of a cyclic buffer.
+        # Increments the frame pool index. When the index reaches the end of the pool, this resets it back to the
+        # start of the pool. This simulates the behavior of a cyclic buffer.
         self._current_frame_index = (self._current_frame_index + 1) % _FRAME_POOL_SIZE
 
         # Returns the acquired frame to caller
