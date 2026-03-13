@@ -9,7 +9,8 @@ name = "ataraxis-video-system"
 version = "2.3.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.15"
 authors = [
     { name = "Ivan Kondratyev" },
@@ -28,13 +29,11 @@ classifiers = [
     # Intended audience and project topic
     "Intended Audience :: Developers",
     "Topic :: Multimedia :: Video",
-    # License
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     # Supported Python Versions
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    # Supported OS systems
+    # Supported Operating Systems
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
@@ -44,27 +43,42 @@ classifiers = [
 
 # Runtime project dependencies.
 dependencies = [
+    # Array Processing
     "numpy>=2,<3",
+
+    # Video Acquisition
     "opencv-python>=4,<5",
     "harvesters>=1,<2",
-    "ataraxis-time>=5,<6",
-    "ataraxis-base-utilities>=5,<6",
-    "ataraxis-data-structures>=5,<6",
-    "click>=8,<9",
-    "appdirs>=1,<2",
+
+    # Video Encoding
     "tqdm>=4,<5",
+
+    # CLI
+    "click>=8,<9",
+
+    # Configuration
+    "appdirs>=1,<2",
+
+    # MCP Server
     "mcp>=1,<2",
     "httpx>=0.27,<1",
+
+    # Ataraxis Libraries
+    "ataraxis-time>=6,<7",
+    "ataraxis-base-utilities>=6,<7",
+    "ataraxis-data-structures>=6,<7",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
 Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
-# Specifies additional dependencies that can be installed alongside the main library.
-[project.optional-dependencies]
+# Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
+[project.scripts]
+axvs = "ataraxis_video_system.cli:axvs_cli"
 
-# Dependencies that support developing this project.
+# Development dependencies (PEP 735). Not published to PyPI.
+[dependency-groups]
 dev = [
     # Tox
     "tox>=4,<5",
@@ -72,18 +86,14 @@ dev = [
     "tox-uv>=1,<2",
 
     # Development Automation
-    "ataraxis-automation>=7,<8",
+    "ataraxis-automation>=8,<9",
 
     # Types
     "types-appdirs>=1,<2",
     "types-tqdm>=4,<5",
 ]
 
-# Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
-[project.scripts]
-axvs = "ataraxis_video_system.cli:axvs_cli"
-
-# Specifies files that should not be included in the source-code distribution, but are also not part of gitignore.
+# Specifies files that should not be included in the source-code distribution.
 [tool.hatch.build.targets.sdist]
 exclude = [".github", "recipe"]
 
@@ -93,12 +103,12 @@ packages = ["src/ataraxis_video_system", "examples"]
 
 # Ruff Configuration.
 [tool.ruff]
-line-length = 120         # The maximum column length is set to 120 for this project
+line-length = 120         # Deviates from the commonly used '80' standard.
 indent-width = 4          # Same as black, indents are 4 spaces
 target-version = "py312"  # Targets the lowest supported version of python
-src = ["src"]             # The name of the source directory
+src = ["src"]             # The name of the root source code directory
 
-# Excludes 'service' .py files, such as the sphinx configuration file from linting.
+# Excludes 'service' .py files, such as the sphinx configuration file, from linting.
 extend-exclude = ["conf.py"]
 
 # Checks for all potential violations and uses the exclusions below to target-disable specific ones.
@@ -107,22 +117,22 @@ lint.select = ["ALL"]
 # General ignore directives
 lint.ignore = [
     "W291",    # Conflicts with docstring formatting
-    "COM812",  # Conflicts with the formatter
-    "ISC001",  # Conflicts with the formatter
-    "TID252",  # Conflicts with library import management strategy
-    "S602",    # Conflicts with the library's approach to interfacing with the FFMPEG library
-    "BLE001",  # Conflicts with the approach for intercepting and reformatting exceptions related to Python-FFMPEG pipe
     "C901",    # Sometimes complex functions are necessary
     "PLR0913", # Sometimes complex functions are necessary
     "PLR0912", # Sometimes complex functions are necessary
     "PLR0915", # Sometimes complex type definitions are necessary
     "PLR0911", # Sometimes complex return graphs are necessary
-    "ANN401",  # Any returns are necessary for some library functions
-    "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
+    "COM812",  # Conflicts with the formatter
+    "ISC001",  # Conflicts with the formatter
+    "PT001",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-182590771
     "PT023",   # https://github.com/astral-sh/ruff/issues/8796#issuecomment-1825907715
-    "D107",    # Project-specific, __init__ is documented inside the main class docstring where applicable
+    "D107",    # __init__ is documented inside the main class docstring where applicable
     "D205",    # Bugs out for file descriptions
-    "PLW0603", # While global statement usage is not ideal, it greatly streamlines certain development patterns
+    "PLW0603", # While global statement usage is not ideal, it streamlines certain development patterns
+    "ANN401",  # Any returns are necessary for some library functions
+    "BLE001",  # Blind exception catching is necessary for Python-FFMPEG pipe error interception
+    "S602",    # Subprocess calls are necessary for interfacing with the FFMPEG library
+    "TID252",  # Conflicts with library import management strategy
 ]
 
 # Additional formatting configurations
@@ -150,7 +160,7 @@ convention = "google"
 [tool.ruff.lint.isort]
 case-sensitive = true              # Takes case into account when sorting imports
 combine-as-imports = true          # Combines multiple "as" imports for the same package
-force-wrap-aliases = true          # Wraps "as" imports so that each uses a separate line (after combining for package)
+force-wrap-aliases = true          # Wraps "as" imports so that each uses a separate line
 force-sort-within-sections = true  # Forces "as" and "from" imports for the same package to be close
 length-sort = true                 # Places shorter imports first
 
