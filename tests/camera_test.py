@@ -7,10 +7,9 @@ from ataraxis_base_utilities import error_format
 from ataraxis_video_system.camera import (
     MockCamera,
     OpenCVCamera,
+    CameraInterfaces,
     HarvestersCamera,
     discover_camera_ids,
-    CameraInformation,
-    CameraInterfaces,
 )
 
 
@@ -19,12 +18,8 @@ def has_opencv():
     """Checks for OpenCV camera availability in the test environment."""
     try:
         all_cameras = discover_camera_ids()
-        opencv_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
-        if len(opencv_ids) > 0:
-            return True
-        else:
-            return False
-    except:
+        return any(cam.interface == CameraInterfaces.OPENCV for cam in all_cameras)
+    except Exception:
         return False
 
 
@@ -32,19 +27,15 @@ def has_opencv():
 def has_harvesters():
     """Checks for Harvesters camera availability in the test environment."""
     try:
-        # Attempts to discover Harvesters cameras using the internally stored CTI path
+        # Attempts to discover Harvesters cameras using the internally stored CTI path.
         all_cameras = discover_camera_ids()
-        harvesters_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
-        if len(harvesters_ids) > 0:
-            return True
-        else:
-            return False
-    except:
+        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
+    except Exception:
         return False
 
 
 @pytest.mark.parametrize(
-    "color, frame_rate, frame_width, frame_height",
+    ("color", "frame_rate", "frame_width", "frame_height"),
     [
         (True, 30, 600, 400),
         (False, 60, 1200, 1200),
@@ -64,7 +55,7 @@ def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
     assert not camera.is_connected
 
 
-def test_mock_camera_connect_disconnect():
+def test_mock_camera_connect_disconnect() -> None:
     """Verifies the functioning of the MockCamera connect() and disconnect() methods."""
     # Setup
     camera = MockCamera(system_id=222)  # Uses default parameters
@@ -78,7 +69,7 @@ def test_mock_camera_connect_disconnect():
     assert not camera.is_connected
 
 
-def test_mock_camera_grab_frame():
+def test_mock_camera_grab_frame() -> None:
     """Verifies the functioning of the MockCamera grab_frame() method."""
     # Setup
     camera = MockCamera(system_id=222, color=False, frame_width=2, frame_height=3)
@@ -91,14 +82,13 @@ def test_mock_camera_grab_frame():
     for num in range(11):
         frame = camera.grab_frame()  # Grabs the frame from the pre-created frame-pool
 
-        # Currently, the frame pool consists of 10 images. To optimize grabbed image verification, ensures that 'num' is
-        # always within the range of the frame pool and follows the behavior of the grabber that treats the pool as a
-        # circular buffer. So, when it reaches '10' (maximum index is 9), it is reset to 0.
-        if num == 10:
-            num -= 10
+        # Currently, the frame pool consists of 10 images. To optimize grabbed image verification, ensures that the
+        # index is always within the range of the frame pool and follows the behavior of the grabber that treats the
+        # pool as a circular buffer. So, when it reaches '10' (maximum index is 9), it wraps to 0.
+        pool_index = num % 10
 
         # Verifies that the grabbed frame matches expectation
-        assert np.array_equal(frame_pool[num], frame)
+        assert np.array_equal(frame_pool[pool_index], frame)
 
 
 def test_mock_camera_grab_frame_errors() -> None:
@@ -148,7 +138,6 @@ def test_opencv_camera_init_repr() -> None:
         False,
     ],
 )
-@pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
     # Skips the test if OpenCV-compatible hardware is not available.
@@ -185,7 +174,6 @@ def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
         False,
     ],
 )
-@pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     """Verifies the functioning of the OpenCVCamera grab_frame() method."""
     # Skips the test if OpenCV-compatible hardware is not available.
@@ -295,7 +283,7 @@ def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
 
 @pytest.mark.xdist_group(name="group2")
 @pytest.mark.parametrize(
-    "frame_rate, frame_width, frame_height",
+    ("frame_rate", "frame_width", "frame_height"),
     [(30, 600, 400), (60, 1200, 1200), (None, None, None)],
 )
 def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, frame_height) -> None:

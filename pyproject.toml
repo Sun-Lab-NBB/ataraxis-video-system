@@ -150,6 +150,16 @@ convention = "google"
     "F401", # Imported but unused
     "F403", # Wildcard imports
 ]
+"tests/**/*.py" = [
+    "S101",    # assert usage is expected in tests
+    "SLF001",  # Private member access is expected in tests
+    "PLR2004", # Magic values are expected in test data
+    "S607",    # Partial executable paths are acceptable in tests
+    "S311",    # Standard pseudo-random generators are acceptable in tests
+    "ANN001",  # Test function parameter annotations add noise without benefit
+    "ANN201",  # Fixture return type annotations add noise without benefit
+    "INP001",  # Tests directory does not need __init__.py
+]
 
 [tool.ruff.lint.isort]
 case-sensitive = true              # Takes case into account when sorting imports
