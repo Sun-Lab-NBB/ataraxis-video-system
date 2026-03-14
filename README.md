@@ -1,6 +1,6 @@
 # ataraxis-video-system
 
-A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as video files.
+Interfaces with a wide range of cameras to flexibly record visual stream data as video files.
 
 ![PyPI - Version](https://img.shields.io/pypi/v/ataraxis-video-system)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ataraxis-video-system)
@@ -117,8 +117,7 @@ to minimize the visual lag between grabbing and displaying the frame. This is a 
 be fixed any time soon.
 
 ### Quickstart
-This is a minimal example of how to use this library. It is also available as a [script](examples/quickstart.py).
-This example is intentionally kept minimal, consult the
+This is a minimal example of how to use this library. This example is intentionally kept minimal, consult the
 [API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for all available VideoSystem configuration 
 parameters.
 
