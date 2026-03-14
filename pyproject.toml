@@ -6,10 +6,10 @@ build-backend = "hatchling.build"
 # Project metadata section. Provides the general ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "2.3.0"
+version = "3.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.15"
 authors = [

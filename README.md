@@ -30,7 +30,7 @@ ___
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
 - Includes an MCP server for AI agent integration (compatible with Claude Desktop and other MCP clients).
-- GPL 3 License.
+- Apache 2.0 License.
 
 ___
 
@@ -382,7 +382,7 @@ ___
 
 ## License
 
-This project is licensed under the GPL3 License: see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License: see the [LICENSE](LICENSE) file for details.
 
 ___
 
