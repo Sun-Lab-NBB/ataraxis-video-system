@@ -1,6 +1,6 @@
 """Provides a Model Context Protocol (MCP) server for agentic interaction with the library.
 
-This module exposes camera discovery, CTI file management, runtime requirements checking, and video session
+Exposes camera discovery, CTI file management, runtime requirements checking, and video session
 management functionality through the MCP protocol, enabling AI agents to programmatically interact with the
 library's core features.
 """
@@ -22,38 +22,42 @@ from .saver import (
 from .camera import CameraInterfaces, add_cti_file, check_cti_file, discover_camera_ids
 from .video_system import VideoSystem
 
-# Initializes the MCP server instance.
 mcp = FastMCP(name="ataraxis-video-system", json_response=True)
+"""Initializes the MCP server instance."""
 
-# Module-level state for video session management.
 _active_session: VideoSystem | None = None
+"""Stores the currently active VideoSystem instance, or None when no session is running."""
+
 _active_logger: DataLogger | None = None
+"""Stores the DataLogger instance associated with the active video session, or None when no session is running."""
 
 
 @mcp.tool()
 def list_cameras() -> str:
     """Discovers all cameras compatible with the OpenCV and Harvesters interfaces.
 
-    Returns a formatted string containing information about all discovered cameras, including their interface type,
-    index, frame dimensions, and frame rate. For Harvesters cameras, model and serial number information is also
-    included.
+    Returns:
+        A newline-separated list of discovered cameras, each showing interface type, index, frame dimensions, and
+        frame rate. Harvesters cameras also include model and serial number. Returns a "No cameras discovered"
+        message if no cameras are found.
     """
     all_cameras = discover_camera_ids()
 
-    if len(all_cameras) == 0:
+    if not all_cameras:
         return "No cameras discovered on the system."
 
     lines: list[str] = []
 
-    for cam in all_cameras:
-        if cam.interface == CameraInterfaces.OPENCV:
+    for camera in all_cameras:
+        if camera.interface == CameraInterfaces.OPENCV:
             lines.append(
-                f"OpenCV #{cam.camera_index}: {cam.frame_width}x{cam.frame_height}@{cam.acquisition_frame_rate}fps"
+                f"OpenCV #{camera.camera_index}: "
+                f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
             )
         else:
             lines.append(
-                f"Harvesters #{cam.camera_index}: {cam.model} ({cam.serial_number}) "
-                f"{cam.frame_width}x{cam.frame_height}@{cam.acquisition_frame_rate}fps"
+                f"Harvesters #{camera.camera_index}: {camera.model} ({camera.serial_number}) "
+                f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
             )
 
     return "\n".join(lines)
@@ -64,7 +68,11 @@ def get_cti_status() -> str:
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     The Harvesters camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
-    GeniCam-compatible cameras. Returns the configuration status and the path to the configured CTI file if one exists.
+    GeniCam-compatible cameras.
+
+    Returns:
+        The configuration status and the path to the configured CTI file, or a "Not configured" message if no valid
+        CTI file is set.
     """
     cti_path = check_cti_file()
 
@@ -84,6 +92,10 @@ def set_cti_file(file_path: str) -> str:
         file_path: The absolute path to the CTI file that provides the GenTL Producer interface. It is recommended to
             use the file supplied by the camera vendor, but a general Producer such as mvImpactAcquire is also
             acceptable.
+
+    Returns:
+        A confirmation message with the configured CTI file path on success, or an error message describing the
+        failure.
     """
     path = Path(file_path)
 
@@ -106,8 +118,11 @@ def check_runtime_requirements() -> str:
     """Checks whether the host system meets the requirements for video encoding and camera interfaces.
 
     Verifies that FFMPEG is installed and accessible, checks for Nvidia GPU availability for hardware-accelerated
-    encoding, and checks whether a CTI file is configured for Harvesters camera support. Returns a status indicating
-    whether requirements are fully met, partially met, or not met.
+    encoding, and checks whether a CTI file is configured for Harvesters camera support.
+
+    Returns:
+        A pipe-separated status line showing FFMPEG, GPU, and CTI availability, each marked as "OK", "Missing", or
+        "None".
     """
     ffmpeg_available = check_ffmpeg_availability()
     gpu_available = check_gpu_availability()
@@ -150,11 +165,15 @@ def start_video_session(
         width: The width of frames to capture in pixels. Defaults to 600.
         height: The height of frames to capture in pixels. Defaults to 400.
         frame_rate: The target frame rate in frames per second. Defaults to 30.
-        monochrome: Determines whether to capture in grayscale. Defaults to False (color).
         gpu_index: The GPU index for hardware encoding, or -1 for CPU encoding. Defaults to -1.
         display_frame_rate: The rate at which to display acquired frames in a preview window. Defaults to 25 fps.
             Set to 'None' to disable frame display. The display rate cannot exceed the acquisition frame rate.
             Note that frame display is not supported on macOS.
+        monochrome: Determines whether to capture in grayscale. Defaults to False (color).
+
+    Returns:
+        A summary of the session parameters including interface, camera index, resolution, frame rate, and output
+        directory on success, or an error message describing the failure.
     """
     global _active_session, _active_logger
 
@@ -212,6 +231,9 @@ def stop_video_session() -> str:
     """Stops the active video capture session and releases all resources.
 
     Stops the VideoSystem and DataLogger, freeing the camera and saving any remaining buffered frames.
+
+    Returns:
+        A confirmation that the session has stopped, or an error message if no session is active or shutdown fails.
     """
     global _active_session, _active_logger
 
@@ -236,6 +258,9 @@ def start_frame_saving() -> str:
     """Starts saving captured frames to the video file.
 
     Begins writing acquired frames to an MP4 video file in the output directory. A video session must be active.
+
+    Returns:
+        A confirmation that recording has started, or an error message if no session is active or the operation fails.
     """
     if _active_session is None:
         return "Error: No active session"
@@ -253,6 +278,9 @@ def stop_frame_saving() -> str:
     """Stops saving frames to the video file.
 
     Stops writing frames to the video file while keeping the session active. Frame acquisition continues.
+
+    Returns:
+        A confirmation that recording has stopped, or an error message if no session is active or the operation fails.
     """
     if _active_session is None:
         return "Error: No active session"
@@ -270,6 +298,9 @@ def get_session_status() -> str:
     """Returns the current status of the video session.
 
     Reports whether a session is active and its current state (acquiring frames, saving frames, etc.).
+
+    Returns:
+        The session status as "Inactive", "Running", or "Stopped".
     """
     if _active_session is None:
         return "Status: Inactive"

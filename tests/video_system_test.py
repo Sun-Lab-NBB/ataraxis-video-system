@@ -1,6 +1,7 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
 import sys
+from random import randint
 import subprocess
 
 import numpy as np
@@ -9,16 +10,16 @@ from ataraxis_time import PrecisionTimer
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import DataLogger, assemble_log_archives
 
-from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.saver import (
+from ataraxis_video_system import (
+    VideoSystem,
     VideoEncoders,
+    CameraInterfaces,
     OutputPixelFormats,
     EncoderSpeedPresets,
+    discover_camera_ids,
     check_ffmpeg_availability,
+    extract_logged_camera_timestamps,
 )
-from ataraxis_video_system.camera import CameraInterfaces, discover_camera_ids
-from ataraxis_video_system.video_system import extract_logged_camera_timestamps
-from random import randint
 
 
 @pytest.fixture(scope="session")
@@ -26,12 +27,8 @@ def has_opencv():
     """Checks for OpenCV camera availability in the test environment."""
     try:
         all_cameras = discover_camera_ids()
-        opencv_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
-        if len(opencv_ids) > 0:
-            return True
-        else:
-            return False
-    except:
+        return any(cam.interface == CameraInterfaces.OPENCV for cam in all_cameras)
+    except Exception:
         return False
 
 
@@ -39,14 +36,10 @@ def has_opencv():
 def has_harvesters():
     """Checks for Harvesters camera availability in the test environment."""
     try:
-        # Attempts to discover Harvesters cameras using the internally stored CTI path
+        # Attempts to discover Harvesters cameras using the internally stored CTI path.
         all_cameras = discover_camera_ids()
-        harvesters_ids = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
-        if len(harvesters_ids) > 0:
-            return True
-        else:
-            return False
-    except:
+        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
+    except Exception:
         return False
 
 
@@ -55,47 +48,22 @@ def has_nvidia():
     """Checks for NVIDIA GPU availability in the test environment."""
     try:
         subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             check=True,
             timeout=30,
         )
-        return True
-    except:
+    except Exception:
         return False
+    else:
+        return True
 
 
 @pytest.fixture
 def data_logger(tmp_path) -> DataLogger:
     """Creates a DataLogger instance and returns it to the caller."""
-    data_logger = DataLogger(output_directory=tmp_path, instance_name=str(randint(0, 100000000000)))
-    return data_logger
-
-
-@pytest.fixture
-def video_system(tmp_path, data_logger) -> VideoSystem:
-    """Creates a VideoSystem instance and returns it to the caller."""
-    system_id = np.uint8(1)
-    output_directory = tmp_path.joinpath("test_output_directory")
-
-    return VideoSystem(
-        system_id=system_id,
-        data_logger=data_logger,
-        output_directory=output_directory,
-        camera_interface=CameraInterfaces.MOCK,
-        camera_index=0,
-        display_frame_rate=None,
-        frame_width=None,
-        frame_height=None,
-        frame_rate=None,
-        gpu=-1,
-        video_encoder=VideoEncoders.H265,
-        encoder_speed_preset=EncoderSpeedPresets.SLOW,
-        output_pixel_format=OutputPixelFormats.YUV444,
-        quantization_parameter=15,
-        color=True,
-    )
+    return DataLogger(output_directory=tmp_path, instance_name=str(randint(0, 100000000000)))
 
 
 def test_init_repr(tmp_path, data_logger) -> None:
@@ -127,7 +95,7 @@ def test_init_errors(data_logger) -> None:
     # noinspection PyTypeChecker
     with pytest.raises((TypeError, ValueError)):
         VideoSystem(
-            system_id=invalid_system_id,  # type: ignore
+            system_id=invalid_system_id,  # type: ignore[arg-type]
             data_logger=data_logger,
             output_directory=data_logger.output_directory,
             camera_interface=CameraInterfaces.MOCK,
@@ -143,7 +111,7 @@ def test_init_errors(data_logger) -> None:
     with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
-            data_logger=invalid_data_logger,  # type: ignore
+            data_logger=invalid_data_logger,  # type: ignore[arg-type]
             output_directory=data_logger.output_directory,
         )
 
@@ -158,7 +126,7 @@ def test_init_errors(data_logger) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
-            output_directory=invalid_output_directory,  # type: ignore
+            output_directory=invalid_output_directory,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -179,7 +147,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            camera_index=invalid_index,  # type: ignore
+            camera_index=invalid_index,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -195,7 +163,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            frame_rate=invalid_frame_rate,  # type: ignore
+            frame_rate=invalid_frame_rate,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -211,7 +179,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            frame_width=invalid_frame_width,  # type: ignore
+            frame_width=invalid_frame_width,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -227,7 +195,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            frame_height=invalid_frame_height,  # type: ignore
+            frame_height=invalid_frame_height,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -239,7 +207,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            camera_interface=invalid_interface,  # type: ignore
+            camera_interface=invalid_interface,  # type: ignore[arg-type]
         )
 
 
@@ -291,7 +259,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            gpu=invalid_gpu,  # type: ignore
+            gpu=invalid_gpu,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -303,7 +271,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            video_encoder=invalid_encoder,  # type: ignore
+            video_encoder=invalid_encoder,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -315,7 +283,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            encoder_speed_preset=invalid_preset,  # type: ignore
+            encoder_speed_preset=invalid_preset,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -327,7 +295,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            output_pixel_format=invalid_format,  # type: ignore
+            output_pixel_format=invalid_format,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -343,7 +311,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             system_id=np.uint8(1),
             data_logger=data_logger,
             output_directory=output_directory,
-            quantization_parameter=invalid_qp,  # type: ignore
+            quantization_parameter=invalid_qp,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -444,7 +412,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
                 camera_interface=CameraInterfaces.MOCK,
                 display_frame_rate=30,
             )
-            assert vs._display_frame_rate == 0
+        assert vs._display_frame_rate == 0
 
     # Tests invalid display frame rate (string instead of int)
     invalid_display_rate = "str"
@@ -461,7 +429,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             frame_rate=30,
-            display_frame_rate=invalid_display_rate,  # type: ignore
+            display_frame_rate=invalid_display_rate,  # type: ignore[arg-type]
         )
 
     # Tests display frame rate exceeding acquisition rate
@@ -511,7 +479,6 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     Ensures that timestamps are correctly extracted when frame saving is enabled and disabled
     multiple times during a single session.
     """
-
     system_id = np.uint8(99)
     frame_rate = 10  # Lower frame rate for easier validation
 
@@ -572,7 +539,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     actual_frames = len(timestamps)
 
     # Allow for timing variations
-    assert 0 <= actual_frames, f"Expected approximately {40} frames, got {actual_frames}"
+    assert actual_frames >= 30, f"Expected approximately 40 frames, got {actual_frames}"
 
     # Check for gaps in timestamps that might indicate the pauses
     # (This is a basic check - actual gaps depend on implementation details)

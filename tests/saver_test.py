@@ -6,15 +6,15 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system.saver import (
-    VideoSaver,
+from ataraxis_video_system import (
     VideoEncoders,
-    EncoderSpeedPresets,
     InputPixelFormats,
     OutputPixelFormats,
+    EncoderSpeedPresets,
     check_gpu_availability,
     check_ffmpeg_availability,
 )
+from ataraxis_video_system.saver import VideoSaver
 from ataraxis_video_system.camera import MockCamera
 
 
@@ -30,47 +30,47 @@ def has_ffmpeg():
     return check_ffmpeg_availability()
 
 
-def test_check_gpu_availability():
+def test_check_gpu_availability() -> None:
     """Verifies the functioning of the check_gpu_availability() function."""
-    # Tests that the function returns a boolean
+    # Tests that the function returns a boolean.
     result = check_gpu_availability()
     assert isinstance(result, bool)
 
-    # If nvidia-smi is available, verifies it returns True
+    # If nvidia-smi is available, verifies it returns True.
     try:
         subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             check=True,
             timeout=5,
         )
-        assert result is True
-    except:
-        assert result is False
+        assert result
+    except Exception:
+        assert not result
 
 
-def test_check_ffmpeg_availability():
+def test_check_ffmpeg_availability() -> None:
     """Verifies the functioning of the check_ffmpeg_availability() function."""
-    # Tests that the function returns a boolean
+    # Tests that the function returns a boolean.
     result = check_ffmpeg_availability()
     assert isinstance(result, bool)
 
-    # If ffmpeg is available, verifies it returns True
+    # If ffmpeg is available, verifies it returns True.
     try:
         subprocess.run(
-            ["ffmpeg", "-version"],
+            args=["ffmpeg", "-version"],
             capture_output=True,
             text=True,
             check=True,
             timeout=5,
         )
-        assert result is True
-    except:
-        assert result is False
+        assert result
+    except Exception:
+        assert not result
 
 
-def test_video_saver_init_repr(tmp_path, has_ffmpeg):
+def test_video_saver_init_repr(tmp_path, has_ffmpeg) -> None:
     """Verifies the functioning of the VideoSaver __init__() and __repr__() methods."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -94,7 +94,7 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg):
     # Verifies that the saver was initialized properly
     assert saver._system_id == 1
     assert saver._ffmpeg_process is None
-    assert not saver.is_active  # Note: is_active returns True when the process is None
+    assert not saver.is_active
 
     # Verifies the __repr__() method
     assert "VideoSaver(" in repr(saver)
@@ -103,7 +103,7 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg):
 
 
 @pytest.mark.parametrize(
-    "video_encoder, gpu_index, output_pixel_format",
+    ("video_encoder", "gpu_index", "output_pixel_format"),
     [
         (VideoEncoders.H265, -1, OutputPixelFormats.YUV420),
         (VideoEncoders.H264, -1, OutputPixelFormats.YUV420),
@@ -111,7 +111,7 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg):
         (VideoEncoders.H264, -1, OutputPixelFormats.YUV444),
     ],
 )
-def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, output_pixel_format, has_ffmpeg):
+def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, output_pixel_format, has_ffmpeg) -> None:
     """Verifies different CPU encoder configurations for the VideoSaver class."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -139,7 +139,7 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
 
 
 @pytest.mark.parametrize(
-    "video_encoder, output_pixel_format",
+    ("video_encoder", "output_pixel_format"),
     [
         (VideoEncoders.H265, OutputPixelFormats.YUV420),
         (VideoEncoders.H264, OutputPixelFormats.YUV420),
@@ -147,7 +147,7 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
         (VideoEncoders.H264, OutputPixelFormats.YUV444),
     ],
 )
-def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_format, has_nvidia, has_ffmpeg):
+def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_format, has_nvidia, has_ffmpeg) -> None:
     """Verifies different GPU encoder configurations for the VideoSaver class."""
     if not has_nvidia:
         pytest.skip("Skipping this test as it requires an NVIDIA GPU.")
@@ -174,10 +174,11 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
     # noinspection PyTypeChecker
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
-    assert "-gpu 0" in saver._ffmpeg_command
+    gpu_index = saver._ffmpeg_command.index("-gpu")
+    assert saver._ffmpeg_command[gpu_index + 1] == "0"
 
 
-def test_video_saver_start_stop(tmp_path, has_ffmpeg):
+def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
     """Verifies the functioning of the VideoSaver start() and stop() methods."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -218,7 +219,7 @@ def test_video_saver_start_stop(tmp_path, has_ffmpeg):
     assert saver._ffmpeg_process is None
 
 
-def test_video_saver_save_frame(tmp_path, has_ffmpeg):
+def test_video_saver_save_frame(tmp_path, has_ffmpeg) -> None:
     """Verifies the functioning of the VideoSaver save_frame() method."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -263,7 +264,7 @@ def test_video_saver_save_frame(tmp_path, has_ffmpeg):
     assert output_file.stat().st_size > 0  # File is not empty
 
 
-def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg):
+def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg) -> None:
     """Verifies the error handling of the VideoSaver save_frame() method."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -283,15 +284,15 @@ def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg):
 
     # Verifies that saving a frame without starting the encoder raises an error
     message = (
-        f"Unable to submit the frame's data to the FFMPEG encoder process of the VideoSaver instance for the "
-        f"VideoSystem with id 1 as the process has not been started. Call the start() method "
-        f"to start the encoder process before calling the save_frame() method."
+        "Unable to submit the frame's data to the FFMPEG encoder process of the VideoSaver instance for the "
+        "VideoSystem with id 1 as the process has not been started. Call the start() method "
+        "to start the encoder process before calling the save_frame() method."
     )
     with pytest.raises(ConnectionError, match=error_format(message)):
         saver.save_frame(frame)
 
 
-def test_video_saver_del(tmp_path, has_ffmpeg):
+def test_video_saver_del(tmp_path, has_ffmpeg) -> None:
     """Verifies that the VideoSaver __del__() method properly cleans up resources."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -327,15 +328,15 @@ def test_video_saver_del(tmp_path, has_ffmpeg):
     saver2.stop()
 
 
-def test_encoder_speed_preset_mappings():
-    """Verifies that the encoder speed preset mappings are correctly defined."""
-    # Verifies all EncoderSpeedPresets values have corresponding mappings
+def test_encoder_speed_preset_mappings() -> None:
+    """Verifies that the encoder speed preset properties are correctly defined."""
+    # Verifies all EncoderSpeedPresets values produce valid preset strings.
     for preset in EncoderSpeedPresets:
-        assert preset.value in VideoSaver._gpu_encoder_preset_map
-        assert preset.value in VideoSaver._cpu_encoder_preset_map
+        assert isinstance(preset.gpu_preset, str)
+        assert isinstance(preset.cpu_preset, str)
 
-    # Verifies the specific mappings
-    assert VideoSaver._gpu_encoder_preset_map[EncoderSpeedPresets.FASTEST] == "p1"
-    assert VideoSaver._gpu_encoder_preset_map[EncoderSpeedPresets.SLOWEST] == "p7"
-    assert VideoSaver._cpu_encoder_preset_map[EncoderSpeedPresets.FASTEST] == "veryfast"
-    assert VideoSaver._cpu_encoder_preset_map[EncoderSpeedPresets.SLOWEST] == "veryslow"
+    # Verifies the specific mappings.
+    assert EncoderSpeedPresets.FASTEST.gpu_preset == "p1"
+    assert EncoderSpeedPresets.SLOWEST.gpu_preset == "p7"
+    assert EncoderSpeedPresets.FASTEST.cpu_preset == "veryfast"
+    assert EncoderSpeedPresets.SLOWEST.cpu_preset == "veryslow"

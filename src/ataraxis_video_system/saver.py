@@ -1,31 +1,117 @@
 """Provides a unified API that allows other library modules to save acquired camera frames via the FFMPEG library.
 
-Primarily, this module abstracts the configuration and flow control steps typically involved in saving acquired camera
-frames as video files in real time.
+Abstracts the configuration and flow control steps typically involved in saving acquired camera frames as video files
+in real time.
 """
 
+from __future__ import annotations
+
 from enum import IntEnum, StrEnum
-from typing import Any, ClassVar
-from pathlib import Path
+from typing import TYPE_CHECKING
+from threading import Thread
 import subprocess
 from subprocess import Popen, TimeoutExpired
 
-import numpy as np
-from numpy.typing import NDArray
 from ataraxis_base_utilities import console, ensure_directory_exists
+
+if TYPE_CHECKING:
+    from typing import Any, Self
+    from pathlib import Path
+
+    import numpy as np
+    from numpy.typing import NDArray
+
+
+class VideoEncoders(StrEnum):
+    """Defines the supported video encoders used when saving camera frames as videos via VideoSaver instances."""
+
+    H264 = "H264"
+    """For CPU savers, this is the libx264 encoder and for GPU savers, this is the h264_nvenc encoder."""
+    H265 = "H265"
+    """For CPU savers, this is the libx265 encoder and for GPU savers, this is the hevc_nvenc encoder."""
+
+
+class EncoderSpeedPresets(IntEnum):
+    """Defines the supported video encoding speed presets used when saving camera frames as videos via VideoSaver
+    instances.
+
+    Generally, the faster the encoding speed, the lower is the resultant video quality.
+
+    Notes:
+        It is impossible to perfectly match the encoding presets for the CPU and GPU encoders. The scale defined
+        in this enumeration represents the best effort to align the preset scale for the two encoders.
+    """
+
+    FASTEST = 1
+    """For CPU encoders, this matches the 'veryfast' level. For GPU encoders, this matches the 'p1' level."""
+    FASTER = 2
+    """For CPU encoders, this matches the 'faster' level. For GPU encoders, this matches the 'p2' level."""
+    FAST = 3
+    """For CPU encoders, this matches the 'fast' level. For GPU encoders, this matches the 'p3' level."""
+    MEDIUM = 4
+    """For CPU encoders, this matches the 'medium' level. For GPU encoders, this matches the 'p4' level."""
+    SLOW = 5
+    """For CPU encoders, this matches the 'slow' level. For GPU encoders, this matches the 'p5' level."""
+    SLOWER = 6
+    """For CPU encoders, this matches the 'slower' level. For GPU encoders, this matches the 'p6' level."""
+    SLOWEST = 7
+    """For CPU encoders, this matches the 'veryslow' level. For GPU encoders, this matches the 'p7' level."""
+
+    @property
+    def gpu_preset(self) -> str:
+        """Returns the corresponding NVIDIA GPU encoder preset string."""
+        return f"p{self.value}"
+
+    @property
+    def cpu_preset(self) -> str:
+        """Returns the corresponding CPU encoder preset string."""
+        return {
+            1: "veryfast",
+            2: "faster",
+            3: "fast",
+            4: "medium",
+            5: "slow",
+            6: "slower",
+            7: "veryslow",
+        }[self.value]
+
+
+class InputPixelFormats(StrEnum):
+    """Defines the supported camera frame data (color) formats used when saving camera frames as videos via VideoSaver
+    instances.
+    """
+
+    MONOCHROME = "gray"
+    """The preset for grayscale (monochrome) images."""
+    BGR = "bgr24"
+    """The preset for color images."""
+
+
+class OutputPixelFormats(StrEnum):
+    """Defines the supported video color formats used when saving camera frames as videos via VideoSaver instances."""
+
+    YUV420 = "yuv420p"
+    """The 'standard' video color space format that uses half-bandwidth chrominance (U/V) and full-bandwidth luminance
+    (Y). Generally, the resultant reduction in chromatic precision is not apparent to the viewer.
+    """
+    YUV444 = "yuv444p"
+    """While still minorly reducing the chromatic precision, this profile uses most of the chrominance channel-width.
+    This results in minimal chromatic data loss compared to the more common 'yuv420p' format, but increases the
+    encoding processing time.
+    """
 
 
 def check_gpu_availability() -> bool:
     """Checks whether the host system has an Nvidia GPU.
 
     The presence of a GPU is determined by calling the 'nvidia-smi' command. If the command runs successfully, it
-    indicates the host-system, has an Nvidia GPU.
+    indicates the host system has an Nvidia GPU.
 
     Returns:
         True if the host system has an Nvidia GPU, False otherwise.
     """
     try:
-        # Runs nvidia-smi command, uses check to trigger CalledProcessError exception if the runtime fails
+        # Runs the nvidia-smi command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(
             args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
@@ -47,7 +133,7 @@ def check_ffmpeg_availability() -> bool:
         True if the host system has the FFMPEG library installed and available on PATH, False otherwise.
     """
     try:
-        # Runs ffmpeg version command, uses check to trigger CalledProcessError exception if runtime fails
+        # Runs the ffmpeg version command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
     except Exception:
         return False
@@ -55,96 +141,11 @@ def check_ffmpeg_availability() -> bool:
         return True
 
 
-class VideoEncoders(StrEnum):
-    """Stores the supported video encoders used when saving camera frames as videos via VideoSaver instances."""
-
-    H264 = "H264"
-    """
-    For CPU savers this is the libx264 encoder and for GPU savers this is the h264_nvenc encoder.
-    """
-    H265 = "H265"
-    """
-    For CPU savers this is the libx265 encoder and for GPU savers this is the hevc_nvenc encoder.
-    """
-
-
-class EncoderSpeedPresets(IntEnum):
-    """Stores the supported video encoding speed presets used when saving camera frames as videos via VideoSaver
-    instances.
-
-    Generally, the faster the encoding speed, the lower is the resultant video quality.
-
-    Notes:
-        It is impossible to perfectly match the encoding presets for the CPU and GPU encoders. The scale defined
-        in this enumeration represents the best-effort to align the preset scale for the two encoders.
-    """
-
-    FASTEST = 1
-    """
-    For CPU encoders, this matches the 'veryfast' level. For GPU encoders, this matches the 'p1' level.
-    """
-    FASTER = 2
-    """
-    For CPU encoders, this matches the 'faster' level. For GPU encoders, this matches the 'p2' level.
-    """
-    FAST = 3
-    """
-    For CPU encoders, this matches the 'fast' level. For GPU encoders, this matches the 'p3' level.
-    """
-    MEDIUM = 4
-    """
-    For CPU encoders, this matches the 'medium' level. For GPU encoders, this matches the 'p4' level.
-    """
-    SLOW = 5
-    """
-    For CPU encoders, this matches the 'slow' level. For GPU encoders, this matches the 'p5' level.
-    """
-    SLOWER = 6
-    """
-    For CPU encoders, this matches the 'slower' level. For GPU encoders, this matches the 'p6' level.
-    """
-    SLOWEST = 7
-    """
-    For CPU encoders, this matches the 'veryslow' level. For GPU encoders, this matches the 'p7' level.
-    """
-
-
-class InputPixelFormats(StrEnum):
-    """Stores the supported camera frame data (color) formats used when saving camera frames as videos via VideoSaver
-    instances.
-    """
-
-    MONOCHROME = "gray"
-    """
-    The preset for grayscale (monochrome) images.
-    """
-    BGR = "bgr24"
-    """
-    The preset for color images.
-    """
-
-
-class OutputPixelFormats(StrEnum):
-    """Stores the supported video color formats used when saving camera frames as videos via VideoSaver instances."""
-
-    YUV420 = "yuv420p"
-    """
-    The 'standard' video color space format that uses half-bandwidth chrominance (U/V) and full-bandwidth luminance (Y).
-    Generally, the resultant reduction in chromatic precision is not apparent to the viewer.
-    """
-    YUV444 = "yuv444p"
-    """
-    While still minorly reducing the chromatic precision, this profile uses most of the chrominance channel-width. 
-    This results in minimal chromatic data loss compared to the more common 'yuv420p' format, but increases the 
-    encoding processing time.
-    """
-
-
 class VideoSaver:
     """Interfaces with an FFMPEG process to continuously save the input camera frames as an MP4 video file.
 
-    This class uses the FFMPEG library and either Nvidia GPU or CPU to continuously encode and append the input stream
-    of camera frames to an MP4 video file stored in non-volatile memory (on disk).
+    Uses the FFMPEG library and either Nvidia GPU or CPU to continuously encode and append the input stream of camera
+    frames to an MP4 video file stored in non-volatile memory (on disk).
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this saver interface.
@@ -169,36 +170,15 @@ class VideoSaver:
             default value is calibrated for the H265 encoder and is likely too low for the H264 encoder.
 
     Attributes:
-        _gpu_encoder_preset_map: Maps EncoderSpeedPresets enumeration member values to the appropriate GPU encoder
-            speed preset values.
-        _cpu_encoder_preset_map: Maps EncoderSpeedPresets enumeration member values to the appropriate CPU encoder
-            speed preset values.
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this saver interface.
-        _ffmpeg_command: Stores the main body of the FFMPEG command used to start the video encoding process.
+        _ffmpeg_command: Stores the FFMPEG command arguments used to start the video encoding process.
         _repr_body: Stores the main body of the class representation string.
-        _ffmpeg_process: Stores the Popen object that controls the FFMPEG's video encoding process. This is used during
+        _ffmpeg_process: Stores the Popen object that controls the FFMPEG video encoding process. This is used during
             camera frame encoding to continuously feed the input camera frames to the encoding process.
+        _stderr_output: Stores the captured stderr output from the FFMPEG process.
+        _stderr_thread: Stores the daemon thread that drains the FFMPEG process stderr pipe to prevent buffer
+            saturation.
     """
-
-    _gpu_encoder_preset_map: ClassVar[dict[int, str]] = {
-        1: "p1",
-        2: "p2",
-        3: "p3",
-        4: "p4",
-        5: "p5",
-        6: "p6",
-        7: "p7",
-    }
-
-    _cpu_encoder_preset_map: ClassVar[dict[int, str]] = {
-        1: "veryfast",
-        2: "faster",
-        3: "fast",
-        4: "medium",
-        5: "slow",
-        6: "slower",
-        7: "veryslow",
-    }
 
     def __init__(
         self,
@@ -214,7 +194,7 @@ class VideoSaver:
         output_pixel_format: OutputPixelFormats | str = OutputPixelFormats.YUV420,
         quantization_parameter: int = 15,
     ) -> None:
-        # Stores the caller VideoSystem ID to a class attribute.
+        # Stores the caller VideoSystem ID to an instance attribute.
         self._system_id: int = system_id
 
         # Ensures that all enumeration inputs are stored as enumerations:
@@ -228,7 +208,7 @@ class VideoSaver:
 
         # Constructs the encoder-specific portion of the FFMPEG command based on whether GPU or CPU encoding is
         # requested. This portion contains the encoder parameters but lacks the input header and output path.
-        encoder_command_portion: str
+        encoder_command_portion: list[str]
 
         # If a GPU index is provided, uses one of the hardware-encoding libraries.
         if gpu >= 0:
@@ -241,14 +221,23 @@ class VideoSaver:
             else:
                 encoder_profile = "rext" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
 
-            # Resolves the GPU encoding speed preset.
-            encoder_speed = self._gpu_encoder_preset_map[encoder_speed_preset.value]
-
-            # Uses the resolved data to construct the GPU encoding command.
-            encoder_command_portion = (
-                f"-vcodec {video_codec} -qp {quantization_parameter} -preset {encoder_speed} "
-                f"-profile:v {encoder_profile} -pixel_format {output_pixel_format.value} -gpu {gpu} -rc constqp"
-            )
+            # Uses the resolved data to construct the GPU encoding command portion.
+            encoder_command_portion = [
+                "-vcodec",
+                video_codec,
+                "-qp",
+                str(quantization_parameter),
+                "-preset",
+                encoder_speed_preset.gpu_preset,
+                "-profile:v",
+                encoder_profile,
+                "-pixel_format",
+                output_pixel_format.value,
+                "-gpu",
+                str(gpu),
+                "-rc",
+                "constqp",
+            ]
 
         # Otherwise, uses one of the software-encoding libraries.
         else:
@@ -261,29 +250,46 @@ class VideoSaver:
             else:
                 encoder_profile = "high444" if output_pixel_format == OutputPixelFormats.YUV444 else "high422"
 
-            # Resolves the CPU encoding speed preset.
-            encoder_speed = self._cpu_encoder_preset_map[encoder_speed_preset.value]
-
-            # This is unique to CPU encoders. Resolves the 'parameter' specifier based on the encoder name. This is
-            # used to force CPU encoders to use the QP control mode.
+            # Resolves the parameter specifier unique to CPU encoders based on the encoder name. Forces CPU
+            # encoders to use the QP control mode.
             parameter_specifier = "-x264-params" if video_codec == "libx264" else "-x265-params"
 
-            # Note, the qp has to be preceded by the '-parameter' specifier for the desired h265 / h265 encoder
-            encoder_command_portion = (
-                f"-vcodec {video_codec} {parameter_specifier} qp={quantization_parameter} "
-                f"-preset {encoder_speed} -profile {encoder_profile} -pix_fmt "
-                f"{output_pixel_format.value}"
-            )
+            # Constructs the CPU encoding command portion, preceding the quantization parameter with the
+            # parameter specifier for the h264 / h265 encoder.
+            encoder_command_portion = [
+                "-vcodec",
+                video_codec,
+                parameter_specifier,
+                f"qp={quantization_parameter}",
+                "-preset",
+                encoder_speed_preset.cpu_preset,
+                "-profile",
+                encoder_profile,
+                "-pix_fmt",
+                output_pixel_format.value,
+            ]
 
-        # Constructs the complete FFMPEG command used by the start() method to initialize the encoder process. This
-        # includes the input specifications, encoder parameters, and output path.
-        self._ffmpeg_command: str = (
-            f"ffmpeg -y -f rawvideo -pix_fmt {input_pixel_format.value} -s {frame_width}x{frame_height} "
-            f"-r {frame_rate} -i pipe: {encoder_command_portion} {output_file}"
-        )
+        # Constructs the complete FFMPEG command used by the start() method to initialize the encoder process,
+        # including the input specifications, encoder parameters, and output path.
+        self._ffmpeg_command: list[str] = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            input_pixel_format.value,
+            "-s",
+            f"{frame_width}x{frame_height}",
+            "-r",
+            str(frame_rate),
+            "-i",
+            "pipe:",
+            *encoder_command_portion,
+            str(output_file),
+        ]
 
-        # Also generates the body for the representation string used by the __repr__() method. This is done here to
-        # reduce the number of class attributes.
+        # Generates the body for the representation string used by the __repr__() method to reduce the number of
+        # instance attributes.
         self._repr_body: str = (
             f"output_file={output_file}, hardware_encoding={gpu >= 0}, "
             f"input_pixel_format={input_pixel_format.value}, video_encoder={video_encoder}, "
@@ -291,15 +297,26 @@ class VideoSaver:
             f"gpu_index={gpu}"
         )
 
-        # Initializes the attribute to store the live FFMPEG encoder process, once it is started.
+        # Initializes the attributes used to manage the FFMPEG encoder process and its stderr drain thread.
         self._ffmpeg_process: Popen[bytes] | None = None
+        self._stderr_output: bytes = b""
+        self._stderr_thread: Thread | None = None
 
     def __repr__(self) -> str:
-        """Returns the string representation of the VideoEncoder instance."""
-        return f"VideoSaver({self._repr_body}, started={self._ffmpeg_process is None})"
+        """Returns the string representation of the VideoSaver instance."""
+        return f"VideoSaver({self._repr_body}, started={self._ffmpeg_process is not None})"
 
     def __del__(self) -> None:
         """Ensures that the video encoder is stopped before the instance is garbage-collected."""
+        self.stop()
+
+    def __enter__(self) -> Self:
+        """Starts the FFMPEG encoder process and returns the instance for use as a context manager."""
+        self.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        """Stops the FFMPEG encoder process on context manager exit."""
         self.stop()
 
     @property
@@ -311,14 +328,24 @@ class VideoSaver:
         """Creates the FFMPEG encoder process and sets up the data stream to pipe incoming camera frames to the
         process.
         """
-        # Prevents recreating an already existing process
+        # Prevents recreating an already existing process.
         if self._ffmpeg_process is not None:
             return
 
-        # Starts the FFMPEG process using the command constructed during initialization and saves it to class attribute.
+        # Starts the FFMPEG process using the command arguments constructed during initialization. Discards stdout
+        # via DEVNULL since FFMPEG emits all diagnostics to stderr.
         self._ffmpeg_process = subprocess.Popen(
-            self._ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True
+            args=self._ffmpeg_command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
+
+        # Starts a daemon thread to continuously drain FFMPEG's stderr pipe, preventing pipe buffer saturation
+        # that would otherwise deadlock the encoding process.
+        self._stderr_output = b""
+        self._stderr_thread = Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
 
     def stop(self) -> None:
         """Stops the FFMPEG encoder process."""
@@ -326,31 +353,54 @@ class VideoSaver:
         if self._ffmpeg_process is None:
             return
 
-        # If the process does not terminate 'gracefully,' it is terminated forcefully to prevent deadlocks.
+        # Closes the stdin pipe to signal EOF to FFMPEG, triggering final encoding and process shutdown.
+        if self._ffmpeg_process.stdin is not None:
+            self._ffmpeg_process.stdin.close()
+
+        # Waits for the FFMPEG process to terminate. Terminates forcefully if it exceeds the timeout.
         try:
-            _ = self._ffmpeg_process.communicate(timeout=600)
+            self._ffmpeg_process.wait(timeout=600)
         except TimeoutExpired:  # pragma: no cover
             self._ffmpeg_process.kill()
+            self._ffmpeg_process.wait()
 
-        # Sets the process variable to None placeholder. This causes the underlying Popen object to be garbage
-        # collected.
+        # Waits for the stderr drain thread to finish reading. After process termination, the thread returns
+        # near-immediately as stderr EOF is triggered by process exit.
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=10)
+
+        # Logs captured stderr output only if the FFMPEG process exited with an error.
+        if self._ffmpeg_process.returncode != 0 and self._stderr_output:
+            console.echo(
+                message=(
+                    f"FFMPEG encoder error (system {self._system_id}, exit code "
+                    f"{self._ffmpeg_process.returncode}): "
+                    f"{self._stderr_output.decode(errors='replace')}"
+                ),
+                raw=True,
+            )
+
+        # Resets the process and thread references, allowing the underlying objects to be garbage-collected.
         self._ffmpeg_process = None
+        self._stderr_thread = None
+        self._stderr_output = b""
 
     def save_frame(self, frame: NDArray[np.integer[Any]]) -> None:
         """Sends the input frame to be added to the video file managed by the instance's FFMPEG encoder process.
 
         Notes:
-            This method expects that the input frame data matches the video dimensions and input pixel format used
-            during VideoSaver initialization.
+            Expects that the input frame data matches the video dimensions and input pixel format used during
+            VideoSaver initialization.
 
         Args:
             frame: The frame's data to be encoded into the video.
 
         Raises:
-            ConnectionError: If the method is called before starting the encoder process via the start() method.
-            BrokenPipeError: If the method encounters an error when submitting the frame's data to the FFMPEG process.
+            ConnectionError: If called before starting the encoder process via the start() method.
+            RuntimeError: If the FFMPEG process has terminated unexpectedly during encoding.
+            BrokenPipeError: If an error occurs when submitting the frame's data to the FFMPEG process.
         """
-        # Raises an error if the encoder process does not exist
+        # Raises an error if the encoder process does not exist.
         if self._ffmpeg_process is None:
             message = (
                 f"Unable to submit the frame's data to the FFMPEG encoder process of the VideoSaver instance for the "
@@ -359,12 +409,39 @@ class VideoSaver:
             )
             console.error(message=message, error=ConnectionError)
 
-        # Writes the input frame to the encoder's standard input pipe.
+        # Checks whether the FFMPEG process has terminated unexpectedly during encoding.
+        exit_code = self._ffmpeg_process.poll()
+        if exit_code is not None:
+            # Waits for the stderr drain thread to finish capturing error output.
+            if self._stderr_thread is not None:
+                self._stderr_thread.join(timeout=10)
+            stderr_text = (
+                self._stderr_output.decode(errors="replace") if self._stderr_output else "No error output captured."
+            )
+            # Clears stderr to prevent duplicate logging when stop() is called during cleanup.
+            self._stderr_output = b""
+            message = (
+                f"Unable to save frame via the VideoSaver for VideoSystem with id {self._system_id}. The FFMPEG "
+                f"process terminated unexpectedly with exit code {exit_code}. FFMPEG stderr: {stderr_text}"
+            )
+            console.error(message=message, error=RuntimeError)
+
+        # Writes the input frame to the encoder's standard input pipe. Passes the underlying buffer directly
+        # for C-contiguous arrays to avoid the per-frame copy overhead of tobytes().
         try:
-            self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore[union-attr]
+            if frame.flags["C_CONTIGUOUS"]:
+                self._ffmpeg_process.stdin.write(frame.data)  # type: ignore[union-attr]
+            else:
+                self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore[union-attr]
         except Exception as e:  # pragma: no cover
             message = (
                 f"The FFMPEG process of the VideoSaver instance for the VideoSystem with id {self._system_id} "
                 f"has failed to process the input frame's data with error: {e}"
             )
             console.error(message=message, error=BrokenPipeError)
+
+    def _drain_stderr(self) -> None:
+        """Reads all stderr output from the FFMPEG process to prevent pipe buffer saturation."""
+        if self._ffmpeg_process is None or self._ffmpeg_process.stderr is None:
+            return
+        self._stderr_output = self._ffmpeg_process.stderr.read()

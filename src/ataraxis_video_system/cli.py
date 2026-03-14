@@ -18,11 +18,11 @@ from .camera import CameraInterfaces, add_cti_file, check_cti_file, discover_cam
 from .mcp_server import run_server as run_mcp  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 
-# Enables console output
+# Enables console output.
 console.enable()  # pragma: no cover
 
-# Ensures that displayed CLICK help messages are formatted according to the lab standard.
-CONTEXT_SETTINGS = {"max_content_width": 120}  # pragma: no cover
+CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}  # pragma: no cover
+"""Ensures that displayed Click help messages are formatted according to the lab standard."""
 
 
 @click.group("axvs", context_settings=CONTEXT_SETTINGS)
@@ -54,7 +54,7 @@ def set_cti_file(file_path: Path) -> None:  # pragma: no cover
     add_cti_file(cti_path=file_path)
 
     # Notifies the user that the CTI file has been successfully set.
-    console.echo(f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
+    console.echo(message=f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
 
 
 @axvs_cli.command("cti-check")
@@ -80,7 +80,7 @@ def check_cti_status() -> None:  # pragma: no cover
 
 
 @axvs_cli.command("id")
-def list_camera_indices() -> None:
+def list_camera_indices() -> None:  # pragma: no cover
     """Discovers all cameras compatible with the Opencv and Harvesters interfaces and prints their identification
     information.
 
@@ -96,7 +96,7 @@ def list_camera_indices() -> None:
     harvesters_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
 
     # Displays OpenCV camera information.
-    if len(opencv_cameras) == 0:
+    if not opencv_cameras:
         console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.WARNING)
     else:
         console.echo(
@@ -107,7 +107,7 @@ def list_camera_indices() -> None:
             ),
             level=LogLevel.WARNING,
         )
-        console.echo("Available OpenCV cameras:", level=LogLevel.SUCCESS)
+        console.echo(message="Available OpenCV cameras:", level=LogLevel.SUCCESS)
         for num, camera_data in enumerate(opencv_cameras, start=1):
             console.echo(
                 message=(
@@ -118,12 +118,12 @@ def list_camera_indices() -> None:
             )
 
     # Displays Harvesters camera information.
-    if len(harvesters_cameras) == 0:
+    if not harvesters_cameras:
         console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.WARNING)
     else:
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
         # map discovered indices to physical hardware.
-        console.echo("Available Harvesters cameras:", level=LogLevel.SUCCESS)
+        console.echo(message="Available Harvesters cameras:", level=LogLevel.SUCCESS)
         for num, camera_data in enumerate(harvesters_cameras, start=1):
             console.echo(
                 message=(
@@ -249,11 +249,11 @@ def live_run(
     the terminal. Primarily, this CLI is designed to help with the initial identification and calibration of VideoSystem
     instances and does not support the full range of features offered through the VideoSystem class API.
     """
-    # Initializes and starts the DataLogger instance
-    logger = DataLogger(output_directory=Path(output_directory), instance_name="axvs_live_run")
+    # Initializes and starts the DataLogger instance.
+    logger = DataLogger(output_directory=output_directory, instance_name="axvs_live_run")
     logger.start()
 
-    # Uses command arguments to resolve VideoSystem configuration parameters
+    # Uses command arguments to resolve VideoSystem configuration parameters.
     if interface == "mock":
         camera_interface = CameraInterfaces.MOCK
     elif interface == "harvesters":
@@ -261,11 +261,11 @@ def live_run(
     else:
         camera_interface = CameraInterfaces.OPENCV
 
-    # Initializes the VideoSystem system
+    # Initializes the VideoSystem.
     video_system = VideoSystem(
         system_id=np.uint8(111),
         data_logger=logger,
-        output_directory=Path(output_directory),
+        output_directory=output_directory,
         camera_interface=camera_interface,
         camera_index=camera_index,
         frame_width=width,
@@ -280,43 +280,43 @@ def live_run(
         quantization_parameter=15,  # Uses the instance's default parameter
     )
 
-    # Starts the system by spawning child processes
+    # Starts the system by spawning child processes.
     video_system.start()
     console.echo(message="Live VideoSystem: initialized and started (spawned child processes).", level=LogLevel.INFO)
 
-    # Ensures that manual control instruction is only shown once
-    once: bool = True
-    # Ues terminal input to control the video system
+    # Ensures that manual control instructions are only shown once.
+    show_instructions: bool = True
+    # Uses terminal input to control the video system.
     while video_system.started:
-        if once:
+        if show_instructions:
             message = (
                 "Enter 'q' to terminate system's runtime. Enter 'w' to start saving camera frames. "
                 "Enter 's' to stop saving camera frames. Note, after termination, the system may stay alive for up "
                 "to 600 seconds to finish saving buffered frame data."
             )
             console.echo(message=message, level=LogLevel.SUCCESS)
-            once = False
+            show_instructions = False
 
         key = input("\nEnter command key:")
         if key.lower() == "q":
             message = "Terminating the VideoSystem..."
-            console.echo(message)
+            console.echo(message=message)
             video_system.stop()
             logger.stop()
         elif key.lower() == "w":  # pragma: no cover
             message = "VideoSystem's camera frame saving: Started."
-            console.echo(message)
+            console.echo(message=message)
             video_system.start_frame_saving()
         elif key.lower() == "s":  # pragma: no cover
             message = "VideoSystem's camera frame saving: Stopped."
-            console.echo(message)
+            console.echo(message=message)
             video_system.stop_frame_saving()
         else:  # pragma: no cover
             message = (
                 f"Unknown input key {key.lower()} encountered while interacting with the VideoSystem. Use 'q' to "
                 f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
             )
-            console.echo(message, level=LogLevel.WARNING)
+            console.echo(message=message, level=LogLevel.WARNING)
     video_system.stop()
     logger.stop()
     console.echo(
