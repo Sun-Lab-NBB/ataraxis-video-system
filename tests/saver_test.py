@@ -94,7 +94,7 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg):
     # Verifies that the saver was initialized properly
     assert saver._system_id == 1
     assert saver._ffmpeg_process is None
-    assert not saver.is_active  # Note: is_active returns True when the process is None
+    assert not saver.is_active
 
     # Verifies the __repr__() method
     assert "VideoSaver(" in repr(saver)
@@ -174,7 +174,8 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
     # noinspection PyTypeChecker
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
-    assert "-gpu 0" in saver._ffmpeg_command
+    gpu_index = saver._ffmpeg_command.index("-gpu")
+    assert saver._ffmpeg_command[gpu_index + 1] == "0"
 
 
 def test_video_saver_start_stop(tmp_path, has_ffmpeg):
@@ -328,14 +329,14 @@ def test_video_saver_del(tmp_path, has_ffmpeg):
 
 
 def test_encoder_speed_preset_mappings():
-    """Verifies that the encoder speed preset mappings are correctly defined."""
-    # Verifies all EncoderSpeedPresets values have corresponding mappings
+    """Verifies that the encoder speed preset properties are correctly defined."""
+    # Verifies all EncoderSpeedPresets values produce valid preset strings.
     for preset in EncoderSpeedPresets:
-        assert preset.value in VideoSaver._gpu_encoder_preset_map
-        assert preset.value in VideoSaver._cpu_encoder_preset_map
+        assert isinstance(preset.gpu_preset, str)
+        assert isinstance(preset.cpu_preset, str)
 
-    # Verifies the specific mappings
-    assert VideoSaver._gpu_encoder_preset_map[EncoderSpeedPresets.FASTEST] == "p1"
-    assert VideoSaver._gpu_encoder_preset_map[EncoderSpeedPresets.SLOWEST] == "p7"
-    assert VideoSaver._cpu_encoder_preset_map[EncoderSpeedPresets.FASTEST] == "veryfast"
-    assert VideoSaver._cpu_encoder_preset_map[EncoderSpeedPresets.SLOWEST] == "veryslow"
+    # Verifies the specific mappings.
+    assert EncoderSpeedPresets.FASTEST.gpu_preset == "p1"
+    assert EncoderSpeedPresets.SLOWEST.gpu_preset == "p7"
+    assert EncoderSpeedPresets.FASTEST.cpu_preset == "veryfast"
+    assert EncoderSpeedPresets.SLOWEST.cpu_preset == "veryslow"

@@ -85,8 +85,6 @@ dev = [
     # Development Automation
     "ataraxis-automation>=8,<9",
 
-    # Types
-    "types-platformdirs>=4,<5",
 ]
 
 # Specifies files that should not be included in the source-code distribution.
