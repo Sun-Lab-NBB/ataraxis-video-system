@@ -14,7 +14,7 @@ from collections.abc import Generator
 
 import cv2
 import numpy as np
-import appdirs
+import platformdirs
 from numpy.typing import NDArray
 from ataraxis_time import PrecisionTimer, TimerPrecisions
 from harvesters.core import Harvester, ImageAcquirer  # type: ignore[import-untyped]
@@ -285,7 +285,7 @@ def add_cti_file(cti_path: Path) -> None:
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
     # Resolves the path to the library-specific .txt file used to store the path to the currently used .cti file.
-    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    app_dir = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = app_dir.joinpath("cti_path.txt")
 
     # In case this function is called before the app directory is created, ensures the app directory exists
@@ -307,7 +307,7 @@ def check_cti_file() -> Path | None:
         The Path to the configured .cti file if one exists and is valid, or None otherwise.
     """
     # Resolves the path to the .cti path file using appdirs.
-    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    app_dir = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = app_dir.joinpath("cti_path.txt")
 
     # Checks if the path file exists.
@@ -341,7 +341,7 @@ def _get_cti_path() -> Path:
         FileNotFoundError: If the function is unable to resolve the path to the .cti file.
     """
     # Uses appdirs to locate the user's data directory and resolve the path to the .cti path file.
-    app_dir = Path(appdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+    app_dir = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = app_dir.joinpath("cti_path.txt")
 
     # If the path file or the library data directory does not exist, aborts with an error.
