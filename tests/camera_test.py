@@ -4,13 +4,8 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system.camera import (
-    MockCamera,
-    OpenCVCamera,
-    CameraInterfaces,
-    HarvestersCamera,
-    discover_camera_ids,
-)
+from ataraxis_video_system import CameraInterfaces, discover_camera_ids
+from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
 
 
 @pytest.fixture(scope="session")

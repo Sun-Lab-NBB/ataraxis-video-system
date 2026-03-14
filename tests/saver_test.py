@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system.saver import (
-    VideoSaver,
+from ataraxis_video_system import (
     VideoEncoders,
     InputPixelFormats,
     OutputPixelFormats,
@@ -15,6 +14,7 @@ from ataraxis_video_system.saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
+from ataraxis_video_system.saver import VideoSaver
 from ataraxis_video_system.camera import MockCamera
 
 
@@ -39,7 +39,7 @@ def test_check_gpu_availability() -> None:
     # If nvidia-smi is available, verifies it returns True.
     try:
         subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             check=True,
@@ -59,7 +59,7 @@ def test_check_ffmpeg_availability() -> None:
     # If ffmpeg is available, verifies it returns True.
     try:
         subprocess.run(
-            ["ffmpeg", "-version"],
+            args=["ffmpeg", "-version"],
             capture_output=True,
             text=True,
             check=True,

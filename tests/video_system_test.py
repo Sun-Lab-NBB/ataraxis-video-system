@@ -10,15 +10,16 @@ from ataraxis_time import PrecisionTimer
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import DataLogger, assemble_log_archives
 
-from ataraxis_video_system import VideoSystem
-from ataraxis_video_system.saver import (
+from ataraxis_video_system import (
+    VideoSystem,
     VideoEncoders,
+    CameraInterfaces,
     OutputPixelFormats,
     EncoderSpeedPresets,
+    discover_camera_ids,
     check_ffmpeg_availability,
+    extract_logged_camera_timestamps,
 )
-from ataraxis_video_system.camera import CameraInterfaces, discover_camera_ids
-from ataraxis_video_system.video_system import extract_logged_camera_timestamps
 
 
 @pytest.fixture(scope="session")
@@ -47,7 +48,7 @@ def has_nvidia():
     """Checks for NVIDIA GPU availability in the test environment."""
     try:
         subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
             check=True,

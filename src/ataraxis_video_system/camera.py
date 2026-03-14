@@ -838,7 +838,7 @@ class MockCamera:
             the BGR channel order.
 
         Raises:
-            RuntimeError: If the method is called for a class not currently 'connected' to a camera.
+            ConnectionError: If the method is called for a class not currently 'connected' to a camera.
         """
         # Prevents calling this method before connecting to the camera's hardware.
         if not self._camera:

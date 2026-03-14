@@ -1,7 +1,9 @@
-"""A Python library that interfaces with a wide range of cameras to flexibly record visual stream data as video files.
+"""Interfaces with a wide range of cameras to flexibly record visual stream data as video files.
 
-See https://github.com/Sun-Lab-NBB/ataraxis-video-system for more details.
-API documentation: https://ataraxis-video-system-api-docs.netlify.app/
+See the `documentation <https://ataraxis-video-system-api-docs.netlify.app/>`_ for the description of
+available assets. See the `source code repository <https://github.com/Sun-Lab-NBB/ataraxis-video-system>`_
+for more details.
+
 Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 """
 

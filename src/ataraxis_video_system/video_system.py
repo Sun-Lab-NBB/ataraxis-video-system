@@ -499,7 +499,7 @@ class VideoSystem:
 
             # If the processes take too long to initialize or die, raises an error.
             error = False
-            message: str = ""  # Pre-initialization to appease mypy
+            message: str = ""  # Pre-initializes the variable to satisfy mypy.
             if (
                 initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[2] != 1
             ) or not self._producer_process.is_alive():
