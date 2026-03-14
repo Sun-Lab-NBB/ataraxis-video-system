@@ -47,11 +47,8 @@ dependencies = [
     "numpy>=2,<3",
 
     # Video Acquisition
-    "opencv-python>=4,<5",
+    "opencv-python>=4.13,<5",
     "harvesters>=1,<2",
-
-    # Video Encoding
-    "tqdm>=4,<5",
 
     # CLI
     "click>=8,<9",
@@ -90,7 +87,6 @@ dev = [
 
     # Types
     "types-appdirs>=1,<2",
-    "types-tqdm>=4,<5",
 ]
 
 # Specifies files that should not be included in the source-code distribution.

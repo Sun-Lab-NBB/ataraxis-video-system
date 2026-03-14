@@ -121,8 +121,8 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
          A tuple of CameraData instances, one for each discovered OpenCV-compatible camera.
     """
     # Disables OpenCV error logging to avoid flushing the terminal with failed connection attempts.
-    prev_log_level = cv2.getLogLevel()
-    cv2.setLogLevel(0)
+    prev_log_level = cv2.utils.logging.getLogLevel()
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
 
     try:
         non_working_count = 0
@@ -171,7 +171,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
 
     finally:
         # Restores previous log level
-        cv2.setLogLevel(prev_log_level)
+        cv2.utils.logging.setLogLevel(prev_log_level)
 
 
 def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
@@ -567,8 +567,6 @@ class OpenCVCamera:
                 f"grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
-            # Fallback to appease mypy, should not be reachable
-            raise ConnectionError(message)  # pragma: no cover
 
         # Flips the acquisition tracker to True the first time this method is called for a connected camera.
         if not self._acquiring:
@@ -780,8 +778,6 @@ class HarvestersCamera:
                 f"grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
-            # Fallback to appease mypy, should not be reachable
-            raise ConnectionError(message)  # pragma: no cover
 
         # Triggers camera frame acquisition the first time this method is called.
         if not self._camera.is_acquiring():
@@ -841,8 +837,9 @@ class HarvestersCamera:
                 f"families of color formats are supported: Monochrome, RGB, RGBA, BGR, and BGRA."
             )  # pragma: no cover
             console.error(message=message, error=ValueError)  # pragma: no cover
-            # This should never be reached, it is here to appease mypy
-            raise RuntimeError(ValueError)  # pragma: no cover
+            # Unreachable: console.error() is NoReturn, but ruff cannot trace NoReturn through method calls (RET503).
+            # noinspection PyUnreachableCode
+            raise ValueError(message)  # pragma: no cover
 
 
 class MockCamera:
@@ -1002,8 +999,6 @@ class MockCamera:
                 f"prior to calling the grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
-            # Fallback to appease mypy, should not be reachable
-            raise ConnectionError(message)  # pragma: no cover
 
         # Flips the acquiring flag the first time this method is called
         if not self._acquiring:

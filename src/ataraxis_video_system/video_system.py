@@ -14,16 +14,20 @@ from multiprocessing import (
     Queue as MPQueue,
     Manager,
     Process,
-    cpu_count,
 )
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cv2
-from tqdm import tqdm
 import numpy as np
-from ataraxis_time import PrecisionTimer, TimerPrecisions, TimestampFormats, convert_time, get_timestamp
-from ataraxis_base_utilities import console, chunk_iterable
-from ataraxis_data_structures import DataLogger, LogPackage, SharedMemoryArray
+from ataraxis_time import (
+    PrecisionTimer,
+    TimerPrecisions,
+    TimestampFormats,
+    get_timestamp,
+    rate_to_interval,
+)
+from ataraxis_base_utilities import console, resolve_worker_count
+from ataraxis_data_structures import DataLogger, LogPackage, LogArchiveReader, SharedMemoryArray
 
 from .saver import (
     VideoSaver,
@@ -50,13 +54,9 @@ _PROCESS_INITIALIZATION_TIME = 20
 # The maximum number of seconds to wait for the consumer and producer processes to shut down.
 _PROCESS_SHUTDOWN_TIME = 600
 
-# Specifies the size of the frame timestamp log message, in bytes. This is used during log message parsing to extract
-# the acquisition timestamps for all saved frames.
-_FRAME_TIMESTAMP_LOG_MESSAGE_SIZE = 9
-
-# The minimum number of messages that must be contained in the camera frame timestamp .npz archive for it to be
-# processed in parallel.
-_MINIMUM_LOG_SIZE_FOR_PARALLELIZATION = 2000
+# The minimum number of messages in a log archive required to enable parallel processing. Archives with fewer messages
+# are processed sequentially to avoid multiprocessing overhead. Matches LogArchiveReader._PARALLEL_PROCESSING_THRESHOLD.
+_PARALLEL_PROCESSING_THRESHOLD = 2000
 
 
 class VideoSystem:
@@ -277,8 +277,6 @@ class VideoSystem:
                 f"{', '.join(tuple(camera_interface))}."
             )
             console.error(error=ValueError, message=message)
-            # Fallback to appease mypy, should not be reachable
-            raise ValueError(message)  # pragma: no cover
 
         # Connects to the camera. This both verifies that the camera can be connected to and applies the camera
         # acquisition parameters.
@@ -693,7 +691,7 @@ class VideoSystem:
             # Converts the frame display rate from frames per second to microseconds per frame. This gives the delay
             # between displaying any two consecutive frames, which is used to limit how frequently the displayed image
             # updates.
-            show_time = convert_time(time=1 / display_frame_rate, from_units="s", to_units="us", as_float=True)
+            show_time = rate_to_interval(rate=display_frame_rate, to_units="us", as_float=True)
             show_timer = PrecisionTimer(precision=TimerPrecisions.MICROSECOND)
 
         camera.connect()  # Connects to the hardware of the camera.
@@ -938,39 +936,22 @@ class VideoSystem:
         return self._system_id
 
 
-def _process_frame_message_batch(log_path: Path, file_names: list[str], onset_us: np.uint64) -> list[np.uint64]:
-    """Processes the target batch of VideoSystem-generated messages stored in the .npz log file.
+def _process_frame_message_batch(log_path: Path, keys: list[str], onset_us: np.uint64) -> list[np.uint64]:
+    """Processes a batch of messages from a VideoSystem log archive to extract frame timestamps.
 
-    This worker function is used by the _extract_camera_timestamps() function to process multiple message batches in
-    parallel to speed up the overall camera timestamp data processing.
+    This worker function is designed for parallel execution via ProcessPoolExecutor. Each worker creates its own
+    LogArchiveReader instance with the pre-discovered onset timestamp to avoid redundant archive scanning.
 
     Args:
-        log_path: The path to the processed .npz log file.
-        file_names: The names of the individual message .npy files stored in the target archive.
-        onset_us: The onset of the frame data acquisition, in microseconds elapsed since UTC epoch onset.
+        log_path: The path to the .npz log archive file.
+        keys: The message keys to process in this batch.
+        onset_us: The pre-discovered onset timestamp in microseconds since epoch.
 
     Returns:
-        The list of frame acquisition timestamps for all frames whose messages have been processed as part of the
-        batch, stored as microseconds since UTC epoch onset.
+        The list of absolute frame acquisition timestamps in microseconds since UTC epoch.
     """
-    # Opens the processed log archive using memory mapping. If frame processing is performed in parallel, all processes
-    # interact with the archive concurrently.
-    with np.load(log_path, allow_pickle=False, fix_imports=False, mmap_mode="r") as archive:
-        frame_timestamps = []
-
-        # Loops over the batch of frame messages and extracts frame acquisition timestamps.
-        for item in file_names:
-            message = archive[item]
-
-            # Frame timestamp messages do not have a payload, they only contain the source ID and the acquisition
-            # timestamp. This gives them the length of 9 bytes.
-            if len(message) == _FRAME_TIMESTAMP_LOG_MESSAGE_SIZE:
-                # Extracts the number of microseconds elapsed since acquisition onset and uses it to calculate the
-                # global timestamp for the message, in microseconds since UTC epoch onset.
-                elapsed_microseconds = message[1:9].view(np.uint64).item()
-                frame_timestamps.append(onset_us + elapsed_microseconds)
-
-    return frame_timestamps
+    reader = LogArchiveReader(archive_path=log_path, onset_us=onset_us)
+    return [msg.timestamp_us for msg in reader.iter_messages(keys=keys) if msg.payload.size == 0]
 
 
 def extract_logged_camera_timestamps(
@@ -1004,7 +985,7 @@ def extract_logged_camera_timestamps(
     Raises:
         ValueError: If the target .npz archive does not exist.
     """
-    # Ensures that the target .npz log archive exists.
+    # Validates the archive path. LogArchiveReader checks existence, but not the .npz suffix or file type.
     if not log_path.exists() or log_path.suffix != ".npz" or not log_path.is_file():
         error_message = (
             f"Unable to extract camera frame timestamp data from the log file {log_path}, as it does not exist or does "
@@ -1012,70 +993,44 @@ def extract_logged_camera_timestamps(
         )
         console.error(message=error_message, error=ValueError)
 
-    # Memory-maps the processed archive to conserve RAM. The first processing pass is designed to find the onset
-    # timestamp value.
-    with np.load(log_path, allow_pickle=False, fix_imports=False, mmap_mode="r") as archive:
-        # Locates the logging onset timestamp. The onset is used to convert the relative timestamps for logged frame
-        # data into absolute UTC timestamps. Originally, all timestamps other than onset are stored as elapsed time in
-        # microseconds relative to the onset timestamp.
-        onset_us = np.uint64(0)
-        timestamp_offset = 0
-        message_list = list(archive.files)
-        for number, item in enumerate(message_list):
-            message: NDArray[np.uint8] = archive[item]  # Extracts message payload from the compressed .npy file
+    # Creates a reader for the target archive. The reader handles onset timestamp discovery and message key management.
+    reader = LogArchiveReader(archive_path=log_path)
 
-            # Recovers the uint64 timestamp value from each message. The timestamp occupies 8 bytes of each logged
-            # message starting at index 1. If the timestamp value is 0, the message contains the onset timestamp value
-            # stored as an 8-byte payload. Index 0 stores the source ID (uint8 value).
-            timestamp_value = message[1:9].view(np.uint64).item()
-            if timestamp_value == 0:
-                # Extracts the byte-serialized UTC timestamp stored as microseconds since epoch onset.
-                onset_us = np.uint64(message[9:].view(np.int64).item())
-
-                # Breaks the loop once the onset is found. Generally, the onset is expected to be found very early into
-                # the loop.
-                timestamp_offset = number  # Records the item number at which the onset value was found.
-                break
-
-    # Builds the list of files to process after discovering the timestamp (the list of remaining messages)
-    messages_to_process = message_list[timestamp_offset + 1 :]
-
-    # If there are no leftover messages to process, return an empty tuple
-    if not messages_to_process:
+    # If there are no data messages in the archive, returns early.
+    if reader.message_count == 0:
         return ()
 
-    # Small archives are processed sequentially to avoid the unnecessary overhead of setting up the multiprocessing
-    # runtime. This is also done for large files if the user explicitly requests to use a single worker process.
-    if n_workers == 1 or len(messages_to_process) < _MINIMUM_LOG_SIZE_FOR_PARALLELIZATION:
-        return tuple(_process_frame_message_batch(log_path, messages_to_process, onset_us))
+    # Small archives or explicit single-worker requests are processed sequentially to avoid multiprocessing overhead.
+    if n_workers == 1 or reader.message_count < _PARALLEL_PROCESSING_THRESHOLD:
+        return tuple(msg.timestamp_us for msg in reader.iter_messages() if msg.payload.size == 0)
 
-    # If the user enabled using all available cores, configures the runtime to use all available CPUs
-    if n_workers < 0:
-        n_workers = cpu_count()
+    # Resolves the number of workers and generates batches optimized for parallel processing. The batch_multiplier of 4
+    # creates (workers * 4) batches for over-batching, which improves load distribution when processing times vary.
+    n_workers = resolve_worker_count(requested_workers=n_workers)
+    batches = reader.get_batches(workers=n_workers, batch_multiplier=4)
 
-    # Creates batches of messages to process during runtime. Uses a fairly high batch multiplier to create many smaller
-    # batches, which leads to a measurable increase in the processing speed, especially for large archives. The optimal
-    # multiplier value (4) was determined experimentally.
-    batches = []
-    batch_indices = []  # Keeps track of batch order
-    for i, batch in enumerate(chunk_iterable(messages_to_process, n_workers * 4)):
-        if batch:
-            batches.append((log_path, list(batch), onset_us))
-            batch_indices.append(i)
+    if not batches:
+        return ()
+
+    # Passes the pre-discovered onset timestamp to worker processes so each can construct a lightweight reader that
+    # skips redundant onset scanning.
+    onset_us = reader.onset_timestamp_us
 
     # Processes batches using ProcessPoolExecutor
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         # Submits all tasks
         future_to_index = {
-            executor.submit(_process_frame_message_batch, *batch_args): idx
-            for idx, batch_args in zip(batch_indices, batches, strict=False)
+            executor.submit(_process_frame_message_batch, log_path, batch_keys, onset_us): idx
+            for idx, batch_keys in enumerate(batches)
         }
 
         # Collects results while maintaining frame order. This also propagates processing errors to the caller process.
         results: list[list[np.uint64] | None] = [None] * len(batches)
 
         # Creates a progress bar for batch processing
-        with tqdm(total=len(batches), desc="Extracting camera frame timestamps", unit="batch") as pbar:
+        with console.progress(
+            total=len(batches), description="Extracting camera frame timestamps", unit="batch"
+        ) as pbar:
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()
                 pbar.update(1)  # Updates the progress bar after each batch completes

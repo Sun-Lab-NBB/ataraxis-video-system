@@ -153,7 +153,7 @@ def start_video_session(
         monochrome: Determines whether to capture in grayscale. Defaults to False (color).
         gpu_index: The GPU index for hardware encoding, or -1 for CPU encoding. Defaults to -1.
         display_frame_rate: The rate at which to display acquired frames in a preview window. Defaults to 25 fps.
-            Set to None to disable frame display. The display rate cannot exceed the acquisition frame rate.
+            Set to 'None' to disable frame display. The display rate cannot exceed the acquisition frame rate.
             Note that frame display is not supported on macOS.
     """
     global _active_session, _active_logger
