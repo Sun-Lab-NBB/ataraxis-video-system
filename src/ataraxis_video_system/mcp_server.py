@@ -28,8 +28,8 @@ from .configuration import (
     enumerate_genicam_nodes,
 )
 
-mcp = FastMCP(name="ataraxis-video-system", json_response=True)
-"""Initializes the MCP server instance."""
+mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)
+"""Stores the MCP server instance used to expose tools to AI agents."""
 
 _active_session: VideoSystem | None = None
 """Stores the currently active VideoSystem instance, or None when no session is running."""
@@ -336,14 +336,14 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:
         camera.connect()
 
         if node_name:
-            return format_genicam_node(camera.node_map, node_name)
+            return format_genicam_node(node_map=camera.node_map, name=node_name)
 
         node_map = camera.node_map
         names = enumerate_genicam_nodes(node_map)
         lines = [f"Found {len(names)} writable GenICam nodes:"]
         for name in names:
             try:
-                info = read_node_info(node_map, name)
+                info = read_node_info(node_map=node_map, name=name)
                 lines.append(f"  {info.name} = {info.value}")
             except Exception:
                 lines.append(f"  {name} = <unreadable>")
@@ -371,7 +371,7 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
-        camera.set_node_value(node_name, value)
+        camera.set_node_value(name=node_name, value=value)
     except Exception as e:
         return f"Error: {e}"
     else:
