@@ -21,7 +21,7 @@ maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
 ]
 
-keywords = ["OpenCV", "FFMPEG", "GeniCam", "video recording", "camera interface", "video transcoding", "ataraxis"]
+keywords = ["OpenCV", "FFMPEG", "GeniCam", "video recording", "camera interface", "ataraxis"]
 
 classifiers = [
     # Development status

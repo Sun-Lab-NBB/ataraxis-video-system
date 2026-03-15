@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "ataraxis-video-system": {
-      "command": "axvs",
-      "args": ["mcp"]
-    }
-  }
-}
