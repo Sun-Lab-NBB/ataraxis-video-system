@@ -636,7 +636,7 @@ class HarvestersCamera:
             ConnectionError: If the instance is not connected to the camera hardware.
             ValueError: If the node is not a readable value node.
         """
-        return read_genicam_node(self.node_map, name)
+        return read_genicam_node(node_map=self.node_map, name=name)
 
     def get_node_description(self, name: str) -> str:
         """Reads a single readable value node from the connected camera and returns a formatted description string.
@@ -651,7 +651,7 @@ class HarvestersCamera:
             ConnectionError: If the instance is not connected to the camera hardware.
             ValueError: If the node is not a readable value node.
         """
-        return format_genicam_node(self.node_map, name)
+        return format_genicam_node(node_map=self.node_map, name=name)
 
     def set_node_value(self, name: str, value: str) -> None:
         """Sets the value of a single writable (ReadWrite) GenICam feature node on the connected camera.
@@ -665,7 +665,7 @@ class HarvestersCamera:
             ValueError: If the named node does not have ReadWrite access or the value cannot be coerced.
             RuntimeError: If the write operation fails.
         """
-        write_genicam_node(self.node_map, name, value)
+        write_genicam_node(node_map=self.node_map, name=name, value=value)
 
     def get_configuration(self) -> GenicamConfiguration:
         """Enumerates all ReadWrite GenICam nodes on the connected camera and returns the configuration.
@@ -683,7 +683,7 @@ class HarvestersCamera:
         nodes: list[GenicamNodeInfo] = []
         for name in node_names:
             with suppress(Exception):
-                nodes.append(read_genicam_node(camera_node_map, name))
+                nodes.append(read_genicam_node(node_map=camera_node_map, name=name))
 
         return GenicamConfiguration(
             camera_model=self._model,
@@ -703,7 +703,13 @@ class HarvestersCamera:
             ValueError: If the camera identity mismatches (strict mode) or any node is missing or not writable.
             RuntimeError: If any node write operation fails.
         """
-        apply_genicam_configuration(self.node_map, config, self._model, self._serial_number, strict=strict_identity)
+        apply_genicam_configuration(
+            node_map=self.node_map,
+            config=config,
+            current_model=self._model,
+            current_serial=self._serial_number,
+            strict=strict_identity,
+        )
 
     def grab_frame(self) -> NDArray[np.integer[Any]]:
         """Grabs the first available frame from the managed camera's acquisition buffer.

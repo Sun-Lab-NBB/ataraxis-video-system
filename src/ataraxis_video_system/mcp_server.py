@@ -28,8 +28,8 @@ from .configuration import (
     enumerate_genicam_nodes,
 )
 
-mcp = FastMCP(name="ataraxis-video-system", json_response=True)
-"""Initializes the MCP server instance."""
+mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)
+"""Stores the MCP server instance used to expose tools to AI agents."""
 
 _active_session: VideoSystem | None = None
 """Stores the currently active VideoSystem instance, or None when no session is running."""
@@ -378,7 +378,7 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pra
         # Single-node mode: returns a detailed formatted description including the node's type, current value,
         # valid range or enumeration entries, and access mode.
         if node_name:
-            return format_genicam_node(camera.node_map, node_name)
+            return format_genicam_node(node_map=camera.node_map, name=node_name)
 
         # All-nodes mode: enumerates every writable node and reads its current value. Nodes that raise exceptions
         # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
@@ -388,7 +388,7 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pra
         lines = [f"Found {len(names)} writable GenICam nodes:"]
         for name in names:
             try:
-                info = read_node_info(node_map, name)
+                info = read_node_info(node_map=node_map, name=name)
                 lines.append(f"  {info.name} = {info.value}")
             except Exception:
                 lines.append(f"  {name} = <unreadable>")
@@ -419,7 +419,7 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  #
         # Connects to the camera and delegates value conversion and writing to the camera's set_node_value method,
         # which inspects the node's type and casts the string value to int, float, bool, or enum as needed.
         camera.connect()
-        camera.set_node_value(node_name, value)
+        camera.set_node_value(name=node_name, value=value)
     except Exception as e:
         return f"Error: {e}"
     else:

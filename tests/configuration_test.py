@@ -4,8 +4,8 @@ import pytest
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import (
-    CameraInterfaces,
     GenicamNodeInfo,
+    CameraInterfaces,
     GenicamConfiguration,
     discover_camera_ids,
 )
@@ -121,9 +121,9 @@ def test_harvesters_model_serial_connected(has_harvesters) -> None:
     camera.connect()
     try:
         assert isinstance(camera.model, str)
-        assert len(camera.model) > 0
+        assert camera.model
         assert isinstance(camera.serial_number, str)
-        assert len(camera.serial_number) > 0
+        assert camera.serial_number
     finally:
         camera.disconnect()
 
@@ -193,9 +193,9 @@ def test_harvesters_get_configuration(has_harvesters) -> None:
     try:
         config = camera.get_configuration()
         assert isinstance(config, GenicamConfiguration)
-        assert len(config.camera_model) > 0
-        assert len(config.camera_serial_number) > 0
-        assert len(config.nodes) > 0
+        assert config.camera_model
+        assert config.camera_serial_number
+        assert config.nodes
         assert all(isinstance(node, GenicamNodeInfo) for node in config.nodes)
     finally:
         camera.disconnect()

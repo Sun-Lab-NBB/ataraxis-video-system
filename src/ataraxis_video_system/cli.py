@@ -386,7 +386,7 @@ def configure_group() -> None:  # pragma: no cover
     "--node-name",
     type=str,
     default="",
-    help="The name of a specific GenICam node to read. If not provided, the itnerface lists all available nodes.",
+    help="The name of a specific GenICam node to read. If not provided, the interface lists all available nodes.",
 )
 def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no cover
     """Reads GenICam node information from a connected Harvesters camera.
@@ -399,7 +399,7 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
         camera.connect()
 
         if node_name:
-            description = format_genicam_node(camera.node_map, node_name)
+            description = format_genicam_node(node_map=camera.node_map, name=node_name)
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
         else:
             node_map = camera.node_map
@@ -407,7 +407,7 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
                 try:
-                    info = read_genicam_node(node_map, name)
+                    info = read_genicam_node(node_map=node_map, name=name)
                     console.echo(message=f"  {info.name} = {info.value}")
                 except Exception:
                     console.echo(message=f"  {name} = <unreadable>")
@@ -447,7 +447,7 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
-        camera.set_node_value(node_name, value)
+        camera.set_node_value(name=node_name, value=value)
         console.echo(message=f"Node '{node_name}' set to {value}.", level=LogLevel.SUCCESS)
     finally:
         camera.disconnect()
