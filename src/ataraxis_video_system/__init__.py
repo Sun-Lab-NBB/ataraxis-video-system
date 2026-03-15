@@ -34,11 +34,14 @@ from .saver import (
 )
 from .camera import CameraInterfaces, CameraInformation, add_cti_file, check_cti_file, discover_camera_ids
 from .video_system import VideoSystem, extract_logged_camera_timestamps
+from .configuration import GenicamNodeInfo, GenicamConfiguration
 
 __all__ = [
     "CameraInformation",
     "CameraInterfaces",
     "EncoderSpeedPresets",
+    "GenicamConfiguration",
+    "GenicamNodeInfo",
     "InputPixelFormats",
     "OutputPixelFormats",
     "VideoEncoders",

@@ -14,9 +14,21 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )  # pragma: no cover
-from .camera import CameraInterfaces, add_cti_file, check_cti_file, discover_camera_ids  # pragma: no cover
+from .camera import (
+    CameraInterfaces,
+    HarvestersCamera,
+    add_cti_file,
+    check_cti_file,
+    discover_camera_ids,
+)  # pragma: no cover
 from .mcp_server import run_server as run_mcp  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
+from .configuration import (
+    GenicamConfiguration,
+    read_genicam_node,
+    format_genicam_node,
+    enumerate_genicam_nodes,
+)  # pragma: no cover
 
 # Enables console output.
 console.enable()  # pragma: no cover
@@ -344,3 +356,164 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # p
     """
     console.echo(message=f"Starting AXVS MCP server with {transport} transport...", level=LogLevel.INFO)
     run_mcp(transport=transport)
+
+
+@axvs_cli.group("configuration")
+def configuration_group() -> None:  # pragma: no cover
+    """GenICam camera configuration commands for Harvesters cameras."""
+
+
+@configuration_group.command("read")
+@click.option(
+    "-c",
+    "--camera-index",
+    type=int,
+    default=0,
+    show_default=True,
+    help="The index of the Harvesters camera to read the configuration from.",
+)
+@click.option(
+    "-n",
+    "--node-name",
+    type=str,
+    default="",
+    help="The name of a specific GenICam node to read. If not provided, all nodes are listed.",
+)
+def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no cover
+    """Reads GenICam node information from a connected Harvesters camera.
+
+    If a node name is provided, displays detailed information about that specific node. Otherwise, lists all
+    available nodes with their current values.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+
+        if node_name:
+            description = format_genicam_node(camera.node_map, node_name)
+            console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
+        else:
+            node_map = camera.node_map
+            names = enumerate_genicam_nodes(node_map)
+            console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
+            for name in names:
+                try:
+                    info = read_genicam_node(node_map, name)
+                    console.echo(message=f"  {info.name} = {info.value}")
+                except Exception:
+                    console.echo(message=f"  {name} = <unreadable>")
+    finally:
+        camera.disconnect()
+
+
+@configuration_group.command("write")
+@click.option(
+    "-c",
+    "--camera-index",
+    type=int,
+    default=0,
+    show_default=True,
+    help="The index of the Harvesters camera to write the configuration to.",
+)
+@click.option(
+    "-n",
+    "--node-name",
+    type=str,
+    required=True,
+    help="The name of the GenICam node to write.",
+)
+@click.option(
+    "-v",
+    "--value",
+    type=str,
+    required=True,
+    help="The value to write to the node. Automatically converted to the appropriate type.",
+)
+def configuration_write(camera_index: int, node_name: str, value: str) -> None:  # pragma: no cover
+    """Writes a value to a GenICam node on a connected Harvesters camera.
+
+    The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
+    based on the node's type.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        camera.set_node_value(node_name, value)
+        console.echo(message=f"Node '{node_name}' set to {value}.", level=LogLevel.SUCCESS)
+    finally:
+        camera.disconnect()
+
+
+@configuration_group.command("dump")
+@click.option(
+    "-c",
+    "--camera-index",
+    type=int,
+    default=0,
+    show_default=True,
+    help="The index of the Harvesters camera to dump the configuration from.",
+)
+@click.option(
+    "-o",
+    "--output-file",
+    required=True,
+    type=click.Path(file_okay=True, dir_okay=False, path_type=Path),
+    help="The path to the output YAML file to write the configuration to.",
+)
+def configuration_dump(camera_index: int, output_file: Path) -> None:  # pragma: no cover
+    """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
+
+    The output YAML includes all readable nodes with their current values, valid ranges, and enumeration entries,
+    as well as the camera model and serial number for identity validation.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        config = camera.get_configuration()
+        config.to_yaml(file_path=output_file)
+        console.echo(
+            message=f"Configuration saved: {len(config.nodes)} nodes written to {output_file}.",
+            level=LogLevel.SUCCESS,
+        )
+    finally:
+        camera.disconnect()
+
+
+@configuration_group.command("load")
+@click.option(
+    "-c",
+    "--camera-index",
+    type=int,
+    default=0,
+    show_default=True,
+    help="The index of the Harvesters camera to load the configuration onto.",
+)
+@click.option(
+    "-f",
+    "--config-file",
+    required=True,
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path),
+    help="The path to the YAML configuration file to load.",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="If set, aborts the operation when a camera identity mismatch is detected between the configuration file "
+    "and the connected camera.",
+)
+def configuration_load(camera_index: int, config_file: Path, *, strict: bool) -> None:  # pragma: no cover
+    """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
+
+    Applies all writable nodes from the configuration file to the camera. Optionally validates that the camera
+    model and serial number match the configuration file.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        config = GenicamConfiguration.from_yaml(file_path=config_file)
+        camera.apply_configuration(config, strict_identity=strict)
+        console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
+    finally:
+        camera.disconnect()
