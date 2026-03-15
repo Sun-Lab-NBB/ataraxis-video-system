@@ -115,7 +115,7 @@ def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
         # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
         try:
             name: str = node.node.name
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: S112  # pragma: no cover
             continue
 
         # Skips already-visited nodes to avoid cycles in the category tree.
@@ -126,7 +126,7 @@ def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
         # Resolves the node's principal interface type to determine how to handle it.
         try:
             type_code = int(node.node.principal_interface_type)
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: S112  # pragma: no cover
             continue
 
         # Descends into Category nodes by pushing their children onto the stack.
@@ -165,7 +165,7 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
 
     # Rejects nodes that are not readable value nodes.
     type_code = int(raw_node.principal_interface_type)
-    if type_code not in _VALUE_NODE_TYPES:
+    if type_code not in _VALUE_NODE_TYPES:  # pragma: no cover
         message = (
             f"Unable to read GenICam node '{name}'. The node must be a value type (Integer, Float, Boolean, "
             f"String, or Enumeration), but got type code {type_code}."
@@ -173,7 +173,7 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
         console.error(message=message, error=ValueError)
 
     access_code = int(raw_node.get_access_mode())
-    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
+    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):  # pragma: no cover
         message = (
             f"Unable to read GenICam node '{name}'. The node must have ReadWrite or ReadOnly access, "
             f"but got access code {access_code}."
@@ -217,14 +217,14 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
     access_code = int(raw_node.get_access_mode())
 
     # Rejects nodes that are not readable value nodes.
-    if type_code not in _VALUE_NODE_TYPES:
+    if type_code not in _VALUE_NODE_TYPES:  # pragma: no cover
         message = (
             f"Unable to format GenICam node '{name}'. The node must be a value type (Integer, Float, Boolean, "
             f"String, or Enumeration), but got type code {type_code}."
         )
         console.error(message=message, error=ValueError)
 
-    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
+    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):  # pragma: no cover
         message = (
             f"Unable to format GenICam node '{name}'. The node must have ReadWrite or ReadOnly access, "
             f"but got access code {access_code}."
@@ -299,7 +299,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
 
     # Rejects nodes that are not writable.
     access_code = int(feature.node.get_access_mode())
-    if access_code != _AccessMode.READ_WRITE:
+    if access_code != _AccessMode.READ_WRITE:  # pragma: no cover
         message = (
             f"Unable to write to GenICam node '{name}'. The node must have ReadWrite access, "
             f"but got access code {access_code}."
@@ -320,7 +320,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
 
     try:
         feature.value = typed_value
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         message = f"Unable to write value '{typed_value}' to GenICam node '{name}': {e}"
         console.error(message=message, error=RuntimeError)
 
@@ -375,7 +375,7 @@ def apply_genicam_configuration(
             console.error(message=message, error=ValueError)
 
         access_code = int(getattr(node_map, node_info.name).node.get_access_mode())
-        if access_code != _AccessMode.READ_WRITE:
+        if access_code != _AccessMode.READ_WRITE:  # pragma: no cover
             message = (
                 f"Unable to apply GenICam configuration. The node '{node_info.name}' must have ReadWrite access, "
                 f"but got access code {access_code}."
@@ -386,6 +386,6 @@ def apply_genicam_configuration(
     for node_info in config.nodes:
         try:
             getattr(node_map, node_info.name).value = node_info.value
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             message = f"Unable to apply GenICam configuration. Failed to write node '{node_info.name}': {e}"
             console.error(message=message, error=RuntimeError)
