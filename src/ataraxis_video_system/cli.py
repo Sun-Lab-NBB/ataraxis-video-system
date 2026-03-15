@@ -44,7 +44,12 @@ def axvs_cli() -> None:  # pragma: no cover
     """
 
 
-@axvs_cli.command("cti")
+@axvs_cli.group("cti")
+def cti_group() -> None:  # pragma: no cover
+    """Allows working with the GenTL Producer interface (.cti) files."""
+
+
+@cti_group.command("set")
 @click.option(
     "-f",
     "--file-path",
@@ -69,7 +74,7 @@ def set_cti_file(file_path: Path) -> None:  # pragma: no cover
     console.echo(message=f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
 
 
-@axvs_cli.command("cti-check")
+@cti_group.command("check")
 def check_cti_status() -> None:  # pragma: no cover
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
@@ -84,17 +89,21 @@ def check_cti_status() -> None:  # pragma: no cover
     else:
         console.echo(
             message=(
-                "AXVS CTI file: Not configured or invalid. Use the 'axvs cti -f <path>' command to configure the "
+                "AXVS CTI file: Not configured or invalid. Use the 'axvs cti set -f <path>' command to configure the "
                 "library to use a GenTL Producer interface (.cti) file."
             ),
             level=LogLevel.ERROR,
         )
 
 
-@axvs_cli.command("id")
-def list_camera_indices() -> None:  # pragma: no cover
-    """Discovers all cameras compatible with the Opencv and Harvesters interfaces and prints their identification
-    information.
+@axvs_cli.group("check")
+def check_group() -> None:  # pragma: no cover
+    """Allows discovering compatible camera devices and verifying host-system compatibility."""
+
+
+@check_group.command("devices")
+def check_devices() -> None:  # pragma: no cover
+    """Discovers all cameras compatible with the library and prints their identification information.
 
     This command is primarily intended to be used during the initial system configuration to determine the positional
     indices of each camera in the list of all cameras discoverable by each supported interface. The discovered indices
@@ -120,10 +129,10 @@ def list_camera_indices() -> None:  # pragma: no cover
             level=LogLevel.WARNING,
         )
         console.echo(message="Available OpenCV cameras:", level=LogLevel.SUCCESS)
-        for num, camera_data in enumerate(opencv_cameras, start=1):
+        for number, camera_data in enumerate(opencv_cameras, start=1):
             console.echo(
                 message=(
-                    f"OpenCV camera {num}: index={camera_data.camera_index}, "
+                    f"OpenCV camera {number}: index={camera_data.camera_index}, "
                     f"frame_height={camera_data.frame_height} pixels, frame_width={camera_data.frame_width} pixels, "
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
                 )
@@ -136,10 +145,10 @@ def list_camera_indices() -> None:  # pragma: no cover
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to
         # map discovered indices to physical hardware.
         console.echo(message="Available Harvesters cameras:", level=LogLevel.SUCCESS)
-        for num, camera_data in enumerate(harvesters_cameras, start=1):
+        for number, camera_data in enumerate(harvesters_cameras, start=1):
             console.echo(
                 message=(
-                    f"Harvesters camera {num}: index={camera_data.camera_index}, model={camera_data.model}, "
+                    f"Harvesters camera {number}: index={camera_data.camera_index}, model={camera_data.model}, "
                     f"serial_code={camera_data.serial_number}, frame_height={camera_data.frame_height} pixels, "
                     f"frame_width={camera_data.frame_width} pixels, "
                     f"frame_rate={camera_data.acquisition_frame_rate} frames / second."
@@ -147,8 +156,8 @@ def list_camera_indices() -> None:  # pragma: no cover
             )
 
 
-@axvs_cli.command("check")
-def check_requirements() -> None:  # pragma: no cover
+@check_group.command("compatibility")
+def check_compatibility() -> None:  # pragma: no cover
     """Checks whether the host system meets the requirements for CPU and (optionally) GPU video encoding.
 
     This command allows checking whether the local system is set up correctly to support saving acquired camera frames
@@ -358,12 +367,12 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # p
     run_mcp(transport=transport)
 
 
-@axvs_cli.group("configuration")
-def configuration_group() -> None:  # pragma: no cover
-    """GenICam camera configuration commands for Harvesters cameras."""
+@axvs_cli.group("configure")
+def configure_group() -> None:  # pragma: no cover
+    """Allows working with the configuration of the GenTL- (Harvesters)-compatible cameras."""
 
 
-@configuration_group.command("read")
+@configure_group.command("read")
 @click.option(
     "-c",
     "--camera-index",
@@ -406,7 +415,7 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
         camera.disconnect()
 
 
-@configuration_group.command("write")
+@configure_group.command("write")
 @click.option(
     "-c",
     "--camera-index",
@@ -427,7 +436,7 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
     "--value",
     type=str,
     required=True,
-    help="The value to write to the node. Automatically converted to the appropriate type.",
+    help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
 def configuration_write(camera_index: int, node_name: str, value: str) -> None:  # pragma: no cover
     """Writes a value to a GenICam node on a connected Harvesters camera.
@@ -444,7 +453,7 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
         camera.disconnect()
 
 
-@configuration_group.command("dump")
+@configure_group.command("dump")
 @click.option(
     "-c",
     "--camera-index",
@@ -479,7 +488,7 @@ def configuration_dump(camera_index: int, output_file: Path) -> None:  # pragma:
         camera.disconnect()
 
 
-@configuration_group.command("load")
+@configure_group.command("load")
 @click.option(
     "-c",
     "--camera-index",

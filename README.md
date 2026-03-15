@@ -305,7 +305,7 @@ standard, which includes most GigE+ scientific and machine vision cameras.
 
 **Note!** Before using the library with a GeniCam camera, it must be provided with the path to the .cti GenTL Producer
 Interface file. Without an interface, the library is not able to interface with the GeniCam cameras. Use the 
-`axvs cti` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a 
+`axvs cti set` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a
 general .cti file, such as [mvImpactAcquire](#dependencies). This command only needs to be called once, as the library 
 remembers and reuses the provided .cti file for all future runtimes.
 

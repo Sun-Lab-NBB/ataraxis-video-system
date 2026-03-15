@@ -47,11 +47,15 @@ def list_cameras() -> str:
         frame rate. Harvesters cameras also include model and serial number. Returns a "No cameras discovered"
         message if no cameras are found.
     """
+    # Runs the discovery procedure across both OpenCV and Harvesters interfaces. OpenCV cameras are probed by
+    # iterating over positional indices, while Harvesters cameras are enumerated through the GenTL Producer.
     all_cameras = discover_camera_ids()
 
     if not all_cameras:
         return "No cameras discovered on the system."
 
+    # Formats each discovered camera as a human-readable summary line. Harvesters cameras include model and serial
+    # number because the GenTL interface exposes this metadata, whereas OpenCV does not.
     lines: list[str] = []
 
     for camera in all_cameras:
@@ -80,6 +84,8 @@ def get_cti_status() -> str:
         The configuration status and the path to the configured CTI file, or a "Not configured" message if no valid
         CTI file is set.
     """
+    # Reads the persisted CTI file path from the library's configuration storage and verifies that the file still
+    # exists on disk. Returns None if no path was previously set or the stored path no longer points to a valid file.
     cti_path = check_cti_file()
 
     if cti_path is not None:
@@ -103,6 +109,7 @@ def set_cti_file(file_path: str) -> str:
         A confirmation message with the configured CTI file path on success, or an error message describing the
         failure.
     """
+    # Validates that the provided path points to an existing file before attempting to persist it.
     path = Path(file_path)
 
     if not path.exists():
@@ -111,6 +118,8 @@ def set_cti_file(file_path: str) -> str:
     if not path.is_file():
         return f"Error: Path is not a file: {file_path}"
 
+    # Persists the CTI file path to the library's configuration storage so that it is reused across all future
+    # runtimes without needing to be re-specified.
     try:
         add_cti_file(cti_path=path)
     except Exception as e:
@@ -130,10 +139,14 @@ def check_runtime_requirements() -> str:
         A pipe-separated status line showing FFMPEG, GPU, and CTI availability, each marked as "OK", "Missing", or
         "None".
     """
+    # Probes the system for each runtime dependency independently. FFMPEG is required for any video encoding, GPU is
+    # optional (enables hardware-accelerated H.264/H.265 encoding via NVENC), and the CTI file is only needed for
+    # Harvesters camera discovery.
     ffmpeg_available = check_ffmpeg_availability()
     gpu_available = check_gpu_availability()
     cti_path = check_cti_file()
 
+    # Formats each check result as a short status token for compact display.
     ffmpeg_status = "OK" if ffmpeg_available else "Missing"
     gpu_status = "OK" if gpu_available else "None"
     cti_status = "OK" if cti_path is not None else "None"
@@ -183,15 +196,19 @@ def start_video_session(
     """
     global _active_session, _active_logger
 
+    # Enforces the single-session constraint. Only one VideoSystem can be active at a time because each session
+    # exclusively owns the camera device and its associated encoding pipeline.
     if _active_session is not None:
         return "Error: Session already active"
 
+    # Validates the output directory before allocating any resources.
     output_path = Path(output_directory)
     if not output_path.exists():
         return f"Error: Directory not found: {output_directory}"
     if not output_path.is_dir():
         return f"Error: Not a directory: {output_directory}"
 
+    # Maps the string interface name to the corresponding CameraInterfaces enum member.
     if interface.lower() == "mock":
         camera_interface = CameraInterfaces.MOCK
     elif interface.lower() == "harvesters":
@@ -200,9 +217,13 @@ def start_video_session(
         camera_interface = CameraInterfaces.OPENCV
 
     try:
+        # Initializes and starts the DataLogger first, as the VideoSystem depends on it for runtime event logging.
         _active_logger = DataLogger(output_directory=output_path, instance_name="mcp_video_session")
         _active_logger.start()
 
+        # Creates the VideoSystem with conservative encoding defaults (H.264, fast preset, YUV420) to maximize
+        # compatibility across hardware configurations. The system_id 112 distinguishes MCP-initiated sessions from
+        # CLI sessions (111) in log output.
         _active_session = VideoSystem(
             system_id=np.uint8(112),
             data_logger=_active_logger,
@@ -220,9 +241,13 @@ def start_video_session(
             output_pixel_format=OutputPixelFormats.YUV420,
             quantization_parameter=15,
         )
+
+        # Spawns camera acquisition and encoding child processes. After this call, frames are being acquired but
+        # not yet saved to disk (saving requires an explicit start_frame_saving call).
         _active_session.start()
 
     except Exception as e:
+        # Cleans up partially initialized resources on failure to avoid leaving orphaned processes or file handles.
         if _active_logger is not None:
             _active_logger.stop()
             _active_logger = None
@@ -247,12 +272,18 @@ def stop_video_session() -> str:
         return "Error: No active session"
 
     try:
+        # Stops the VideoSystem first, which terminates camera acquisition and flushes any buffered frames still in
+        # the encoding pipeline. This may block briefly while remaining frames are written to disk.
         _active_session.stop()
+
+        # Stops the DataLogger after the VideoSystem to ensure all runtime events are captured before the log is
+        # finalized.
         if _active_logger is not None:
             _active_logger.stop()
     except Exception as e:
         return f"Error: {e}"
     finally:
+        # Clears the module-level references regardless of success or failure to allow a new session to be started.
         _active_session = None
         _active_logger = None
 
@@ -271,6 +302,8 @@ def start_frame_saving() -> str:
     if _active_session is None:
         return "Error: No active session"
 
+    # Signals the VideoSystem's saver process to begin writing acquired frames to a new MP4 file. Frames acquired
+    # before this call are discarded; only frames captured after this point are saved.
     try:
         _active_session.start_frame_saving()
     except Exception as e:
@@ -291,6 +324,8 @@ def stop_frame_saving() -> str:
     if _active_session is None:
         return "Error: No active session"
 
+    # Signals the saver process to stop accepting new frames and finalize the current video file. The camera
+    # continues acquiring frames, so a subsequent start_frame_saving call will create a new video file.
     try:
         _active_session.stop_frame_saving()
     except Exception as e:
@@ -308,16 +343,19 @@ def get_session_status() -> str:
     Returns:
         The session status as "Inactive", "Running", or "Stopped".
     """
+    # No session object exists: either none was started or the previous session was fully torn down.
     if _active_session is None:
         return "Status: Inactive"
 
+    # A session object exists. The 'started' flag indicates whether its child processes are still running. A session
+    # that exists but is not started has been stopped and is awaiting cleanup.
     if _active_session.started:
         return "Status: Running"
     return "Status: Stopped"
 
 
 @mcp.tool()
-def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:
+def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pragma: no cover
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, returns detailed information about that specific node. If no node name is provided,
@@ -331,13 +369,20 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:
     Returns:
         Detailed node information for a single node, or a newline-separated summary of all nodes.
     """
+    # Opens a temporary connection to the camera. system_id=0 is a placeholder since we only need node map access,
+    # not a full VideoSystem lifecycle.
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
 
+        # Single-node mode: returns a detailed formatted description including the node's type, current value,
+        # valid range or enumeration entries, and access mode.
         if node_name:
             return format_genicam_node(node_map=camera.node_map, name=node_name)
 
+        # All-nodes mode: enumerates every writable node and reads its current value. Nodes that raise exceptions
+        # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
+        # rather than aborting the entire listing.
         node_map = camera.node_map
         names = enumerate_genicam_nodes(node_map)
         lines = [f"Found {len(names)} writable GenICam nodes:"]
@@ -351,11 +396,12 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:
     except Exception as e:
         return f"Error: {e}"
     finally:
+        # Always disconnects to release the GenTL handle, allowing other processes to access the camera.
         camera.disconnect()
 
 
 @mcp.tool()
-def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:
+def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  # pragma: no cover
     """Sets a GenICam node value on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type based on the node's type.
@@ -370,6 +416,8 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:
     """
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
+        # Connects to the camera and delegates value conversion and writing to the camera's set_node_value method,
+        # which inspects the node's type and casts the string value to int, float, bool, or enum as needed.
         camera.connect()
         camera.set_node_value(name=node_name, value=value)
     except Exception as e:
@@ -381,7 +429,7 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:
 
 
 @mcp.tool()
-def dump_genicam_config(camera_index: int, output_file: str) -> str:
+def dump_genicam_config(camera_index: int, output_file: str) -> str:  # pragma: no cover
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     Important:
@@ -398,7 +446,14 @@ def dump_genicam_config(camera_index: int, output_file: str) -> str:
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
+
+        # Reads every accessible node from the camera's GenICam node map and packages them into a
+        # GenicamConfiguration object that includes the camera's model, serial number, and per-node metadata
+        # (value, range, enum entries).
         config = camera.get_configuration()
+
+        # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
+        # of the same model.
         config.to_yaml(file_path=Path(output_file))
         return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
     except Exception as e:
@@ -408,7 +463,9 @@ def dump_genicam_config(camera_index: int, output_file: str) -> str:
 
 
 @mcp.tool()
-def load_genicam_config(camera_index: int, config_file: str, *, strict_identity: bool = False) -> str:
+def load_genicam_config(
+    camera_index: int, config_file: str, *, strict_identity: bool = False
+) -> str:  # pragma: no cover
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
     Important:
@@ -426,10 +483,15 @@ def load_genicam_config(camera_index: int, config_file: str, *, strict_identity:
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
+
+        # Validates the config file path before attempting deserialization.
         path = Path(config_file)
         if not path.exists():
             return f"Error: File not found at {config_file}"
 
+        # Deserializes the YAML configuration and applies each writable node value to the connected camera. When
+        # strict_identity is True, the camera model and serial number must match the values stored in the YAML
+        # file; otherwise, a mismatch produces a warning but proceeds with the write.
         config = GenicamConfiguration.from_yaml(file_path=path)
         camera.apply_configuration(config, strict_identity=strict_identity)
     except Exception as e:
@@ -447,4 +509,7 @@ def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") 
         transport: The transport protocol to use. Supported values are 'stdio' for standard input/output communication
             and 'streamable-http' for HTTP-based communication.
     """
+    # Delegates to the FastMCP run loop, which blocks until the transport connection is closed. For 'stdio' this
+    # means the server runs until the parent process closes stdin; for 'streamable-http' it runs an HTTP server
+    # that accepts connections until explicitly terminated.
     mcp.run(transport=transport)

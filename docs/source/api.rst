@@ -25,6 +25,14 @@ Saver
    :undoc-members:
    :show-inheritance:
 
+Configuration
+=============
+
+.. automodule:: ataraxis_video_system.configuration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Command Line Interfaces (CLIs)
 ==============================
 

@@ -334,7 +334,7 @@ class VideoSaver:
 
         # Starts the FFMPEG process using the command arguments constructed during initialization. Discards stdout
         # via DEVNULL since FFMPEG emits all diagnostics to stderr.
-        self._ffmpeg_process = subprocess.Popen(
+        self._ffmpeg_process = Popen(
             args=self._ffmpeg_command,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,

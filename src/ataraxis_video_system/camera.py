@@ -119,7 +119,8 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
         and physical cameras.
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
-        function or the 'axvs cti' CLI command. If no CTI file is configured, Harvesters camera discovery is skipped.
+        function or the 'axvs cti set' CLI command. If no CTI file is configured, Harvesters camera discovery is
+        skipped.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
@@ -1161,7 +1162,7 @@ def _get_cti_path() -> Path:
     if not cti_path_file.exists():
         message = (
             "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
-            "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti' CLI "
+            "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti set' CLI "
             "command."
         )
         console.error(message=message, error=FileNotFoundError)
