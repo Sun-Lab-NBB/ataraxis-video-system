@@ -19,8 +19,14 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
-from .camera import CameraInterfaces, add_cti_file, check_cti_file, discover_camera_ids
+from .camera import CameraInterfaces, HarvestersCamera, add_cti_file, check_cti_file, discover_camera_ids
 from .video_system import VideoSystem
+from .configuration import (
+    GenicamConfiguration,
+    read_genicam_node as read_node_info,
+    format_genicam_node,
+    enumerate_genicam_nodes,
+)
 
 mcp = FastMCP(name="ataraxis-video-system", json_response=True)
 """Initializes the MCP server instance."""
@@ -308,6 +314,130 @@ def get_session_status() -> str:
     if _active_session.started:
         return "Status: Running"
     return "Status: Stopped"
+
+
+@mcp.tool()
+def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:
+    """Reads GenICam node information from a connected Harvesters camera.
+
+    If a node name is provided, returns detailed information about that specific node. If no node name is provided,
+    lists all available nodes with their current values.
+
+    Args:
+        camera_index: The index of the Harvesters camera to read from.
+        node_name: The name of a specific GenICam node to read (e.g., "Width", "ExposureTime"). If empty, all nodes
+            are listed.
+
+    Returns:
+        Detailed node information for a single node, or a newline-separated summary of all nodes.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+
+        if node_name:
+            return format_genicam_node(camera.node_map, node_name)
+
+        node_map = camera.node_map
+        names = enumerate_genicam_nodes(node_map)
+        lines = [f"Found {len(names)} writable GenICam nodes:"]
+        for name in names:
+            try:
+                info = read_node_info(node_map, name)
+                lines.append(f"  {info.name} = {info.value}")
+            except Exception:
+                lines.append(f"  {name} = <unreadable>")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        camera.disconnect()
+
+
+@mcp.tool()
+def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:
+    """Sets a GenICam node value on a connected Harvesters camera.
+
+    The string value is automatically converted to the appropriate type based on the node's type.
+
+    Args:
+        camera_index: The index of the Harvesters camera to write to.
+        node_name: The name of the GenICam node to write (e.g., "Width", "ExposureTime").
+        value: The string value to write. Automatically converted to the node's native type.
+
+    Returns:
+        A confirmation with the node name and written value, or an error description.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        camera.set_node_value(node_name, value)
+    except Exception as e:
+        return f"Error: {e}"
+    else:
+        return f"Node '{node_name}' set to {value}"
+    finally:
+        camera.disconnect()
+
+
+@mcp.tool()
+def dump_genicam_config(camera_index: int, output_file: str) -> str:
+    """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
+
+    Important:
+        The AI agent calling this tool MUST ask the user to provide the output_file path before calling this tool.
+        Do not assume or guess the output file path.
+
+    Args:
+        camera_index: The index of the Harvesters camera to dump the configuration from.
+        output_file: The absolute path to the output YAML file. Must be provided by the user.
+
+    Returns:
+        A confirmation with the number of nodes saved, or an error description.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        config = camera.get_configuration()
+        config.to_yaml(file_path=Path(output_file))
+        return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        camera.disconnect()
+
+
+@mcp.tool()
+def load_genicam_config(camera_index: int, config_file: str, *, strict_identity: bool = False) -> str:
+    """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
+
+    Important:
+        The AI agent calling this tool MUST ask the user to provide the config_file path before calling this tool.
+        Do not assume or guess the configuration file path.
+
+    Args:
+        camera_index: The index of the Harvesters camera to load the configuration onto.
+        config_file: The absolute path to the YAML configuration file to load. Must be provided by the user.
+        strict_identity: Determines whether to abort on camera identity mismatch instead of warning.
+
+    Returns:
+        The number of nodes applied and any errors encountered, or an error description.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        path = Path(config_file)
+        if not path.exists():
+            return f"Error: File not found at {config_file}"
+
+        config = GenicamConfiguration.from_yaml(file_path=path)
+        camera.apply_configuration(config, strict_identity=strict_identity)
+    except Exception as e:
+        return f"Error: {e}"
+    else:
+        return "Configuration applied successfully"
+    finally:
+        camera.disconnect()
 
 
 def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:

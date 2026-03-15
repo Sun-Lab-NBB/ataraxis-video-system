@@ -10,11 +10,13 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import suppress, contextmanager
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from genicam.genapi import NodeMap  # type: ignore[import-untyped]
 
 import cv2
 import numpy as np
@@ -29,6 +31,15 @@ from harvesters.util.pfnc import (  # type: ignore[import-untyped]
 from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
 
 from .saver import InputPixelFormats
+from .configuration import (
+    GenicamNodeInfo,
+    GenicamConfiguration,
+    read_genicam_node,
+    write_genicam_node,
+    format_genicam_node,
+    enumerate_genicam_nodes,
+    apply_genicam_configuration,
+)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -480,6 +491,10 @@ class HarvestersCamera:
         # Tracks whether the acquired frames use a monochrome or a colored data format.
         self._color: bool = False
 
+        # Stores the camera model and serial number. Populated during connect(), reset during disconnect().
+        self._model: str = ""
+        self._serial_number: str = ""
+
     def __del__(self) -> None:
         """Releases the underlying ImageAcquirer object when the instance is garbage-collected."""
         self.disconnect()
@@ -509,6 +524,11 @@ class HarvestersCamera:
 
         # Initializes an ImageAcquirer camera interface object to interface with the camera's hardware.
         self._camera = self._harvester.create(search_key=self._camera_index)
+
+        # Reads the camera identity information from the device info list.
+        device_info = self._harvester.device_info_list[self._camera_index]
+        self._model = device_info.model
+        self._serial_number = device_info.serial_number
 
         # Overrides the requested camera acquisition parameters if necessary. Note, there is no guarantee that the
         # camera accepts the requested parameters.
@@ -543,6 +563,8 @@ class HarvestersCamera:
         self._camera = None
         self._harvester.reset()  # Resets and removes the Harvester object.
         self._harvester = None
+        self._model = ""
+        self._serial_number = ""
 
     @property
     def is_connected(self) -> bool:
@@ -577,6 +599,110 @@ class HarvestersCamera:
         if self._color:
             return InputPixelFormats.BGR
         return InputPixelFormats.MONOCHROME
+
+    @property
+    def model(self) -> str:
+        """Returns the model name of the connected camera, or an empty string if not connected."""
+        return self._model
+
+    @property
+    def serial_number(self) -> str:
+        """Returns the serial number of the connected camera, or an empty string if not connected."""
+        return self._serial_number
+
+    @property
+    def node_map(self) -> NodeMap:
+        """Returns the GenICam node map of the connected camera, or raises ``ConnectionError`` if not connected."""
+        if self._camera is None:
+            message = (
+                f"Unable to access the node map for VideoSystem with id {self._system_id}. The camera is not "
+                f"connected. Call the connect() method first."
+            )
+            console.error(message=message, error=ConnectionError)
+
+        return self._camera.remote_device.node_map
+
+    def get_node_info(self, name: str) -> GenicamNodeInfo:
+        """Reads a single readable value node from the connected camera and returns its name, value, and unit.
+
+        Args:
+            name: The feature name of the node to read (e.g., "Width", "ExposureTime").
+
+        Returns:
+            A ``GenicamNodeInfo`` instance containing the node's name, current value, and unit.
+
+        Raises:
+            ConnectionError: If the instance is not connected to the camera hardware.
+            ValueError: If the node is not a readable value node.
+        """
+        return read_genicam_node(self.node_map, name)
+
+    def get_node_description(self, name: str) -> str:
+        """Reads a single readable value node from the connected camera and returns a formatted description string.
+
+        Args:
+            name: The feature name of the node to read (e.g., "Width", "ExposureTime").
+
+        Returns:
+            A multi-line formatted string containing the node's full metadata.
+
+        Raises:
+            ConnectionError: If the instance is not connected to the camera hardware.
+            ValueError: If the node is not a readable value node.
+        """
+        return format_genicam_node(self.node_map, name)
+
+    def set_node_value(self, name: str, value: str) -> None:
+        """Sets the value of a single writable (ReadWrite) GenICam feature node on the connected camera.
+
+        Args:
+            name: The feature name of a writable node (e.g., "Width", "ExposureTime").
+            value: The string representation of the value to write. Coerced to the node's native type automatically.
+
+        Raises:
+            ConnectionError: If the instance is not connected to the camera hardware.
+            ValueError: If the named node does not have ReadWrite access or the value cannot be coerced.
+            RuntimeError: If the write operation fails.
+        """
+        write_genicam_node(self.node_map, name, value)
+
+    def get_configuration(self) -> GenicamConfiguration:
+        """Enumerates all ReadWrite GenICam nodes on the connected camera and returns the configuration.
+
+        Returns:
+            A ``GenicamConfiguration`` instance containing the camera identity, timestamp, and all ReadWrite node
+            values.
+
+        Raises:
+            ConnectionError: If the instance is not connected to the camera hardware.
+        """
+        camera_node_map = self.node_map
+        node_names = enumerate_genicam_nodes(camera_node_map)
+
+        nodes: list[GenicamNodeInfo] = []
+        for name in node_names:
+            with suppress(Exception):
+                nodes.append(read_genicam_node(camera_node_map, name))
+
+        return GenicamConfiguration(
+            camera_model=self._model,
+            camera_serial_number=self._serial_number,
+            nodes=nodes,
+        )
+
+    def apply_configuration(self, config: GenicamConfiguration, *, strict_identity: bool = False) -> None:
+        """Applies a ``GenicamConfiguration`` to the connected camera.
+
+        Args:
+            config: The configuration instance containing ReadWrite nodes to apply.
+            strict_identity: Determines whether to abort on camera identity mismatch instead of warning.
+
+        Raises:
+            ConnectionError: If the instance is not connected to the camera hardware.
+            ValueError: If the camera identity mismatches (strict mode) or any node is missing or not writable.
+            RuntimeError: If any node write operation fails.
+        """
+        apply_genicam_configuration(self.node_map, config, self._model, self._serial_number, strict=strict_identity)
 
     def grab_frame(self) -> NDArray[np.integer[Any]]:
         """Grabs the first available frame from the managed camera's acquisition buffer.
