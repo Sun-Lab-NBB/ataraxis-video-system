@@ -1031,15 +1031,19 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         working_ids: list[CameraInformation] = []
 
         # Iterates over IDs until it discovers 5 non-working IDs. Evaluates 100 IDs at maximum to prevent infinite
-        # execution.
+        # execution. Suppresses stderr to silence V4L2 ioctl warnings emitted by the kernel driver during device
+        # probing (e.g. 'ioctl(VIDIOC_QBUF): Bad file descriptor').
         for evaluated_id in range(100):
             try:
                 # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension
                 # data from the connected camera (if any was connected).
-                camera = cv2.VideoCapture(index=evaluated_id)
+                with _suppress_output():
+                    camera = cv2.VideoCapture(index=evaluated_id)
                 try:
                     # Appends the camera's index to the ID list if the camera can be connected and returns images.
-                    if camera.isOpened() and camera.read()[0]:
+                    with _suppress_output():
+                        is_opened = camera.isOpened() and camera.read()[0]
+                    if is_opened:
                         frame_width = int(camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
                         frame_height = int(camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
                         acquisition_rate = int(camera.get(propId=cv2.CAP_PROP_FPS))
@@ -1055,7 +1059,8 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                     else:
                         non_working_count += 1
                 finally:
-                    camera.release()  # Guarantees camera release even if an exception occurs.
+                    with _suppress_output():
+                        camera.release()  # Guarantees camera release even if an exception occurs.
 
             except Exception as e:
                 # Marks any ID that raises a runtime error as non-working and notifies the user.
@@ -1069,7 +1074,48 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
             if non_working_count >= _MAXIMUM_NON_WORKING_IDS:
                 break
 
-        return tuple(working_ids)  # Converts to tuple before returning to the caller.
+        # Deduplicates cameras that map to the same physical device. On Linux, V4L2 often creates consecutive
+        # device nodes per camera (e.g. /dev/video0 and /dev/video1 for one USB camera). To detect duplicates
+        # cross-platform, checks consecutive pairs with identical properties: holds one camera open and tests whether
+        # the next can simultaneously read frames. A physical camera can typically only stream to one VideoCapture
+        # instance at a time, so a failed read indicates a duplicate node.
+        unique_cameras: list[CameraInformation] = []
+        skip_next = False
+
+        for i, cam in enumerate(working_ids):
+            if skip_next:
+                skip_next = False
+                continue
+
+            unique_cameras.append(cam)
+
+            # Checks the next candidate only if it has identical properties (consecutive duplicate pattern).
+            if i + 1 < len(working_ids):
+                cam_next = working_ids[i + 1]
+                if (
+                    cam.frame_width == cam_next.frame_width
+                    and cam.frame_height == cam_next.frame_height
+                    and cam.acquisition_frame_rate == cam_next.acquisition_frame_rate
+                ):
+                    with _suppress_output():
+                        holder = cv2.VideoCapture(index=cam.camera_index)
+                    try:
+                        with _suppress_output():
+                            _ = holder.read()
+                            challenger = cv2.VideoCapture(index=cam_next.camera_index)
+                        try:
+                            with _suppress_output():
+                                can_read = challenger.isOpened() and challenger.read()[0]
+                            if not can_read:
+                                skip_next = True
+                        finally:
+                            with _suppress_output():
+                                challenger.release()
+                    finally:
+                        with _suppress_output():
+                            holder.release()
+
+        return tuple(unique_cameras)
 
     finally:
         # Restores the previous log level.

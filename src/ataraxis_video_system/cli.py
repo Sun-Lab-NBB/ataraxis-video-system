@@ -109,6 +109,9 @@ def check_devices() -> None:  # pragma: no cover
     indices of each camera in the list of all cameras discoverable by each supported interface. The discovered indices
     can then be used to initialize the VideoSystem instances to interface with the discovered cameras.
     """
+    # Notifies the user that discovery is in progress, as probing camera devices may take several seconds.
+    console.echo(message="Scanning for available camera devices, this may take a moment...", level=LogLevel.INFO)
+
     # Discovers all compatible cameras from both interfaces.
     all_cameras = discover_camera_ids()
 
