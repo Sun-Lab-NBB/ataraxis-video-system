@@ -3,36 +3,19 @@
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import (
-    GenicamNodeInfo,
-    CameraInterfaces,
-    GenicamConfiguration,
-    discover_camera_ids,
-)
+from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
 from ataraxis_video_system.camera import HarvestersCamera
 
 
-@pytest.fixture(scope="session")
-def has_harvesters():
-    """Checks for Harvesters camera availability in the test environment."""
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
-    except Exception:
-        return False
-
-
 def test_genicam_node_info_creation() -> None:
-    """Verifies creation of GenicamNodeInfo instances with and without a unit."""
-    node = GenicamNodeInfo(name="Width", value=1920, unit="px")
+    """Verifies creation of GenicamNodeInfo instances."""
+    node = GenicamNodeInfo(name="Width", value=1920)
     assert node.name == "Width"
     assert node.value == 1920
-    assert node.unit == "px"
 
-    node_no_unit = GenicamNodeInfo(name="Gain", value=1.5)
-    assert node_no_unit.name == "Gain"
-    assert node_no_unit.value == 1.5
-    assert node_no_unit.unit is None
+    node_float = GenicamNodeInfo(name="Gain", value=1.5)
+    assert node_float.name == "Gain"
+    assert node_float.value == 1.5
 
 
 def test_genicam_node_info_types() -> None:
@@ -46,9 +29,9 @@ def test_genicam_node_info_types() -> None:
 def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     """Verifies GenicamConfiguration serialization and deserialization via YAML."""
     nodes = [
-        GenicamNodeInfo(name="Width", value=1920, unit="px"),
+        GenicamNodeInfo(name="Width", value=1920),
         GenicamNodeInfo(name="Height", value=1080),
-        GenicamNodeInfo(name="Gain", value=2.5, unit="dB"),
+        GenicamNodeInfo(name="Gain", value=2.5),
         GenicamNodeInfo(name="ReverseX", value=False),
         GenicamNodeInfo(name="PixelFormat", value="Mono8"),
     ]
@@ -67,10 +50,8 @@ def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     assert len(loaded.nodes) == 5
     assert loaded.nodes[0].name == "Width"
     assert loaded.nodes[0].value == 1920
-    assert loaded.nodes[0].unit == "px"
     assert loaded.nodes[1].name == "Height"
     assert loaded.nodes[1].value == 1080
-    assert loaded.nodes[1].unit is None
     assert loaded.nodes[2].value == 2.5
     assert loaded.nodes[3].value is False
     assert loaded.nodes[4].value == "Mono8"

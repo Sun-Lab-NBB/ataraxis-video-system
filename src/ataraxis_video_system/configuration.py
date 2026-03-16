@@ -63,17 +63,105 @@ _VALUE_NODE_TYPES: frozenset[int] = frozenset(
 )
 """The GenICam node type codes that represent collectible leaf value nodes."""
 
+DEFAULT_BLACKLISTED_NODES: frozenset[str] = frozenset({"CustomerIDKey", "CustomerValueKey", "TestPattern"})
+"""Node names silently skipped during configuration enumeration and apply operations.
+
+Some vendor-specific nodes report ReadWrite access but reject writes at the hardware level, causing spurious
+errors. These nodes are excluded by default from all configuration operations. End users can override this set
+via the ``blacklisted_nodes`` parameter on ``enumerate_genicam_nodes`` and ``apply_genicam_configuration``.
+"""
+
+_APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
+    # Phase 1 — Unlock: disables auto-controls and centering that lock dependent nodes.
+    (
+        "CenterX",
+        "CenterY",
+        "ExposureAuto",
+        "GainAuto",
+        "BalanceWhiteAuto",
+        "BlackLevelAuto",
+    ),
+    # Phase 2 — Reset: zeroes offsets to maximize the available Width/Height range.
+    (
+        "OffsetX",
+        "OffsetY",
+    ),
+    # Phase 3 — Format: pixel format, binning, decimation, and reversal change WidthMax/HeightMax.
+    (
+        "PixelFormat",
+        "BinningHorizontal",
+        "BinningVertical",
+        "BinningHorizontalMode",
+        "BinningVerticalMode",
+        "DecimationHorizontal",
+        "DecimationVertical",
+        "DecimationHorizontalMode",
+        "DecimationVerticalMode",
+        "ReverseX",
+        "ReverseY",
+    ),
+    # Phase 4 — Dimensions: sets Width/Height within the range established by phases 2-3.
+    (
+        "Width",
+        "Height",
+    ),
+    # Phase 5 — Offsets: sets OffsetX/OffsetY now that Width/Height leave room for them.
+    (
+        "OffsetX",
+        "OffsetY",
+    ),
+    # Phase 6 — Timing: exposure constrains max frame rate, so exposure is written first.
+    (
+        "ExposureMode",
+        "AcquisitionFrameRateEnable",
+        "ExposureTime",
+        "AcquisitionFrameRate",
+    ),
+    # Phase 7 — Re-lock: re-enables auto-controls and centering if the target configuration uses them.
+    (
+        "CenterX",
+        "CenterY",
+        "ExposureAuto",
+        "GainAuto",
+        "BalanceWhiteAuto",
+        "BlackLevelAuto",
+    ),
+)
+"""SFNC-compliant node write ordering for ``apply_genicam_configuration``.
+
+GenICam nodes have dynamic constraints defined by the SFNC standard (e.g., ``OffsetX.Max = SensorWidth - Width``).
+Writing nodes in arbitrary order causes OutOfRangeException or AccessException errors. This tuple defines the
+phases in which nodes must be written to satisfy all known dependency chains. Nodes that appear in multiple phases
+(e.g., OffsetX in phases 2 and 5) are written with their reset value first, then their target value. Nodes not
+listed in any phase are written after all phases complete.
+"""
+
+_PHASE_RESET_VALUES: dict[str, int | float | bool | str] = {
+    "OffsetX": 0,
+    "OffsetY": 0,
+    "CenterX": False,
+    "CenterY": False,
+    "ExposureAuto": "Off",
+    "GainAuto": "Off",
+    "BalanceWhiteAuto": "Off",
+    "BlackLevelAuto": "Off",
+}
+"""Reset values for nodes in the unlock and reset phases.
+
+Nodes in phases 1-2 are written with these values (not their target values) to maximize the permissible range for
+subsequent phases. Their target values are applied in later phases (phase 5 for offsets, phase 7 for auto-controls
+and centering).
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class GenicamNodeInfo:
-    """Stores the name, value, and unit of a single GenICam feature node."""
+    """Stores the name and value of a single GenICam feature node."""
 
     name: str
     """The feature name of the node (e.g., "Width", "ExposureTime")."""
     value: int | float | str | bool
     """The current value of the node."""
-    unit: str | None = None
-    """The measurement unit for the node value (e.g., "us", "dB"), or None if no unit is defined."""
 
 
 @dataclass
@@ -88,16 +176,23 @@ class GenicamConfiguration(YamlConfig):
     """The list of ReadWrite GenICam nodes with their current values."""
 
 
-def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
+def enumerate_genicam_nodes(
+    node_map: NodeMap,
+    blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
+) -> list[str]:
     """Collects the names of all writable leaf value nodes by walking the GenICam category tree from the root.
 
     Notes:
         Uses an iterative stack-based traversal starting from ``node_map.Root``. Collects ReadWrite nodes of type
         Integer, Float, Enumeration, Boolean, and String, skipping all other nodes. All node accesses are wrapped
-        in try/except to gracefully handle locked or unavailable nodes.
+        in try/except to gracefully handle locked or unavailable nodes. Nodes whose names appear in
+        ``blacklisted_nodes`` are silently excluded.
 
     Args:
         node_map: The GenICam node map object.
+        blacklisted_nodes: A set of node names to exclude from enumeration. Defaults to
+            ``DEFAULT_BLACKLISTED_NODES``, which contains vendor-specific nodes known to report ReadWrite access
+            but reject writes at the hardware level.
 
     Returns:
         A sorted list of unique feature node names for all discovered writable leaf value nodes.
@@ -113,6 +208,7 @@ def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
         node = stack.pop()
 
         # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
+        # noinspection PyBroadException
         try:
             name: str = node.node.name
         except Exception:  # noqa: S112  # pragma: no cover
@@ -123,7 +219,12 @@ def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
             continue
         visited.add(name)
 
+        # Skips blacklisted nodes that are known to cause hardware-level write failures.
+        if name in blacklisted_nodes:
+            continue
+
         # Resolves the node's principal interface type to determine how to handle it.
+        # noinspection PyBroadException
         try:
             type_code = int(node.node.principal_interface_type)
         except Exception:  # noqa: S112  # pragma: no cover
@@ -146,14 +247,14 @@ def enumerate_genicam_nodes(node_map: NodeMap) -> list[str]:
 
 
 def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
-    """Reads a single readable value node from the GenICam node map and returns its name, value, and unit.
+    """Reads a single readable value node from the GenICam node map and returns its name and current value.
 
     Args:
         node_map: The GenICam node map object.
         name: The feature name of the node to read (e.g., "Width", "ExposureTime").
 
     Returns:
-        A ``GenicamNodeInfo`` instance containing the node's name, current value, and unit.
+        A ``GenicamNodeInfo`` instance containing the node's name and current value.
 
     Raises:
         AttributeError: If the named node does not exist on the node map.
@@ -180,17 +281,7 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
         )
         console.error(message=message, error=ValueError)
 
-    # Reads the current value. Guaranteed readable by the access mode guard.
-    value: int | float | str | bool = feature.value
-
-    # Attempts to read the unit string. Not all nodes define a unit, so failure is suppressed.
-    unit: str | None = None
-    with suppress(Exception):
-        raw_unit = str(feature.node.unit)
-        if raw_unit:
-            unit = raw_unit
-
-    return GenicamNodeInfo(name=name, value=value, unit=unit)
+    return GenicamNodeInfo(name=name, value=feature.value)
 
 
 def format_genicam_node(node_map: NodeMap, name: str) -> str:
@@ -202,7 +293,7 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
 
     Returns:
         A multi-line formatted string containing the node's name, type, value, access mode, description, numeric
-        range, enumeration entries, and unit.
+        range, and enumeration entries.
 
     Raises:
         AttributeError: If the named node does not exist on the node map.
@@ -332,11 +423,21 @@ def apply_genicam_configuration(
     current_serial: str,
     *,
     strict: bool = False,
+    blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
 ) -> None:
     """Applies the ReadWrite nodes from a ``GenicamConfiguration`` to the connected camera's node map.
 
-    First validates that the camera identity matches and that all nodes in the configuration exist on the device
-    and are writable. Then applies all node values. Aborts with an error if any validation or write step fails.
+    First validates that the camera identity matches and that all non-blacklisted nodes in the configuration exist
+    on the device and are writable. Then applies nodes in SFNC-compliant phase order to satisfy interdependent
+    constraints (e.g., Width/OffsetX, GainAuto/Gain, binning/dimensions).
+
+    Notes:
+        GenICam SFNC defines dynamic constraints between nodes: ``OffsetX.Max = SensorWidth - Width``, auto-controls
+        lock their manual counterparts, and binning changes ``WidthMax``/``HeightMax``. This function applies nodes
+        in a fixed phase order defined by ``_APPLY_PHASE_ORDER`` to satisfy all known dependency chains. Phases 1-2
+        write reset values (offsets to 0, auto-controls to Off) to unlock dependent nodes and maximize dimension
+        ranges. Phases 3-7 write target values in dependency order. Remaining nodes not covered by any phase are
+        written last.
 
     Args:
         node_map: The GenICam node map object.
@@ -344,11 +445,14 @@ def apply_genicam_configuration(
         current_model: The model name of the currently connected camera.
         current_serial: The serial number of the currently connected camera.
         strict: Determines whether to abort on camera identity mismatch instead of warning.
+        blacklisted_nodes: A set of node names to silently skip during validation and write operations. Defaults to
+            ``DEFAULT_BLACKLISTED_NODES``, which contains vendor-specific nodes known to report ReadWrite access
+            but reject writes at the hardware level.
 
     Raises:
-        ValueError: If ``strict`` is True and a camera identity mismatch is detected, or if any node in the
-            configuration is missing or not writable on the target device.
-        RuntimeError: If any node write operation fails.
+        ValueError: If ``strict`` is True and a camera identity mismatch is detected, or if any non-blacklisted
+            node in the configuration is missing or not writable on the target device.
+        RuntimeError: If any non-blacklisted node write operation fails.
     """
     # Checks camera identity against the configuration metadata.
     mismatches: list[str] = []
@@ -365,27 +469,73 @@ def apply_genicam_configuration(
         else:
             console.echo(message=message, level=LogLevel.WARNING)
 
-    # Validates that all configuration nodes exist on the device and are writable.
+    # Builds a lookup from node name to its target GenicamNodeInfo, filtering out blacklisted nodes.
+    node_lookup: dict[str, GenicamNodeInfo] = {}
     for node_info in config.nodes:
-        if not hasattr(node_map, node_info.name):
+        if node_info.name in blacklisted_nodes:
+            continue
+        node_lookup[node_info.name] = node_info
+
+    # Validates that all nodes in the lookup exist on the device and are writable.
+    for name in node_lookup:
+        if not hasattr(node_map, name):
             message = (
-                f"Unable to apply GenICam configuration. The node '{node_info.name}' does not exist on the "
-                f"connected camera."
+                f"Unable to apply GenICam configuration. The node '{name}' does not exist on the connected camera."
             )
             console.error(message=message, error=ValueError)
 
-        access_code = int(getattr(node_map, node_info.name).node.get_access_mode())
+        access_code = int(getattr(node_map, name).node.get_access_mode())
         if access_code != _AccessMode.READ_WRITE:  # pragma: no cover
             message = (
-                f"Unable to apply GenICam configuration. The node '{node_info.name}' must have ReadWrite access, "
+                f"Unable to apply GenICam configuration. The node '{name}' must have ReadWrite access, "
                 f"but got access code {access_code}."
             )
             console.error(message=message, error=ValueError)
 
-    # Applies all node values. Aborts on the first write failure.
-    for node_info in config.nodes:
+    # Tracks which nodes have been written so that remaining nodes can be applied after all phases.
+    written: set[str] = set()
+
+    # Applies nodes in SFNC-compliant phase order. Phases 1-2 use reset values from _PHASE_RESET_VALUES to unlock
+    # dependent nodes and maximize dimension ranges. Phases 3+ use the target values from the configuration.
+    reset_phases = frozenset(_APPLY_PHASE_ORDER[:2])
+    for phase in _APPLY_PHASE_ORDER:
+        use_reset_values = phase in reset_phases
+        for name in phase:
+            if name not in node_lookup:
+                # Handles nodes that exist on the camera but are absent from the configuration (e.g., the
+                # configuration was dumped from a camera without CenterX support). Reset-phase nodes are still
+                # written with their safe defaults to unlock constraints.
+                if use_reset_values and name in _PHASE_RESET_VALUES:
+                    with suppress(Exception):
+                        getattr(node_map, name).value = _PHASE_RESET_VALUES[name]
+                continue
+
+            value = (
+                _PHASE_RESET_VALUES[name]
+                if use_reset_values and name in _PHASE_RESET_VALUES
+                else node_lookup[name].value
+            )
+
+            try:
+                getattr(node_map, name).value = value
+            except Exception as e:
+                # Reset-phase failures are non-fatal — the node may not exist on this camera model.
+                if use_reset_values:
+                    continue
+                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {e}"
+                console.error(message=message, error=RuntimeError)
+
+            # Only marks nodes as written when their target value was applied (not the reset value).
+            if not use_reset_values:
+                written.add(name)
+
+    # Applies all remaining nodes that were not covered by any phase, in their original configuration order.
+    for name, node_info in node_lookup.items():
+        if name in written:
+            continue
+
         try:
-            getattr(node_map, node_info.name).value = node_info.value
+            getattr(node_map, name).value = node_info.value
         except Exception as e:  # pragma: no cover
-            message = f"Unable to apply GenICam configuration. Failed to write node '{node_info.name}': {e}"
+            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {e}"
             console.error(message=message, error=RuntimeError)

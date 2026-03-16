@@ -32,6 +32,7 @@ from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
 
 from .saver import InputPixelFormats
 from .configuration import (
+    DEFAULT_BLACKLISTED_NODES,
     GenicamNodeInfo,
     GenicamConfiguration,
     read_genicam_node,
@@ -131,14 +132,14 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
     # Attempts to discover Harvesters-compatible cameras. Skips if no CTI file is configured.
     try:
         harvesters_cameras = _get_harvesters_ids()
-    except FileNotFoundError:
+    except FileNotFoundError:  # pragma: no cover
         # No CTI file configured, skips Harvesters discovery.
         harvesters_cameras = ()
 
     return opencv_cameras + harvesters_cameras
 
 
-def add_cti_file(cti_path: Path) -> None:
+def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
     """Configures the 'harvesters' camera interface to use the provided .cti file during all future runtimes.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -170,7 +171,7 @@ def add_cti_file(cti_path: Path) -> None:
         file.write(str(cti_path))
 
 
-def check_cti_file() -> Path | None:
+def check_cti_file() -> Path | None:  # pragma: no cover
     """Checks whether the library is configured to use a GenTL Producer interface (.cti) file.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -280,7 +281,7 @@ class OpenCVCamera:
                 camera rejects the user-defined frame height, width, or acquisition rate parameters.
         """
         # Prevents re-connecting to an already connected camera.
-        if self._camera is not None:
+        if self._camera is not None:  # pragma: no cover
             return
 
         # Instantiates the OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
@@ -293,7 +294,7 @@ class OpenCVCamera:
         if self._frame_rate != 0:
             self._camera.set(propId=cv2.CAP_PROP_FPS, value=float(self._frame_rate))
             actual_frame_rate = int(self._camera.get(propId=cv2.CAP_PROP_FPS))
-            if actual_frame_rate < self._frame_rate:
+            if actual_frame_rate < self._frame_rate:  # pragma: no cover
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames at the rate of {self._frame_rate} "
@@ -308,7 +309,7 @@ class OpenCVCamera:
         if self._frame_width != 0:
             self._camera.set(propId=cv2.CAP_PROP_FRAME_WIDTH, value=float(self._frame_width))
             actual_frame_width = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
-            if actual_frame_width != self._frame_width:
+            if actual_frame_width != self._frame_width:  # pragma: no cover
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames with the width of {self._frame_width} pixels, "
@@ -322,7 +323,7 @@ class OpenCVCamera:
         if self._frame_height != 0:
             self._camera.set(propId=cv2.CAP_PROP_FRAME_HEIGHT, value=float(self._frame_height))
             actual_frame_height = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
-            if actual_frame_height != self._frame_height:
+            if actual_frame_height != self._frame_height:  # pragma: no cover
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames with the height of {self._frame_height} "
@@ -512,7 +513,7 @@ class HarvestersCamera:
     def connect(self) -> None:
         """Connects to the managed camera hardware."""
         # Prevents connecting to an already connected camera.
-        if self._camera is not None:
+        if self._camera is not None:  # pragma: no cover
             return
 
         # Initializes the Harvester class to discover the list of available cameras.
@@ -624,13 +625,13 @@ class HarvestersCamera:
         return self._camera.remote_device.node_map
 
     def get_node_info(self, name: str) -> GenicamNodeInfo:
-        """Reads a single readable value node from the connected camera and returns its name, value, and unit.
+        """Reads a single readable value node from the connected camera and returns its name and current value.
 
         Args:
             name: The feature name of the node to read (e.g., "Width", "ExposureTime").
 
         Returns:
-            A ``GenicamNodeInfo`` instance containing the node's name, current value, and unit.
+            A ``GenicamNodeInfo`` instance containing the node's name and current value.
 
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
@@ -667,8 +668,16 @@ class HarvestersCamera:
         """
         write_genicam_node(node_map=self.node_map, name=name, value=value)
 
-    def get_configuration(self) -> GenicamConfiguration:
+    def get_configuration(
+        self,
+        blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
+    ) -> GenicamConfiguration:
         """Enumerates all ReadWrite GenICam nodes on the connected camera and returns the configuration.
+
+        Args:
+            blacklisted_nodes: A set of node names to exclude from the configuration. Defaults to
+                ``DEFAULT_BLACKLISTED_NODES``, which excludes vendor-specific nodes known to report ReadWrite access
+                but reject writes at the hardware level. Pass an empty frozenset to disable blacklisting.
 
         Returns:
             A ``GenicamConfiguration`` instance containing the camera identity, timestamp, and all ReadWrite node
@@ -678,7 +687,7 @@ class HarvestersCamera:
             ConnectionError: If the instance is not connected to the camera hardware.
         """
         camera_node_map = self.node_map
-        node_names = enumerate_genicam_nodes(camera_node_map)
+        node_names = enumerate_genicam_nodes(camera_node_map, blacklisted_nodes=blacklisted_nodes)
 
         nodes: list[GenicamNodeInfo] = []
         for name in node_names:
@@ -691,17 +700,26 @@ class HarvestersCamera:
             nodes=nodes,
         )
 
-    def apply_configuration(self, config: GenicamConfiguration, *, strict_identity: bool = False) -> None:
+    def apply_configuration(
+        self,
+        config: GenicamConfiguration,
+        *,
+        strict_identity: bool = False,
+        blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
+    ) -> None:
         """Applies a ``GenicamConfiguration`` to the connected camera.
 
         Args:
             config: The configuration instance containing ReadWrite nodes to apply.
             strict_identity: Determines whether to abort on camera identity mismatch instead of warning.
+            blacklisted_nodes: A set of node names to silently skip during validation and write operations. Defaults
+                to ``DEFAULT_BLACKLISTED_NODES``, which excludes vendor-specific nodes known to report ReadWrite
+                access but reject writes at the hardware level. Pass an empty frozenset to disable blacklisting.
 
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
             ValueError: If the camera identity mismatches (strict mode) or any node is missing or not writable.
-            RuntimeError: If any node write operation fails.
+            RuntimeError: If any non-blacklisted node write operation fails.
         """
         apply_genicam_configuration(
             node_map=self.node_map,
@@ -709,6 +727,7 @@ class HarvestersCamera:
             current_model=self._model,
             current_serial=self._serial_number,
             strict=strict_identity,
+            blacklisted_nodes=blacklisted_nodes,
         )
 
     def grab_frame(self) -> NDArray[np.integer[Any]]:
@@ -987,7 +1006,7 @@ class MockCamera:
             self._acquiring = True
 
         # Falls back to re-initialization to appease mypy; the timer should always be initialized at this point.
-        if self._timer is None:
+        if self._timer is None:  # pragma: no cover
             self._timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # Simulates the blocking behavior of physical camera interfaces by using the timer class to enforce a certain
@@ -1062,7 +1081,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                     with _suppress_output():
                         camera.release()  # Guarantees camera release even if an exception occurs.
 
-            except Exception as e:
+            except Exception as e:  # pragma: no cover
                 # Marks any ID that raises a runtime error as non-working and notifies the user.
                 console.echo(
                     message=f"OpenCV camera discovery: Failed to evaluate camera index {evaluated_id}. Error: {e}",

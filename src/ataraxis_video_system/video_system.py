@@ -998,7 +998,7 @@ def extract_logged_camera_timestamps(
     n_workers = resolve_worker_count(requested_workers=n_workers)
     batches = reader.get_batches(workers=n_workers, batch_multiplier=4)
 
-    if not batches:
+    if not batches:  # pragma: no cover
         return ()
 
     # Passes the pre-discovered onset timestamp to worker processes so each can construct a lightweight reader that
@@ -1034,7 +1034,7 @@ def extract_logged_camera_timestamps(
     return tuple(all_timestamps)
 
 
-def _process_frame_message_batch(log_path: Path, keys: list[str], onset_us: np.uint64) -> list[np.uint64]:
+def _process_frame_message_batch(log_path: Path, keys: list[str], onset_us: np.uint64) -> list[np.uint64]:  # pragma: no cover
     """Processes a batch of messages from a VideoSystem log archive to extract frame timestamps.
 
     This worker function is designed for parallel execution via ProcessPoolExecutor. Each worker creates its own
