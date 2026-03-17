@@ -257,12 +257,12 @@ def test_harvesters_camera_init_repr(has_harvesters) -> None:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup - Note that the CTI path is automatically resolved internally by the HarvestersCamera class
-    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Verifies initial camera parameters
-    assert camera.frame_rate == 60
-    assert camera.frame_width == 1000
-    assert camera.frame_height == 1000
+    assert camera.frame_rate == 10
+    assert camera.frame_width == 200
+    assert camera.frame_height == 200
     assert not camera.is_connected
     assert not camera.is_acquiring
     assert camera._system_id == 222
@@ -285,7 +285,7 @@ def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup
-    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Tests connect method. Unlike OpenCV camera, if Harvesters camera is unable to set the parameters to the
     # requested values, it may raise an error depending on the camera model.
@@ -302,7 +302,7 @@ def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
 @pytest.mark.xdist_group(name="group2")
 @pytest.mark.parametrize(
     ("frame_rate", "frame_width", "frame_height"),
-    [(30, 440, 440), (60, 200, 200), (None, None, None)],
+    [(5, 440, 440), (10, 200, 200), (None, None, None)],
 )
 def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, frame_height) -> None:
     """Verifies the functioning of the HarvestersCamera grab_frame() method."""
@@ -342,7 +342,7 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
 
     # Setup - Uses the internally stored CTI path
-    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=60, frame_width=1000, frame_height=1000)
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
