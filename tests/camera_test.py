@@ -4,30 +4,8 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import CameraInterfaces, InputPixelFormats, discover_camera_ids
+from ataraxis_video_system import InputPixelFormats
 from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
-
-
-@pytest.fixture(scope="session")
-def has_opencv():
-    """Checks for OpenCV camera availability in the test environment."""
-    # noinspection PyBroadException
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.OPENCV for cam in all_cameras)
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
-def has_harvesters():
-    """Checks for Harvesters camera availability in the test environment."""
-    # noinspection PyBroadException
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
-    except Exception:
-        return False
 
 
 @pytest.mark.parametrize(

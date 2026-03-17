@@ -2,8 +2,6 @@
 
 import sys
 from random import randint
-import subprocess
-
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer
@@ -16,50 +14,9 @@ from ataraxis_video_system import (
     CameraInterfaces,
     OutputPixelFormats,
     EncoderSpeedPresets,
-    discover_camera_ids,
     check_ffmpeg_availability,
     extract_logged_camera_timestamps,
 )
-
-
-@pytest.fixture(scope="session")
-def has_opencv():
-    """Checks for OpenCV camera availability in the test environment."""
-    # noinspection PyBroadException
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.OPENCV for cam in all_cameras)
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
-def has_harvesters():
-    """Checks for Harvesters camera availability in the test environment."""
-    # noinspection PyBroadException
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
-def has_nvidia():
-    """Checks for NVIDIA GPU availability in the test environment."""
-    # noinspection PyBroadException
-    try:
-        subprocess.run(
-            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
-    except Exception:
-        return False
-    else:
-        return True
 
 
 @pytest.fixture
