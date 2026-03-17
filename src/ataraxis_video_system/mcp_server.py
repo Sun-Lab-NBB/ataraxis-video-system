@@ -19,7 +19,13 @@ from .saver import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )  # pragma: no cover
-from .camera import CameraInterfaces, HarvestersCamera, add_cti_file, check_cti_file, discover_camera_ids  # pragma: no cover
+from .camera import (
+    CameraInterfaces,
+    HarvestersCamera,
+    add_cti_file,
+    check_cti_file,
+    discover_camera_ids,
+)  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
@@ -36,7 +42,7 @@ _active_session: VideoSystem | None = None  # pragma: no cover
 """Stores the currently active VideoSystem instance, or None when no session is running."""  # pragma: no cover
 
 _active_logger: DataLogger | None = None  # pragma: no cover
-"""Stores the DataLogger instance associated with the active video session, or None when no session is running."""  # pragma: no cover
+"""Stores the DataLogger instance associated with the active video session, or None when no session is running."""
 
 
 @mcp.tool()  # pragma: no cover
@@ -397,6 +403,7 @@ def read_genicam_node(
         names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
         lines = [f"Found {len(names)} writable GenICam nodes:"]
         for name in names:
+            # noinspection PyBroadException
             try:
                 info = read_node_info(node_map=node_map, name=name)
                 lines.append(f"  {info.name} = {info.value}")

@@ -399,6 +399,7 @@ def configure_group(
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("read")
 @click.option(
     "-c",
@@ -436,6 +437,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
             names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
+                # noinspection PyBroadException
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
                     console.echo(message=f"  {info.name} = {info.value}")
@@ -445,6 +447,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("write")
 @click.option(
     "-c",
@@ -483,6 +486,7 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("dump")
 @click.option(
     "-c",
@@ -521,6 +525,7 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("load")
 @click.option(
     "-c",

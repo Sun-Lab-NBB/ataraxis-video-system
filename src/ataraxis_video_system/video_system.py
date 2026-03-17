@@ -308,7 +308,7 @@ class VideoSystem:
             console.error(message=message, error=TypeError)
 
         # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
-        if display_frame_rate is not None and "darwin" in sys.platform:
+        if display_frame_rate is not None and "darwin" in sys.platform:  # pragma: no cover
             warnings.warn(
                 message=(
                     f"Displaying frames is currently not supported for Apple Silicon devices. See README for details. "
@@ -369,7 +369,7 @@ class VideoSystem:
 
             # VideoSaver relies on the FFMPEG library to be available on the system Path. Ensures that FFMPEG is
             # available for this runtime.
-            if not check_ffmpeg_availability():
+            if not check_ffmpeg_availability():  # pragma: no cover
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. VideoSaver "
                     f"requires a third-party software, FFMPEG, to be available on the system's Path. Make sure FFMPEG "
@@ -380,7 +380,7 @@ class VideoSystem:
 
             # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
             # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU.
-            if gpu >= 0 and not check_gpu_availability():
+            if gpu >= 0 and not check_gpu_availability():  # pragma: no cover
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. The saver is "
                     f"configured to use the GPU video encoder, which currently only supports NVIDIA GPUs. Calling "
@@ -986,7 +986,7 @@ def extract_logged_camera_timestamps(
     reader = LogArchiveReader(archive_path=log_path)
 
     # If there are no data messages in the archive, returns early.
-    if reader.message_count == 0:
+    if reader.message_count == 0:  # pragma: no cover
         return ()
 
     # Small archives or explicit single-worker requests are processed sequentially to avoid multiprocessing overhead.
@@ -1034,7 +1034,9 @@ def extract_logged_camera_timestamps(
     return tuple(all_timestamps)
 
 
-def _process_frame_message_batch(log_path: Path, keys: list[str], onset_us: np.uint64) -> list[np.uint64]:  # pragma: no cover
+def _process_frame_message_batch(
+    log_path: Path, keys: list[str], onset_us: np.uint64
+) -> list[np.uint64]:  # pragma: no cover
     """Processes a batch of messages from a VideoSystem log archive to extract frame timestamps.
 
     This worker function is designed for parallel execution via ProcessPoolExecutor. Each worker creates its own

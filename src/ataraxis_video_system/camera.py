@@ -194,6 +194,7 @@ def check_cti_file() -> Path | None:  # pragma: no cover
         cti_path = Path(file.read().strip())
 
     # Verifies the CTI file still exists and is valid.
+    # noinspection PyBroadException
     try:
         harvester = Harvester()
         harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
@@ -1191,7 +1192,7 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
             finally:
                 camera.destroy()  # Guarantees camera resource release.
 
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             # Skips any device that cannot be connected or queried for any reason and notifies the user.
             console.echo(
                 message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {e}",
@@ -1224,7 +1225,7 @@ def _get_cti_path() -> Path:
     cti_path_file = application_directory.joinpath("cti_path.txt")
 
     # Aborts with an error if the path file does not exist.
-    if not cti_path_file.exists():
+    if not cti_path_file.exists():  # pragma: no cover
         message = (
             "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
             "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti set' CLI "

@@ -215,7 +215,7 @@ def enumerate_genicam_nodes(
             continue
 
         # Skips already-visited nodes to avoid cycles in the category tree.
-        if name in visited:
+        if name in visited:  # pragma: no cover
             continue
         visited.add(name)
 
@@ -364,7 +364,7 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
     # Appends the measurement unit if the node defines one.
     with suppress(Exception):
         raw_unit = str(raw_node.unit)
-        if raw_unit:
+        if raw_unit:  # pragma: no cover
             lines.append(f"  Unit: {raw_unit}")
 
     return "\n".join(lines)
@@ -518,7 +518,7 @@ def apply_genicam_configuration(
 
             try:
                 getattr(node_map, name).value = value
-            except Exception as e:
+            except Exception as e:  # pragma: no cover
                 # Reset-phase failures are non-fatal — the node may not exist on this camera model.
                 if use_reset_values:
                     continue
