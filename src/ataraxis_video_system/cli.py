@@ -24,6 +24,7 @@ from .camera import (
 from .mcp_server import run_server as run_mcp  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 from .configuration import (
+    DEFAULT_BLACKLISTED_NODES,
     GenicamConfiguration,
     read_genicam_node,
     format_genicam_node,
@@ -34,7 +35,7 @@ from .configuration import (
 console.enable()  # pragma: no cover
 
 CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}  # pragma: no cover
-"""Ensures that displayed Click help messages are formatted according to the lab standard."""
+"""Ensures that displayed Click help messages are formatted according to the lab standard."""  # pragma: no cover
 
 
 @click.group("axvs", context_settings=CONTEXT_SETTINGS)
@@ -109,6 +110,9 @@ def check_devices() -> None:  # pragma: no cover
     indices of each camera in the list of all cameras discoverable by each supported interface. The discovered indices
     can then be used to initialize the VideoSystem instances to interface with the discovered cameras.
     """
+    # Notifies the user that discovery is in progress, as probing camera devices may take several seconds.
+    console.echo(message="Scanning for available camera devices, this may take a moment...", level=LogLevel.INFO)
+
     # Discovers all compatible cameras from both interfaces.
     all_cameras = discover_camera_ids()
 
@@ -368,10 +372,34 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # p
 
 
 @axvs_cli.group("configure")
-def configure_group() -> None:  # pragma: no cover
+@click.option(
+    "-b",
+    "--blacklisted-node",
+    type=str,
+    multiple=True,
+    default=sorted(DEFAULT_BLACKLISTED_NODES),
+    show_default=True,
+    help="GenICam node name to exclude from configuration operations. Repeat to specify multiple nodes. Some "
+    "vendor-specific nodes report ReadWrite access but reject writes at the hardware level. Modify this list to "
+    "match your camera hardware. Use --no-blacklist to disable all blacklisting.",
+)
+@click.option(
+    "--no-blacklist",
+    is_flag=True,
+    default=False,
+    help="Disables all node blacklisting. When set, all ReadWrite nodes are included in configuration operations "
+    "regardless of the --blacklisted-node values.",
+)
+@click.pass_context
+def configure_group(
+    context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool
+) -> None:  # pragma: no cover
     """Allows working with the configuration of the GenTL- (Harvesters)-compatible cameras."""
+    context.ensure_object(dict)
+    context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("read")
 @click.option(
     "-c",
@@ -388,12 +416,15 @@ def configure_group() -> None:  # pragma: no cover
     default="",
     help="The name of a specific GenICam node to read. If not provided, the interface lists all available nodes.",
 )
-def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no cover
+@click.pass_context
+def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:  # pragma: no cover
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists all
     available nodes with their current values.
     """
+    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
+
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
@@ -403,9 +434,10 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
         else:
             node_map = camera.node_map
-            names = enumerate_genicam_nodes(node_map)
+            names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
+                # noinspection PyBroadException
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
                     console.echo(message=f"  {info.name} = {info.value}")
@@ -415,6 +447,7 @@ def configuration_read(camera_index: int, node_name: str) -> None:  # pragma: no
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("write")
 @click.option(
     "-c",
@@ -453,6 +486,7 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("dump")
 @click.option(
     "-c",
@@ -469,16 +503,19 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
     type=click.Path(file_okay=True, dir_okay=False, path_type=Path),
     help="The path to the output YAML file to write the configuration to.",
 )
-def configuration_dump(camera_index: int, output_file: Path) -> None:  # pragma: no cover
+@click.pass_context
+def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:  # pragma: no cover
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     The output YAML includes all readable nodes with their current values, valid ranges, and enumeration entries,
     as well as the camera model and serial number for identity validation.
     """
+    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
+
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
-        config = camera.get_configuration()
+        config = camera.get_configuration(blacklisted_nodes=blacklist)
         config.to_yaml(file_path=output_file)
         console.echo(
             message=f"Configuration saved: {len(config.nodes)} nodes written to {output_file}.",
@@ -488,6 +525,7 @@ def configuration_dump(camera_index: int, output_file: Path) -> None:  # pragma:
         camera.disconnect()
 
 
+# noinspection PyUnresolvedReferences
 @configure_group.command("load")
 @click.option(
     "-c",
@@ -512,17 +550,22 @@ def configuration_dump(camera_index: int, output_file: Path) -> None:  # pragma:
     help="If set, aborts the operation when a camera identity mismatch is detected between the configuration file "
     "and the connected camera.",
 )
-def configuration_load(camera_index: int, config_file: Path, *, strict: bool) -> None:  # pragma: no cover
+@click.pass_context
+def configuration_load(
+    context: click.Context, camera_index: int, config_file: Path, *, strict: bool
+) -> None:  # pragma: no cover
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
     Applies all writable nodes from the configuration file to the camera. Optionally validates that the camera
     model and serial number match the configuration file.
     """
+    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
+
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
         config = GenicamConfiguration.from_yaml(file_path=config_file)
-        camera.apply_configuration(config, strict_identity=strict)
+        camera.apply_configuration(config, strict_identity=strict, blacklisted_nodes=blacklist)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
     finally:
         camera.disconnect()

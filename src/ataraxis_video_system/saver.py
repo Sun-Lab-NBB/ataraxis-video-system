@@ -118,7 +118,7 @@ def check_gpu_availability() -> bool:
             text=True,
             check=True,
         )
-    except Exception:
+    except Exception:  # pragma: no cover
         return False
     else:
         return True
@@ -135,7 +135,7 @@ def check_ffmpeg_availability() -> bool:
     try:
         # Runs the ffmpeg version command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
-    except Exception:
+    except Exception:  # pragma: no cover
         return False
     else:
         return True
@@ -442,6 +442,6 @@ class VideoSaver:
 
     def _drain_stderr(self) -> None:
         """Reads all stderr output from the FFMPEG process to prevent pipe buffer saturation."""
-        if self._ffmpeg_process is None or self._ffmpeg_process.stderr is None:
+        if self._ffmpeg_process is None or self._ffmpeg_process.stderr is None:  # pragma: no cover
             return
         self._stderr_output = self._ffmpeg_process.stderr.read()

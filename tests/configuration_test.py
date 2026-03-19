@@ -3,36 +3,24 @@
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import (
-    GenicamNodeInfo,
-    CameraInterfaces,
-    GenicamConfiguration,
-    discover_camera_ids,
-)
+from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
 from ataraxis_video_system.camera import HarvestersCamera
-
-
-@pytest.fixture(scope="session")
-def has_harvesters():
-    """Checks for Harvesters camera availability in the test environment."""
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
-    except Exception:
-        return False
+from ataraxis_video_system.configuration import (
+    format_genicam_node,
+    read_genicam_node,
+    write_genicam_node,
+)
 
 
 def test_genicam_node_info_creation() -> None:
-    """Verifies creation of GenicamNodeInfo instances with and without a unit."""
-    node = GenicamNodeInfo(name="Width", value=1920, unit="px")
+    """Verifies creation of GenicamNodeInfo instances."""
+    node = GenicamNodeInfo(name="Width", value=200)
     assert node.name == "Width"
-    assert node.value == 1920
-    assert node.unit == "px"
+    assert node.value == 200
 
-    node_no_unit = GenicamNodeInfo(name="Gain", value=1.5)
-    assert node_no_unit.name == "Gain"
-    assert node_no_unit.value == 1.5
-    assert node_no_unit.unit is None
+    node_float = GenicamNodeInfo(name="Gain", value=1.5)
+    assert node_float.name == "Gain"
+    assert node_float.value == 1.5
 
 
 def test_genicam_node_info_types() -> None:
@@ -46,9 +34,9 @@ def test_genicam_node_info_types() -> None:
 def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     """Verifies GenicamConfiguration serialization and deserialization via YAML."""
     nodes = [
-        GenicamNodeInfo(name="Width", value=1920, unit="px"),
-        GenicamNodeInfo(name="Height", value=1080),
-        GenicamNodeInfo(name="Gain", value=2.5, unit="dB"),
+        GenicamNodeInfo(name="Width", value=200),
+        GenicamNodeInfo(name="Height", value=200),
+        GenicamNodeInfo(name="Gain", value=2.5),
         GenicamNodeInfo(name="ReverseX", value=False),
         GenicamNodeInfo(name="PixelFormat", value="Mono8"),
     ]
@@ -66,11 +54,9 @@ def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     assert loaded.camera_serial_number == "SN12345"
     assert len(loaded.nodes) == 5
     assert loaded.nodes[0].name == "Width"
-    assert loaded.nodes[0].value == 1920
-    assert loaded.nodes[0].unit == "px"
+    assert loaded.nodes[0].value == 200
     assert loaded.nodes[1].name == "Height"
-    assert loaded.nodes[1].value == 1080
-    assert loaded.nodes[1].unit is None
+    assert loaded.nodes[1].value == 200
     assert loaded.nodes[2].value == 2.5
     assert loaded.nodes[3].value is False
     assert loaded.nodes[4].value == "Mono8"
@@ -273,5 +259,131 @@ def test_harvesters_configuration_yaml_roundtrip(has_harvesters, tmp_path) -> No
         assert loaded.camera_model == config.camera_model
         assert loaded.camera_serial_number == config.camera_serial_number
         assert len(loaded.nodes) == len(config.nodes)
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_format_genicam_node_enumeration(has_harvesters) -> None:
+    """Verifies that format_genicam_node includes entry names for Enumeration nodes."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        # PixelFormat is a standard SFNC Enumeration node present on all GenICam cameras.
+        description = format_genicam_node(node_map=camera.node_map, name="PixelFormat")
+        assert "Entries:" in description
+        assert "Node: PixelFormat" in description
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_format_genicam_node_with_unit(has_harvesters) -> None:
+    """Verifies that format_genicam_node includes the measurement unit when the node defines one."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        # ExposureTime is a standard SFNC Float node with a unit (typically "us").
+        description = format_genicam_node(node_map=camera.node_map, name="ExposureTime")
+        assert "Node: ExposureTime" in description
+        assert "Min:" in description
+        assert "Max:" in description
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_write_genicam_node_float(has_harvesters) -> None:
+    """Verifies that write_genicam_node correctly coerces string values to float for Float nodes."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        # Reads the current ExposureTime value and writes it back unchanged.
+        original = read_genicam_node(node_map=camera.node_map, name="ExposureTime")
+        write_genicam_node(node_map=camera.node_map, name="ExposureTime", value=str(original.value))
+        restored = read_genicam_node(node_map=camera.node_map, name="ExposureTime")
+        assert restored.value == original.value
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_write_genicam_node_boolean(has_harvesters) -> None:
+    """Verifies that write_genicam_node correctly coerces string values to bool for Boolean nodes."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        # ReverseX is a standard SFNC Boolean node present on most GenICam cameras.
+        original = read_genicam_node(node_map=camera.node_map, name="ReverseX")
+        write_genicam_node(node_map=camera.node_map, name="ReverseX", value=str(original.value).lower())
+        restored = read_genicam_node(node_map=camera.node_map, name="ReverseX")
+        assert restored.value == original.value
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_write_genicam_node_enum_string(has_harvesters) -> None:
+    """Verifies that write_genicam_node correctly handles string values for Enumeration nodes."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        # PixelFormat is a standard SFNC Enumeration node. Reads and writes back the current value.
+        original = read_genicam_node(node_map=camera.node_map, name="PixelFormat")
+        write_genicam_node(node_map=camera.node_map, name="PixelFormat", value=str(original.value))
+        restored = read_genicam_node(node_map=camera.node_map, name="PixelFormat")
+        assert restored.value == original.value
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_apply_configuration_non_strict_mismatch(has_harvesters) -> None:
+    """Verifies that apply_configuration warns but proceeds when identity mismatches in non-strict mode."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        config = camera.get_configuration()
+        # Overwrites both model and serial number to trigger the mismatch warning.
+        config.camera_model = "WrongModel"
+        config.camera_serial_number = "WrongSerial"
+        # Non-strict mode should warn but not raise.
+        camera.apply_configuration(config, strict_identity=False)
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_apply_configuration_blacklisted_nodes(has_harvesters) -> None:
+    """Verifies that apply_configuration skips blacklisted nodes during application."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    camera.connect()
+    try:
+        config = camera.get_configuration()
+
+        # Adds a real node name to the blacklist to verify that blacklisted nodes are skipped.
+        custom_blacklist = frozenset({"Width"})
+        camera.apply_configuration(config, strict_identity=True, blacklisted_nodes=custom_blacklist)
     finally:
         camera.disconnect()

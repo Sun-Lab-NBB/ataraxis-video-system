@@ -2,8 +2,6 @@
 
 import sys
 from random import randint
-import subprocess
-
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer
@@ -16,48 +14,9 @@ from ataraxis_video_system import (
     CameraInterfaces,
     OutputPixelFormats,
     EncoderSpeedPresets,
-    discover_camera_ids,
     check_ffmpeg_availability,
     extract_logged_camera_timestamps,
 )
-
-
-@pytest.fixture(scope="session")
-def has_opencv():
-    """Checks for OpenCV camera availability in the test environment."""
-    try:
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.OPENCV for cam in all_cameras)
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
-def has_harvesters():
-    """Checks for Harvesters camera availability in the test environment."""
-    try:
-        # Attempts to discover Harvesters cameras using the internally stored CTI path.
-        all_cameras = discover_camera_ids()
-        return any(cam.interface == CameraInterfaces.HARVESTERS for cam in all_cameras)
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
-def has_nvidia():
-    """Checks for NVIDIA GPU availability in the test environment."""
-    try:
-        subprocess.run(
-            args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
-    except Exception:
-        return False
-    else:
-        return True
 
 
 @pytest.fixture
@@ -451,6 +410,44 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
         )
 
 
+@pytest.mark.xdist_group(name="group1")
+def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
+    """Verifies that VideoSystem can be initialized with the OpenCV camera interface."""
+    if not has_opencv:
+        pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_directory = tmp_path.joinpath("opencv_test")
+    vs = VideoSystem(
+        system_id=np.uint8(50),
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.OPENCV,
+        camera_index=0,
+    )
+    assert vs._saver is not None
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> None:
+    """Verifies that VideoSystem can be initialized with the Harvesters camera interface."""
+    if not has_harvesters:
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_directory = tmp_path.joinpath("harvesters_test")
+    vs = VideoSystem(
+        system_id=np.uint8(51),
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.HARVESTERS,
+        camera_index=0,
+    )
+    assert vs._saver is not None
+
+
 def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
     """Verifies the error handling of the extract_logged_camera_timestamps() function."""
     # Tests with a non-existent file
@@ -551,3 +548,66 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
         # The maximum interval might be larger due to pauses, but shouldn't be
         # excessive (e.g., not more than 10x the average for this controlled test)
         assert max_interval < avg_interval * 10, "Detected unexpectedly large gap in timestamps"
+
+
+def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
+    """Verifies that extract_logged_camera_timestamps returns an empty tuple for archives with no messages."""
+    # Creates a DataLogger that logs no frame data, producing an archive with only onset metadata.
+    logger = DataLogger(output_directory=tmp_path, instance_name="empty_archive_test")
+    logger.start()
+    logger.stop()
+
+    # Assembles the log archives.
+    assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, memory_mapping=False)
+
+    # Finds the generated .npz archive.
+    npz_files = list(logger.output_directory.glob("*.npz"))
+    if npz_files:
+        timestamps = extract_logged_camera_timestamps(npz_files[0], n_workers=1)
+        assert timestamps == ()
+
+
+def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> None:
+    """Verifies that extract_logged_camera_timestamps works correctly with parallel processing."""
+    system_id = np.uint8(77)
+    frame_rate = 30
+
+    output_directory = tmp_path.joinpath("parallel_timestamps")
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    video_system = VideoSystem(
+        system_id=system_id,
+        data_logger=data_logger,
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.MOCK,
+        frame_rate=frame_rate,
+        frame_width=100,
+        frame_height=100,
+        color=True,
+    )
+
+    # Runs the system long enough to generate > 2000 frame messages for parallel processing.
+    data_logger.start()
+    video_system.start()
+
+    timer = PrecisionTimer("s")
+    video_system.start_frame_saving()
+    timer.delay(delay=75, allow_sleep=True, block=False)
+    video_system.stop_frame_saving()
+
+    video_system.stop()
+    data_logger.stop()
+
+    # Assembles log archives.
+    assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
+
+    # Extracts timestamps using parallel workers.
+    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
+    if log_file_path.exists():
+        timestamps_parallel = extract_logged_camera_timestamps(log_file_path, n_workers=-1)
+        timestamps_sequential = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+
+        # Both methods should return the same timestamps.
+        assert len(timestamps_parallel) == len(timestamps_sequential)
+        assert timestamps_parallel == timestamps_sequential
+        assert len(timestamps_parallel) > 2000

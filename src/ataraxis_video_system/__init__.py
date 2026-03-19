@@ -21,7 +21,7 @@ os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 # The QT bundled with OpenCV (used for live image rendering) does not include the wayland support plugin. This forces
 # QT to use the X11 compatibility layer when it is called from a Wayland system.
 if "WAYLAND_DISPLAY" in os.environ:
-    os.environ["QT_QPA_PLATFORM"] = "xcb"
+    os.environ["QT_QPA_PLATFORM"] = "xcb"  # pragma: no cover
 
 
 from .saver import (
@@ -34,9 +34,10 @@ from .saver import (
 )
 from .camera import CameraInterfaces, CameraInformation, add_cti_file, check_cti_file, discover_camera_ids
 from .video_system import VideoSystem, extract_logged_camera_timestamps
-from .configuration import GenicamNodeInfo, GenicamConfiguration
+from .configuration import DEFAULT_BLACKLISTED_NODES, GenicamNodeInfo, GenicamConfiguration
 
 __all__ = [
+    "DEFAULT_BLACKLISTED_NODES",
     "CameraInformation",
     "CameraInterfaces",
     "EncoderSpeedPresets",

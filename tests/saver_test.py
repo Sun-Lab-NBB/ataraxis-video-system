@@ -1,6 +1,7 @@
 """Contains tests for classes and methods provided by the saver.py module."""
 
 import subprocess
+import time
 
 import numpy as np
 import pytest
@@ -16,18 +17,6 @@ from ataraxis_video_system import (
 )
 from ataraxis_video_system.saver import VideoSaver
 from ataraxis_video_system.camera import MockCamera
-
-
-@pytest.fixture(scope="session")
-def has_nvidia():
-    """Checks for NVIDIA GPU availability in the test environment."""
-    return check_gpu_availability()
-
-
-@pytest.fixture(scope="session")
-def has_ffmpeg():
-    """Checks for FFMPEG availability in the test environment."""
-    return check_ffmpeg_availability()
 
 
 def test_check_gpu_availability() -> None:
@@ -340,3 +329,105 @@ def test_encoder_speed_preset_mappings() -> None:
     assert EncoderSpeedPresets.SLOWEST.gpu_preset == "p7"
     assert EncoderSpeedPresets.FASTEST.cpu_preset == "veryfast"
     assert EncoderSpeedPresets.SLOWEST.cpu_preset == "veryslow"
+
+
+def test_video_saver_context_manager(tmp_path, has_ffmpeg) -> None:
+    """Verifies the VideoSaver __enter__() and __exit__() context manager methods."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "ctx_test.mp4"
+    with VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    ) as saver:
+        assert saver.is_active
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        saver.save_frame(frame)
+
+    # After exiting the context, the saver should be stopped.
+    assert not saver.is_active
+
+
+def test_video_saver_save_non_contiguous_frame(tmp_path, has_ffmpeg) -> None:
+    """Verifies that VideoSaver handles non-C-contiguous frames by calling tobytes()."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "fortran_test.mp4"
+    saver = VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+        input_pixel_format=InputPixelFormats.BGR,
+    )
+    saver.start()
+
+    # Creates a Fortran-ordered (non-C-contiguous) frame.
+    frame = np.asfortranarray(np.zeros((100, 100, 3), dtype=np.uint8))
+    assert not frame.flags["C_CONTIGUOUS"]
+    saver.save_frame(frame)
+    saver.stop()
+
+    assert output_file.exists()
+
+
+def test_video_saver_ffmpeg_error_on_stop(tmp_path, has_ffmpeg) -> None:
+    """Verifies that VideoSaver logs FFMPEG error output when the process terminates with a non-zero exit code."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "error_test.mp4"
+    saver = VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    )
+    saver.start()
+    time.sleep(0.2)
+
+    # Terminates the FFMPEG process to produce a non-zero exit code with stderr output.
+    saver._ffmpeg_process.terminate()
+
+    # stop() should handle the terminated process and trigger the error logging branch.
+    saver.stop()
+    assert saver._ffmpeg_process is None
+
+
+def test_video_saver_save_frame_ffmpeg_crash(tmp_path, has_ffmpeg) -> None:
+    """Verifies that save_frame raises RuntimeError when the FFMPEG process terminates unexpectedly."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "crash_test.mp4"
+    saver = VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    )
+    saver.start()
+    time.sleep(0.1)
+
+    # Kills the FFMPEG process to simulate an unexpected termination.
+    saver._ffmpeg_process.kill()
+    saver._ffmpeg_process.wait()
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    with pytest.raises(RuntimeError, match="terminated unexpectedly"):
+        saver.save_frame(frame)
+
+    # Cleans up the dead process reference to prevent stop() from failing.
+    saver._ffmpeg_process = None

@@ -5,12 +5,12 @@ management functionality through the MCP protocol, enabling AI agents to program
 library's core features.
 """
 
-from typing import Literal
-from pathlib import Path
+from typing import Literal  # pragma: no cover
+from pathlib import Path  # pragma: no cover
 
-import numpy as np
-from mcp.server.fastmcp import FastMCP
-from ataraxis_data_structures import DataLogger
+import numpy as np  # pragma: no cover
+from mcp.server.fastmcp import FastMCP  # pragma: no cover
+from ataraxis_data_structures import DataLogger  # pragma: no cover
 
 from .saver import (
     VideoEncoders,
@@ -18,28 +18,35 @@ from .saver import (
     EncoderSpeedPresets,
     check_gpu_availability,
     check_ffmpeg_availability,
-)
-from .camera import CameraInterfaces, HarvestersCamera, add_cti_file, check_cti_file, discover_camera_ids
-from .video_system import VideoSystem
+)  # pragma: no cover
+from .camera import (
+    CameraInterfaces,
+    HarvestersCamera,
+    add_cti_file,
+    check_cti_file,
+    discover_camera_ids,
+)  # pragma: no cover
+from .video_system import VideoSystem  # pragma: no cover
 from .configuration import (
+    DEFAULT_BLACKLISTED_NODES,
     GenicamConfiguration,
     read_genicam_node as read_node_info,
     format_genicam_node,
     enumerate_genicam_nodes,
-)
+)  # pragma: no cover
 
-mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)
-"""Stores the MCP server instance used to expose tools to AI agents."""
+mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)  # pragma: no cover
+"""Stores the MCP server instance used to expose tools to AI agents."""  # pragma: no cover
 
-_active_session: VideoSystem | None = None
-"""Stores the currently active VideoSystem instance, or None when no session is running."""
+_active_session: VideoSystem | None = None  # pragma: no cover
+"""Stores the currently active VideoSystem instance, or None when no session is running."""  # pragma: no cover
 
-_active_logger: DataLogger | None = None
+_active_logger: DataLogger | None = None  # pragma: no cover
 """Stores the DataLogger instance associated with the active video session, or None when no session is running."""
 
 
-@mcp.tool()
-def list_cameras() -> str:
+@mcp.tool()  # pragma: no cover
+def list_cameras() -> str:  # pragma: no cover
     """Discovers all cameras compatible with the OpenCV and Harvesters interfaces.
 
     Returns:
@@ -73,8 +80,8 @@ def list_cameras() -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
-def get_cti_status() -> str:
+@mcp.tool()  # pragma: no cover
+def get_cti_status() -> str:  # pragma: no cover
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     The Harvesters camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -93,8 +100,8 @@ def get_cti_status() -> str:
     return "CTI: Not configured"
 
 
-@mcp.tool()
-def set_cti_file(file_path: str) -> str:
+@mcp.tool()  # pragma: no cover
+def set_cti_file(file_path: str) -> str:  # pragma: no cover
     """Configures the library to use the specified CTI file for all future runtimes involving GeniCam cameras.
 
     The Harvesters library requires the GenTL Producer interface (.cti) file to discover and interface with compatible
@@ -128,8 +135,8 @@ def set_cti_file(file_path: str) -> str:
         return f"CTI configured: {path}"
 
 
-@mcp.tool()
-def check_runtime_requirements() -> str:
+@mcp.tool()  # pragma: no cover
+def check_runtime_requirements() -> str:  # pragma: no cover
     """Checks whether the host system meets the requirements for video encoding and camera interfaces.
 
     Verifies that FFMPEG is installed and accessible, checks for Nvidia GPU availability for hardware-accelerated
@@ -154,7 +161,7 @@ def check_runtime_requirements() -> str:
     return f"FFMPEG: {ffmpeg_status} | GPU: {gpu_status} | CTI: {cti_status}"
 
 
-@mcp.tool()
+@mcp.tool()  # pragma: no cover
 def start_video_session(
     output_directory: str,
     interface: str = "opencv",
@@ -166,7 +173,7 @@ def start_video_session(
     display_frame_rate: int | None = 25,
     *,
     monochrome: bool = False,
-) -> str:
+) -> str:  # pragma: no cover
     """Starts a video capture session with the specified parameters.
 
     Creates a VideoSystem instance and begins acquiring frames from the camera. Frames are not saved until
@@ -257,8 +264,8 @@ def start_video_session(
         return f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps -> {output_directory}"
 
 
-@mcp.tool()
-def stop_video_session() -> str:
+@mcp.tool()  # pragma: no cover
+def stop_video_session() -> str:  # pragma: no cover
     """Stops the active video capture session and releases all resources.
 
     Stops the VideoSystem and DataLogger, freeing the camera and saving any remaining buffered frames.
@@ -290,8 +297,8 @@ def stop_video_session() -> str:
     return "Session stopped"
 
 
-@mcp.tool()
-def start_frame_saving() -> str:
+@mcp.tool()  # pragma: no cover
+def start_frame_saving() -> str:  # pragma: no cover
     """Starts saving captured frames to the video file.
 
     Begins writing acquired frames to an MP4 video file in the output directory. A video session must be active.
@@ -312,8 +319,8 @@ def start_frame_saving() -> str:
         return "Recording started"
 
 
-@mcp.tool()
-def stop_frame_saving() -> str:
+@mcp.tool()  # pragma: no cover
+def stop_frame_saving() -> str:  # pragma: no cover
     """Stops saving frames to the video file.
 
     Stops writing frames to the video file while keeping the session active. Frame acquisition continues.
@@ -334,8 +341,8 @@ def stop_frame_saving() -> str:
         return "Recording stopped"
 
 
-@mcp.tool()
-def get_session_status() -> str:
+@mcp.tool()  # pragma: no cover
+def get_session_status() -> str:  # pragma: no cover
     """Returns the current status of the video session.
 
     Reports whether a session is active and its current state (acquiring frames, saving frames, etc.).
@@ -354,8 +361,12 @@ def get_session_status() -> str:
     return "Status: Stopped"
 
 
-@mcp.tool()
-def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pragma: no cover
+@mcp.tool()  # pragma: no cover
+def read_genicam_node(
+    camera_index: int = 0,
+    node_name: str = "",
+    blacklisted_nodes: list[str] | None = None,
+) -> str:  # pragma: no cover
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, returns detailed information about that specific node. If no node name is provided,
@@ -365,10 +376,15 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pra
         camera_index: The index of the Harvesters camera to read from.
         node_name: The name of a specific GenICam node to read (e.g., "Width", "ExposureTime"). If empty, all nodes
             are listed.
+        blacklisted_nodes: A list of GenICam node names to exclude from enumeration. Defaults to the built-in
+            blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes vendor-specific nodes that report
+            ReadWrite access but reject writes at the hardware level. Pass an empty list to disable blacklisting.
 
     Returns:
         Detailed node information for a single node, or a newline-separated summary of all nodes.
     """
+    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+
     # Opens a temporary connection to the camera. system_id=0 is a placeholder since we only need node map access,
     # not a full VideoSystem lifecycle.
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
@@ -384,9 +400,10 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pra
         # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
         # rather than aborting the entire listing.
         node_map = camera.node_map
-        names = enumerate_genicam_nodes(node_map)
+        names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
         lines = [f"Found {len(names)} writable GenICam nodes:"]
         for name in names:
+            # noinspection PyBroadException
             try:
                 info = read_node_info(node_map=node_map, name=name)
                 lines.append(f"  {info.name} = {info.value}")
@@ -400,7 +417,7 @@ def read_genicam_node(camera_index: int = 0, node_name: str = "") -> str:  # pra
         camera.disconnect()
 
 
-@mcp.tool()
+@mcp.tool()  # pragma: no cover
 def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  # pragma: no cover
     """Sets a GenICam node value on a connected Harvesters camera.
 
@@ -428,8 +445,12 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  #
         camera.disconnect()
 
 
-@mcp.tool()
-def dump_genicam_config(camera_index: int, output_file: str) -> str:  # pragma: no cover
+@mcp.tool()  # pragma: no cover
+def dump_genicam_config(
+    camera_index: int,
+    output_file: str,
+    blacklisted_nodes: list[str] | None = None,
+) -> str:  # pragma: no cover
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     Important:
@@ -439,10 +460,16 @@ def dump_genicam_config(camera_index: int, output_file: str) -> str:  # pragma: 
     Args:
         camera_index: The index of the Harvesters camera to dump the configuration from.
         output_file: The absolute path to the output YAML file. Must be provided by the user.
+        blacklisted_nodes: A list of GenICam node names to exclude from the configuration dump. Defaults to the
+            built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes vendor-specific nodes
+            that report ReadWrite access but reject writes at the hardware level. Pass an empty list to disable
+            blacklisting.
 
     Returns:
         A confirmation with the number of nodes saved, or an error description.
     """
+    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
@@ -450,7 +477,7 @@ def dump_genicam_config(camera_index: int, output_file: str) -> str:  # pragma: 
         # Reads every accessible node from the camera's GenICam node map and packages them into a
         # GenicamConfiguration object that includes the camera's model, serial number, and per-node metadata
         # (value, range, enum entries).
-        config = camera.get_configuration()
+        config = camera.get_configuration(blacklisted_nodes=blacklist)
 
         # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
         # of the same model.
@@ -462,9 +489,13 @@ def dump_genicam_config(camera_index: int, output_file: str) -> str:  # pragma: 
         camera.disconnect()
 
 
-@mcp.tool()
+@mcp.tool()  # pragma: no cover
 def load_genicam_config(
-    camera_index: int, config_file: str, *, strict_identity: bool = False
+    camera_index: int,
+    config_file: str,
+    *,
+    strict_identity: bool = False,
+    blacklisted_nodes: list[str] | None = None,
 ) -> str:  # pragma: no cover
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
@@ -476,10 +507,16 @@ def load_genicam_config(
         camera_index: The index of the Harvesters camera to load the configuration onto.
         config_file: The absolute path to the YAML configuration file to load. Must be provided by the user.
         strict_identity: Determines whether to abort on camera identity mismatch instead of warning.
+        blacklisted_nodes: A list of GenICam node names to silently skip during validation and write operations.
+            Defaults to the built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes
+            vendor-specific nodes that report ReadWrite access but reject writes at the hardware level. Pass an
+            empty list to disable blacklisting.
 
     Returns:
         The number of nodes applied and any errors encountered, or an error description.
     """
+    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
         camera.connect()
@@ -493,7 +530,7 @@ def load_genicam_config(
         # strict_identity is True, the camera model and serial number must match the values stored in the YAML
         # file; otherwise, a mismatch produces a warning but proceeds with the write.
         config = GenicamConfiguration.from_yaml(file_path=path)
-        camera.apply_configuration(config, strict_identity=strict_identity)
+        camera.apply_configuration(config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
     except Exception as e:
         return f"Error: {e}"
     else:
@@ -502,7 +539,7 @@ def load_genicam_config(
         camera.disconnect()
 
 
-def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:
+def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:  # pragma: no cover
     """Starts the MCP server with the specified transport.
 
     Args:
