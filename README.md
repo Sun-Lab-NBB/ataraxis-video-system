@@ -15,11 +15,12 @@ ___
 
 ## Detailed Description
 
-This library abstracts all necessary steps for acquiring and saving video data. During each runtime, it interfaces with 
-one or more cameras to grab the raw frames and encodes them as video files stored in the non-volatile memory. The 
-library is specifically designed for working with multiple cameras at the same time and supports fine-tuning the 
-acquisition and saving parameters to precisely balance the resultant video quality and real-time throughput for 
-a wide range of applications.
+This library abstracts all necessary steps for acquiring and saving video data. During each runtime, it interfaces with
+one or more cameras to grab the raw frames and encodes them as video files stored in the non-volatile memory. The
+library is specifically designed for working with multiple cameras at the same time and supports fine-tuning the
+acquisition and saving parameters to precisely balance the resultant video quality and real-time throughput for
+a wide range of applications. This library is part of the
+[Ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) framework for AI-assisted scientific hardware control.
 
 ___
 
@@ -58,7 +59,7 @@ ___
 
 ## Dependencies
 
-- [FFMPEG](https://www.ffmpeg.org/download.html) version **n8.0**. The installed FFMPEG must be available on the 
+- [FFMPEG](https://www.ffmpeg.org/download.html) version **n8.1**. The installed FFMPEG must be available on the 
   system’s path and callable from Python processes.
 - A [GenTL Producer](https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf) interface compatible with the 
   [Harvesters](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst#installing-a-gentl-producer) library 
@@ -313,20 +314,12 @@ axvs mcp
 | `dump_genicam_config`        | Dumps GenICam configuration from a camera to a YAML file                         |
 | `load_genicam_config`        | Loads GenICam configuration from a YAML file to a camera                         |
 
-#### Claude Desktop Configuration
+#### Client Registration
 
-Add the following to the Claude Desktop configuration file:
-
-```json
-{
-  "mcpServers": {
-    "ataraxis-video-system": {
-      "command": "axvs",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+MCP server registration and Claude Code skill assets for this library are distributed through the
+[ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) marketplace as part of the **implementation** plugin. Install the
+plugin from the marketplace to automatically register the MCP server with compatible clients and make all associated
+skills available.
 
 ### Using GeniCam Compatible Cameras
 This library supports all cameras compatible with the [GeniCam](https://www.emva.org/standards-technology/genicam/) 
@@ -420,6 +413,13 @@ Run any environment using `tox -e ENVIRONMENT`. For example, `tox -e lint`.
 ***Note,*** all pull requests for this project have to successfully complete the `tox` task before
 being merged. To expedite the task’s runtime, use the `tox --parallel` command to run some tasks
 in parallel.
+
+### AI-Assisted Development
+
+Claude Code skills and other AI development assets for this project are distributed through the
+[ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) marketplace as part of the **automation** plugin. Install the
+plugin from the marketplace to make all associated skills and development tools available to compatible AI coding
+agents.
 
 ### Automation Troubleshooting
 
