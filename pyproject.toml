@@ -53,6 +53,9 @@ dependencies = [
     # CLI
     "click>=8,<9",
 
+    # Data Output
+    "polars>=1,<2",
+
     # Configuration
     "platformdirs>=4,<5",
 

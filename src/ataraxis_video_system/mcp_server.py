@@ -5,12 +5,14 @@ management functionality through the MCP protocol, enabling AI agents to program
 library's core features.
 """
 
-from typing import Literal  # pragma: no cover
+from typing import Any, Literal  # pragma: no cover
 from pathlib import Path  # pragma: no cover
+from threading import Thread  # pragma: no cover
+from dataclasses import dataclass  # pragma: no cover
 
 import numpy as np  # pragma: no cover
 from mcp.server.fastmcp import FastMCP  # pragma: no cover
-from ataraxis_data_structures import DataLogger  # pragma: no cover
+from ataraxis_data_structures import DataLogger, ProcessingStatus, ProcessingTracker  # pragma: no cover
 
 from .saver import (
     VideoEncoders,
@@ -26,6 +28,7 @@ from .camera import (
     check_cti_file,
     discover_camera_ids,
 )  # pragma: no cover
+from .pipeline import _TRACKER_FILENAME, process_logs, discover_log_archives  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
@@ -537,6 +540,250 @@ def load_genicam_config(
         return "Configuration applied successfully"
     finally:
         camera.disconnect()
+
+
+@dataclass  # pragma: no cover
+class _ProcessingBatchState:  # pragma: no cover
+    """Tracks state for background log processing operations."""
+
+    log_directory: Path
+    """The path to the directory containing the log archives being processed."""
+    output_directory: Path
+    """The path to the output directory where processed files and the tracker are written."""
+    log_ids: list[str] | None = None
+    """Optional list of source log IDs being processed, or None for all archives."""
+    thread: Thread | None = None
+    """The background thread running the processing, or None if not yet started."""
+    completed: bool = False
+    """Indicates whether the processing thread has completed successfully."""
+    failed: bool = False
+    """Indicates whether the processing thread has encountered an error."""
+    error_message: str | None = None
+    """Stores the error message if the processing thread failed."""
+
+
+_processing_batch: _ProcessingBatchState | None = None  # pragma: no cover
+"""Stores the state of the currently active or most recently completed log processing operation."""  # pragma: no cover
+
+
+def _run_log_processing(  # pragma: no cover
+    log_directory: Path,
+    output_directory: Path,
+    log_ids: list[str] | None,
+    *,
+    process_timestamps: bool,
+    workers: int,
+) -> None:
+    """Executes log processing in a background thread and updates the batch state on completion.
+
+    Args:
+        log_directory: The path to the directory containing log archives.
+        output_directory: The path to the output directory.
+        log_ids: Optional list of source log IDs to filter.
+        process_timestamps: Determines whether to extract timestamps.
+        workers: The number of worker processes to use.
+    """
+    try:
+        process_logs(
+            log_directory=log_directory,
+            output_directory=output_directory,
+            log_ids=log_ids,
+            process_timestamps=process_timestamps,
+            workers=workers,
+        )
+        if _processing_batch is not None:
+            _processing_batch.completed = True
+    except Exception as error:
+        if _processing_batch is not None:
+            _processing_batch.failed = True
+            _processing_batch.error_message = f"{type(error).__name__}: {error}"
+
+
+@mcp.tool()  # pragma: no cover
+def discover_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers all VideoSystem log archives in the target directory.
+
+    Scans the specified directory for .npz log archives matching the VideoSystem naming convention and returns
+    a mapping of source IDs to their file paths.
+
+    Args:
+        root_directory: The absolute path to the directory to scan for log archives.
+
+    Returns:
+        A dictionary containing the discovered archives mapping (source ID to file path string) and the total count,
+        or an error description if the directory is invalid.
+    """
+    root_path = Path(root_directory)
+
+    if not root_path.exists():
+        return {"error": f"Directory does not exist: {root_directory}"}
+
+    if not root_path.is_dir():
+        return {"error": f"Path is not a directory: {root_directory}"}
+
+    try:
+        archives = discover_log_archives(log_directory=root_path)
+    except Exception as error:
+        return {"error": str(error)}
+
+    return {
+        "archives": {source_id: str(path) for source_id, path in archives.items()},
+        "count": len(archives),
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def start_log_processing_tool(  # pragma: no cover
+    log_directory: str,
+    output_directory: str,
+    log_ids: list[str] | None = None,
+    *,
+    process_timestamps: bool = True,
+    workers: int = -1,
+) -> dict[str, Any]:
+    """Starts background processing of VideoSystem log archives.
+
+    Discovers log archives in the specified directory and begins extracting timestamps on a background thread.
+    Returns immediately with confirmation. Use get_log_processing_status_tool to monitor progress.
+
+    Important:
+        The AI agent calling this tool MUST ask the user to provide the log_directory and output_directory paths
+        before calling this tool. Do not assume or guess these paths.
+
+    Args:
+        log_directory: The absolute path to the directory containing .npz log archives. Must be provided by the user.
+        output_directory: The absolute path to the directory where output files are written. Must be provided by the
+            user. Created automatically if it does not exist.
+        log_ids: An optional list of source log IDs to process. If provided, only archives matching these IDs are
+            included. If not provided, all discovered archives are processed.
+        process_timestamps: Determines whether to extract camera frame timestamps.
+        workers: The number of CPU cores to use per job. Set to -1 for automatic allocation.
+
+    Returns:
+        A dictionary containing confirmation of the started processing operation, or an error description.
+    """
+    global _processing_batch
+
+    log_path = Path(log_directory)
+    output_path = Path(output_directory)
+
+    if not log_path.exists():
+        return {"error": f"Log directory does not exist: {log_directory}"}
+
+    if not log_path.is_dir():
+        return {"error": f"Log directory is not a directory: {log_directory}"}
+
+    # Checks if processing is already active.
+    if _processing_batch is not None and _processing_batch.thread is not None and _processing_batch.thread.is_alive():
+        return {"error": "Log processing already in progress. Wait for it to complete or check status."}
+
+    # Initializes batch state.
+    _processing_batch = _ProcessingBatchState(
+        log_directory=log_path,
+        output_directory=output_path,
+        log_ids=log_ids,
+    )
+
+    # Starts processing on a background daemon thread.
+    thread = Thread(
+        target=_run_log_processing,
+        kwargs={
+            "log_directory": log_path,
+            "output_directory": output_path,
+            "log_ids": log_ids,
+            "process_timestamps": process_timestamps,
+            "workers": workers,
+        },
+        daemon=True,
+    )
+    thread.start()
+    _processing_batch.thread = thread
+
+    result: dict[str, Any] = {
+        "started": True,
+        "log_directory": log_directory,
+        "output_directory": output_directory,
+        "workers": workers,
+    }
+
+    if log_ids is not None:
+        result["log_ids"] = log_ids
+
+    return result
+
+
+@mcp.tool()  # pragma: no cover
+def get_log_processing_status_tool() -> dict[str, Any]:  # pragma: no cover
+    """Returns the current status of background log processing.
+
+    Reports thread-level status and per-job progress from the processing tracker. If no processing has been
+    started, returns an inactive status.
+
+    Returns:
+        A dictionary containing the processing status, per-job details from the tracker, and a summary of job
+        counts by status.
+    """
+    if _processing_batch is None:
+        return {"active": False, "message": "No log processing has been started."}
+
+    # Determines thread-level status.
+    thread_alive = _processing_batch.thread is not None and _processing_batch.thread.is_alive()
+
+    result: dict[str, Any] = {
+        "active": thread_alive,
+        "completed": _processing_batch.completed,
+        "failed": _processing_batch.failed,
+        "log_directory": str(_processing_batch.log_directory),
+        "output_directory": str(_processing_batch.output_directory),
+    }
+
+    if _processing_batch.error_message is not None:
+        result["error_message"] = _processing_batch.error_message
+
+    # Reads per-job status from the tracker file if it exists.
+    tracker_path = _processing_batch.output_directory / _TRACKER_FILENAME
+    if tracker_path.exists():
+        try:
+            tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
+        except Exception:
+            return result
+
+        if tracker.jobs:
+            job_details: list[dict[str, str]] = []
+            succeeded_count = 0
+            failed_count = 0
+            running_count = 0
+            scheduled_count = 0
+
+            for _job_id, job_state in tracker.jobs.items():
+                # Reads the source ID directly from the job's specifier field.
+                source_id = job_state.specifier or _job_id[:8]
+                status = job_state.status
+
+                if status == ProcessingStatus.SUCCEEDED:
+                    succeeded_count += 1
+                elif status == ProcessingStatus.FAILED:
+                    failed_count += 1
+                elif status == ProcessingStatus.RUNNING:
+                    running_count += 1
+                else:
+                    scheduled_count += 1
+
+                job_detail: dict[str, str] = {"source_id": source_id, "status": status.name}
+                if job_state.error_message is not None:
+                    job_detail["error_message"] = job_state.error_message
+                job_details.append(job_detail)
+
+            result["jobs"] = job_details
+            result["summary"] = {
+                "total": len(tracker.jobs),
+                "succeeded": succeeded_count,
+                "failed": failed_count,
+                "running": running_count,
+                "scheduled": scheduled_count,
+            }
+
+    return result
 
 
 def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:  # pragma: no cover

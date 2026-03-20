@@ -33,6 +33,7 @@ from .saver import (
     check_ffmpeg_availability,
 )
 from .camera import CameraInterfaces, CameraInformation, add_cti_file, check_cti_file, discover_camera_ids
+from .pipeline import VideoJobNames, process_logs, discover_log_archives
 from .video_system import VideoSystem, extract_logged_camera_timestamps
 from .configuration import DEFAULT_BLACKLISTED_NODES, GenicamNodeInfo, GenicamConfiguration
 
@@ -46,11 +47,14 @@ __all__ = [
     "InputPixelFormats",
     "OutputPixelFormats",
     "VideoEncoders",
+    "VideoJobNames",
     "VideoSystem",
     "add_cti_file",
     "check_cti_file",
     "check_ffmpeg_availability",
     "check_gpu_availability",
     "discover_camera_ids",
+    "discover_log_archives",
     "extract_logged_camera_timestamps",
+    "process_logs",
 ]
