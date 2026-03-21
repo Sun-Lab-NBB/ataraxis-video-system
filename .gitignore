@@ -208,6 +208,10 @@ cython_debug/
 /stubs/
 /.pypirc
 
+# Claude Code plugin files (skills and MCP registration are distributed via the plugin, not the repo)
+.claude/
+.mcp.json
+
 # Project: Add any project-specific exclusions here
 /temp
 /imgs

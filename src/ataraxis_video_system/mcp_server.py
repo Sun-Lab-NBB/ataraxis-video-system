@@ -49,6 +49,7 @@ from .configuration import (
 from .log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
+    PARALLEL_PROCESSING_THRESHOLD,
     execute_job,
     find_log_archive,
     resolve_recording_roots,
@@ -83,7 +84,13 @@ class _PendingJob:  # pragma: no cover
 
 @dataclass(slots=True)  # pragma: no cover
 class _JobExecutionState:  # pragma: no cover
-    """Tracks runtime state for batch job execution."""
+    """Tracks runtime state for batch job execution with budget-based worker allocation.
+
+    The execution manager maintains a total worker budget and allocates cores to each job based on its archive size.
+    Large archives (>= 2000 messages) receive more workers, while small archives receive 1 worker since they process
+    sequentially regardless. The manager dispatches jobs greedily, filling available budget with smaller jobs when
+    large jobs cannot fit.
+    """
 
     all_jobs: dict[str, _PendingJob] = field(default_factory=dict)
     """All submitted jobs keyed by job_id."""
@@ -91,10 +98,12 @@ class _JobExecutionState:  # pragma: no cover
     """Jobs awaiting dispatch."""
     active_threads: dict[str, Thread] = field(default_factory=dict)
     """Currently running job_id to Thread mapping."""
-    max_parallel_jobs: int = 1
-    """The maximum number of jobs to execute concurrently."""
-    workers_per_job: int = -1
-    """The number of CPU cores to allocate per job."""
+    active_workers: dict[str, int] = field(default_factory=dict)
+    """Maps each active job_id to its allocated worker count."""
+    job_message_counts: dict[str, int] = field(default_factory=dict)
+    """Maps each job_id to its archive message count, probed before execution."""
+    worker_budget: int = 1
+    """Total CPU cores available for the execution session."""
     lock: Lock = field(default_factory=Lock)
     """Thread synchronization lock for execution state access."""
     manager_thread: Thread | None = None
@@ -105,6 +114,19 @@ class _JobExecutionState:  # pragma: no cover
 
 _job_execution_state: _JobExecutionState | None = None  # pragma: no cover
 """Stores the active execution state for batch log processing jobs."""  # pragma: no cover
+
+_WORKER_SCALING_FACTOR: int = 1000  # pragma: no cover
+"""Controls the saturation floor via the formula ``ceil(sqrt(messages / factor))``. The square root models diminishing
+returns from process parallelism. This value sets the minimum workers a job receives before the budget division can
+push it lower. With a factor of 1,000, a 648,000-message archive (120 fps x 1.5 h) has a saturation floor of 25
+workers."""  # pragma: no cover
+
+_WORKER_MULTIPLE: int = 5  # pragma: no cover
+"""Worker counts above 1 are rounded down to the nearest multiple of this value for clean allocation."""
+
+_RESERVED_CORES: int = 2  # pragma: no cover
+"""The number of CPU cores reserved for system operations. The worker budget is computed as available cores minus this
+value, with a minimum of 1."""
 
 _FEATHER_GLOB_PATTERN: str = "camera_*_timestamps.feather"  # pragma: no cover
 """Glob pattern for discovering processed camera timestamp feather files."""  # pragma: no cover
@@ -848,13 +870,15 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
 def execute_log_processing_jobs_tool(  # pragma: no cover
     jobs: list[dict[str, str]],
     *,
-    workers_per_job: int = -1,
-    max_parallel_jobs: int = -1,
+    worker_budget: int = -1,
 ) -> dict[str, Any]:
-    """Dispatches log processing jobs for background execution with resource allocation.
+    """Dispatches log processing jobs for background execution with budget-based worker allocation.
 
     Takes job descriptors from the manifest produced by prepare_log_processing_batch_tool and starts a background
-    execution manager that dispatches jobs with the resolved worker and parallelism counts.
+    execution manager that allocates CPU cores to each job based on its archive size. The worker budget directly
+    controls memory footprint since each worker spawns a separate process. Large archives (>= 2000 messages) receive
+    more workers, while small archives receive 1 worker since they process sequentially regardless. The manager fills
+    available budget greedily, dispatching smaller jobs alongside large ones when cores are available.
 
     Important:
         Only one execution session can be active at a time. Use cancel_log_processing_tool to cancel an active
@@ -863,11 +887,12 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
     Args:
         jobs: The list of job descriptors, each a dictionary with 'log_directory', 'output_directory',
             'tracker_path', 'job_id', and 'source_id' keys.
-        workers_per_job: The number of CPU cores per job. Set to -1 for automatic resolution.
-        max_parallel_jobs: The maximum number of concurrent jobs. Set to -1 for automatic resolution (defaults to 1).
+        worker_budget: The total number of CPU cores available for the execution session. Directly controls memory
+            footprint. Set to -1 for automatic resolution via resolve_worker_count.
 
     Returns:
-        A dictionary containing a 'started' flag, 'total_jobs', resolved resource allocation, and any invalid jobs.
+        A dictionary containing a 'started' flag, 'total_jobs', resolved worker budget, per-job message counts, and
+        any invalid jobs.
     """
     global _job_execution_state
 
@@ -908,16 +933,21 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
     if not pending:
         return {"error": "No valid jobs to execute.", "invalid_jobs": invalid_jobs}
 
-    # Resolves resource allocation.
-    resolved_workers = resolve_worker_count(requested_workers=workers_per_job)
-    resolved_parallel = max_parallel_jobs if max_parallel_jobs > 0 else 1
+    # Resolves the total worker budget.
+    resolved_budget = resolve_worker_count(requested_workers=worker_budget, reserved_cores=_RESERVED_CORES)
+
+    # Probes archive message counts for all pending jobs. This reads only the zip directory of each .npz file,
+    # which is fast and does not load message data into memory.
+    job_message_counts: dict[str, int] = {}
+    for job in pending:
+        job_message_counts[job.job_id] = _probe_archive_message_count(job=job)
 
     # Creates execution state and starts the manager thread.
     _job_execution_state = _JobExecutionState(
         all_jobs=all_jobs,
         pending_queue=pending,
-        max_parallel_jobs=resolved_parallel,
-        workers_per_job=resolved_workers,
+        job_message_counts=job_message_counts,
+        worker_budget=resolved_budget,
     )
 
     manager = Thread(target=_job_execution_manager, daemon=True)
@@ -927,8 +957,8 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
     result: dict[str, Any] = {
         "started": True,
         "total_jobs": len(pending),
-        "workers_per_job": resolved_workers,
-        "max_parallel_jobs": resolved_parallel,
+        "worker_budget": resolved_budget,
+        "job_message_counts": job_message_counts,
     }
 
     if invalid_jobs:
@@ -1581,6 +1611,86 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
     }
 
 
+def _probe_archive_message_count(job: _PendingJob) -> int:  # pragma: no cover
+    """Probes the message count of a job's log archive by reading the .npz zip directory.
+
+    Reconstructs the archive path from the job's log directory and source ID, then reads the file list from the .npz
+    archive without loading any message data. The message count is the total entry count minus one (excluding the onset
+    message).
+
+    Args:
+        job: The pending job descriptor containing the log directory and source ID.
+
+    Returns:
+        The number of data messages in the archive, or 0 if the archive cannot be read.
+    """
+    archive_path = job.log_directory / f"{job.source_id}{LOG_ARCHIVE_SUFFIX}"
+    if not archive_path.exists():
+        return 0
+
+    try:
+        with np.load(file=archive_path, allow_pickle=False) as archive:
+            return max(0, len(archive.files) - 1)
+    except Exception:
+        return 0
+
+
+def _compute_sqrt_minimum(message_count: int) -> int:  # pragma: no cover
+    """Computes the minimum useful worker count for an archive based on square root scaling.
+
+    The formula ``ceil(sqrt(messages / _WORKER_SCALING_FACTOR))`` models diminishing returns from additional
+    workers. The result is snapped to the nearest multiple of ``_WORKER_MULTIPLE`` for clean allocation. Archives
+    below the parallel processing threshold always return 1.
+
+    Args:
+        message_count: The number of data messages in the job's archive.
+
+    Returns:
+        The minimum number of workers that meaningfully benefit this archive size.
+    """
+    if message_count < PARALLEL_PROCESSING_THRESHOLD:
+        return 1
+
+    raw = int(np.ceil(np.sqrt(message_count / _WORKER_SCALING_FACTOR)))
+    if raw <= 1:
+        return 1
+
+    return max(_WORKER_MULTIPLE, round(raw / _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
+
+
+def _resolve_parallel_allocation(budget: int, parallel_job_count: int, min_workers: int) -> tuple[int, int]:
+    """Resolves worker allocation and concurrency for parallel jobs using saturating budget division.
+
+    Divides the available budget evenly among concurrent parallel jobs, snapping worker counts to multiples of
+    ``_WORKER_MULTIPLE``. If the resulting per-job allocation falls below the sqrt-derived minimum, reduces
+    concurrency until each job receives at least ``min_workers`` cores.
+
+    Args:
+        budget: The total number of available CPU cores for parallel jobs.
+        parallel_job_count: The number of parallel jobs awaiting dispatch.
+        min_workers: The minimum workers per job derived from the largest archive's sqrt scaling.
+
+    Returns:
+        A tuple of (workers_per_job, concurrent_job_count).
+    """
+    # Determines the maximum concurrency that fits in the budget at the minimum allocation granularity.
+    max_concurrent = min(parallel_job_count, budget // _WORKER_MULTIPLE)
+    if max_concurrent < 1:
+        return max(1, budget), 1
+
+    concurrent = max_concurrent
+    per_job_raw = budget // concurrent
+    per_job = max(_WORKER_MULTIPLE, (per_job_raw // _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
+
+    # Reduces concurrency until each job receives at least the sqrt-derived minimum workers.
+    while per_job < min_workers and concurrent > 1:
+        concurrent -= 1
+        per_job_raw = budget // concurrent
+        per_job = max(_WORKER_MULTIPLE, (per_job_raw // _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
+
+    return per_job, concurrent
+
+
 def _job_worker(job: _PendingJob, workers: int) -> None:  # pragma: no cover
     """Executes a single timestamp extraction job in a background thread.
 
@@ -1619,10 +1729,13 @@ def _job_worker(job: _PendingJob, workers: int) -> None:  # pragma: no cover
 
 
 def _job_execution_manager() -> None:  # pragma: no cover
-    """Dispatches queued jobs with concurrency control.
+    """Dispatches queued jobs with saturating budget division.
 
-    Runs as a daemon thread, polling at 1-second intervals. Dispatches jobs from the pending queue up to the
-    max_parallel_jobs limit. Exits when the queue is empty and no active threads remain.
+    Runs as a daemon thread, polling at 1-second intervals. Each dispatch cycle classifies pending jobs into
+    small (< 2000 messages, 1 worker each) and parallel (>= 2000 messages). The available budget is divided
+    evenly among parallel jobs, snapped to multiples of 5, with concurrency reduced if the per-job allocation
+    would fall below the sqrt-derived minimum. Remaining budget is filled with small jobs. Exits when the queue
+    is empty and no active threads remain.
     """
     if _job_execution_state is None:
         return
@@ -1632,10 +1745,11 @@ def _job_execution_manager() -> None:  # pragma: no cover
 
     while True:
         with state.lock:
-            # Cleans up completed threads.
+            # Cleans up completed threads and returns their workers to the budget.
             completed_ids = [job_id for job_id, thread in state.active_threads.items() if not thread.is_alive()]
             for job_id in completed_ids:
                 del state.active_threads[job_id]
+                state.active_workers.pop(job_id, None)
 
             # Exits when no pending jobs and no active threads remain.
             if not state.pending_queue and not state.active_threads:
@@ -1646,12 +1760,55 @@ def _job_execution_manager() -> None:  # pragma: no cover
                 if not state.active_threads:
                     break
             else:
-                # Dispatches jobs up to the concurrency limit.
-                while state.pending_queue and len(state.active_threads) < state.max_parallel_jobs:
-                    job = state.pending_queue.pop(0)
+                available = state.worker_budget - sum(state.active_workers.values())
+                if available < 1:
+                    poll_timer.delay(delay=1, allow_sleep=True)
+                    continue
+
+                # Classifies pending jobs into small (sequential) and parallel.
+                small_pending: list[_PendingJob] = []
+                parallel_pending: list[_PendingJob] = []
+                for job in state.pending_queue:
+                    message_count = state.job_message_counts.get(job.job_id, 0)
+                    if message_count < PARALLEL_PROCESSING_THRESHOLD:
+                        small_pending.append(job)
+                    else:
+                        parallel_pending.append(job)
+
+                dispatch_list: list[tuple[_PendingJob, int]] = []
+
+                # Phase 1: Allocates budget to parallel jobs using saturating division.
+                if parallel_pending and available >= _WORKER_MULTIPLE:
+                    # Computes the sqrt minimum from the largest pending archive.
+                    max_sqrt_min = max(
+                        _compute_sqrt_minimum(message_count=state.job_message_counts.get(job.job_id, 0))
+                        for job in parallel_pending
+                    )
+
+                    workers_per_job, concurrent_count = _resolve_parallel_allocation(
+                        budget=available,
+                        parallel_job_count=len(parallel_pending),
+                        min_workers=max_sqrt_min,
+                    )
+
+                    for job in parallel_pending[:concurrent_count]:
+                        dispatch_list.append((job, workers_per_job))
+                        available -= workers_per_job
+
+                # Phase 2: Fills remaining budget with small jobs (1 worker each).
+                for job in small_pending:
+                    if available < 1:
+                        break
+                    dispatch_list.append((job, 1))
+                    available -= 1
+
+                # Dispatches all allocated jobs.
+                for job, workers in dispatch_list:
+                    state.pending_queue.remove(job)
+                    state.active_workers[job.job_id] = workers
                     thread = Thread(
                         target=_job_worker,
-                        kwargs={"job": job, "workers": state.workers_per_job},
+                        kwargs={"job": job, "workers": workers},
                         daemon=True,
                     )
                     thread.start()

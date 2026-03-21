@@ -85,14 +85,17 @@ when appropriate.
 
 ## Available Skills
 
-| Skill               | Description                                                         |
-|---------------------|---------------------------------------------------------------------|
-| `/explore-codebase` | Perform in-depth codebase exploration at session start              |
-| `/python-style`     | Apply Sun Lab Python coding conventions (REQUIRED for code changes) |
-| `/readme-style`     | Apply Sun Lab README conventions                                    |
-| `/commit`           | Draft Sun Lab style-compliant git commit messages                   |
-| `/pyproject-style`  | Apply Sun Lab pyproject.toml conventions                            |
-| `/tox-config`       | Apply Sun Lab tox.ini conventions                                   |
+| Skill                     | Description                                                         |
+|---------------------------|---------------------------------------------------------------------|
+| `/explore-codebase`       | Perform in-depth codebase exploration at session start              |
+| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes) |
+| `/readme-style`           | Apply Sun Lab README conventions                                    |
+| `/commit`                 | Draft Sun Lab style-compliant git commit messages                   |
+| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                            |
+| `/tox-config`             | Apply Sun Lab tox.ini conventions                                   |
+| `/log-input-format`       | Reference for NPZ archive format, source IDs, and DataLogger output |
+| `/log-processing`         | Orchestrate log archive processing workflow via MCP tools           |
+| `/log-processing-results` | Reference for output data formats and frame statistics analysis     |
 
 ## Project Context
 
@@ -128,14 +131,16 @@ video encoding using CPU or GPU.
 - **GenICam Configuration**: Iterative stack-based NodeMap traversal collects ReadWrite leaf nodes. Configurations
   serialize to YAML via GenicamConfiguration dataclass with camera identity metadata for validation on load.
 - **Log Processing**: Pipeline for extracting frame acquisition timestamps from DataLogger `.npz` archives.
-  Supports sequential and parallel (ProcessPoolExecutor) processing. Uses `LogArchiveReader` for archive access and
-  `ProcessingTracker` for job lifecycle management. `run_log_processing_pipeline()` orchestrates local (all jobs) and
-  remote (single job by ID) execution modes. Outputs Polars DataFrames as Feather files.
+  Supports sequential and parallel (ProcessPoolExecutor) processing with contiguous numpy array output to
+  minimize memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job
+  lifecycle management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job
+  by ID) execution modes. Outputs Polars DataFrames as Feather files.
 - **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`) enforcing a single
-  active VideoSystem session at a time. Also exposes batch log processing tools for discovering, preparing,
-  executing, monitoring, and cancelling log processing jobs across multiple recording directories. Includes
-  post-processing tools for discovering output feather files and analyzing camera frame statistics (inter-frame
-  timing distribution, frame drop detection and estimation).
+  active VideoSystem session at a time. Exposes batch log processing tools with budget-based worker allocation:
+  the execution manager divides the CPU budget evenly among concurrent parallel jobs (snapped to multiples of
+  5) with a sqrt-derived saturation floor that reduces concurrency when per-job allocation would be too thin.
+  Includes post-processing tools for discovering output feather files and analyzing camera frame statistics
+  (inter-frame timing distribution, frame drop detection and estimation).
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
@@ -205,11 +210,13 @@ video encoding using CPU or GPU.
 2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` from `ataraxis-data-structures`
 3. `run_log_processing_pipeline()` supports local mode (all jobs sequentially) and remote mode (single job by ID)
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
-5. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
+5. `extract_logged_camera_timestamps()` returns `NDArray[np.uint64]` for minimal memory footprint
+6. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
 
 **Adding or modifying MCP tools:**
 
 1. Review `src/ataraxis_video_system/mcp_server.py` for existing tool patterns
 2. Enforce single-session constraint via `_active_session` global state check
-3. Log processing batch tools use a separate `_BatchProcessingState` for managing multi-directory workflows
-4. Return formatted strings (not raw data) for user-facing output
+3. Log processing execution uses `_JobExecutionState` with budget-based worker allocation
+4. The execution manager divides budget among parallel jobs via `_resolve_parallel_allocation()`
+5. Return formatted strings (not raw data) for user-facing output
