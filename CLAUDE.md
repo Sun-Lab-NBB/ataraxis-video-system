@@ -102,17 +102,18 @@ video encoding using CPU or GPU.
 
 ### Key Areas
 
-| Directory                    | Purpose                                                         |
-|------------------------------|-----------------------------------------------------------------|
-| `src/ataraxis_video_system/` | Main library source code                                        |
-| `src/.../video_system.py`    | Core VideoSystem class with multiprocessing architecture        |
-| `src/.../camera.py`          | Camera interfaces (OpenCV, Harvesters, Mock) and CTI management |
-| `src/.../saver.py`           | VideoSaver with FFMPEG subprocess encoding                      |
-| `src/.../configuration.py`   | GenICam node inspection, read/write, dump/load via YAML         |
-| `src/.../cli.py`             | Click-based `axvs` CLI with subcommand groups                   |
-| `src/.../mcp_server.py`      | FastMCP server with camera and session management tools         |
-| `tests/`                     | Test suite (camera, saver, video_system, configuration)         |
-| `docs/`                      | Sphinx API documentation source                                 |
+| Directory                    | Purpose                                                                  |
+|------------------------------|--------------------------------------------------------------------------|
+| `src/ataraxis_video_system/` | Main library source code                                                 |
+| `src/.../video_system.py`    | Core VideoSystem class with multiprocessing architecture                 |
+| `src/.../camera.py`          | Camera interfaces (OpenCV, Harvesters, Mock) and CTI management          |
+| `src/.../saver.py`           | VideoSaver with FFMPEG subprocess encoding                               |
+| `src/.../configuration.py`   | GenICam node inspection, read/write, dump/load via YAML                  |
+| `src/.../log_processing.py`  | Log data processing pipeline for extracting frame timestamps             |
+| `src/.../cli.py`             | Click-based `axvs` CLI with subcommand groups                            |
+| `src/.../mcp_server.py`      | FastMCP server with camera, session, and log processing management tools |
+| `tests/`                     | Test suite (camera, saver, video_system, configuration, log_processing)  |
+| `docs/`                      | Sphinx API documentation source                                          |
 
 ### Architecture
 
@@ -126,10 +127,17 @@ video encoding using CPU or GPU.
   to prevent pipe buffer deadlocks. Supports CPU (libx264/libx265) and GPU (h264_nvenc/hevc_nvenc) encoders.
 - **GenICam Configuration**: Iterative stack-based NodeMap traversal collects ReadWrite leaf nodes. Configurations
   serialize to YAML via GenicamConfiguration dataclass with camera identity metadata for validation on load.
+- **Log Processing**: Pipeline for extracting frame acquisition timestamps from DataLogger `.npz` archives.
+  Supports sequential and parallel (ProcessPoolExecutor) processing. Uses `LogArchiveReader` for archive access and
+  `ProcessingTracker` for job lifecycle management. `run_log_processing_pipeline()` orchestrates local (all jobs) and
+  remote (single job by ID) execution modes. Outputs Polars DataFrames as Feather files.
 - **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`) enforcing a single
-  active VideoSystem session at a time.
-- **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions and `mcp` for
-  starting the MCP server. CLI uses system_id 111, MCP uses 112.
+  active VideoSystem session at a time. Also exposes batch log processing tools for discovering, preparing,
+  executing, monitoring, and cancelling log processing jobs across multiple recording directories. Includes
+  post-processing tools for discovering output feather files and analyzing camera frame statistics (inter-frame
+  timing distribution, frame drop detection and estimation).
+- **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
+  log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
 ### Key Patterns
 
@@ -191,8 +199,17 @@ video encoding using CPU or GPU.
 2. Follow existing patterns for option decorators and error handling
 3. Use `console.echo()` for output and `console.error()` for error handling
 
+**Modifying log processing:**
+
+1. Review `src/ataraxis_video_system/log_processing.py` for the processing pipeline
+2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` from `ataraxis-data-structures`
+3. `run_log_processing_pipeline()` supports local mode (all jobs sequentially) and remote mode (single job by ID)
+4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
+5. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
+
 **Adding or modifying MCP tools:**
 
 1. Review `src/ataraxis_video_system/mcp_server.py` for existing tool patterns
 2. Enforce single-session constraint via `_active_session` global state check
-3. Return formatted strings (not raw data) for user-facing output
+3. Log processing batch tools use a separate `_BatchProcessingState` for managing multi-directory workflows
+4. Return formatted strings (not raw data) for user-facing output

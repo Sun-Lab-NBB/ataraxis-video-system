@@ -53,6 +53,9 @@ dependencies = [
     # CLI
     "click>=8,<9",
 
+    # Data Output
+    "polars>=1,<2",
+
     # Configuration
     "platformdirs>=4,<5",
 
@@ -215,6 +218,10 @@ directory = "reports/coverage_html"
 # Optimizes coverage generation for parallel testing
 [tool.coverage.run]
 parallel = true
+omit = [
+    "*/cli.py",
+    "*/mcp_server.py",
+]
 
 # Specifies additional ignore directives
 [tool.coverage.report]
