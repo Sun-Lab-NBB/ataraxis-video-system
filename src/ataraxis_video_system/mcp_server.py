@@ -1070,9 +1070,10 @@ def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
         "completed_count": completed_count,
         "failed_count": failed_count,
         "running_count": sum(1 for j in job_timing if "elapsed_seconds" in j),
-        "pending_count": len(state.all_jobs) - completed_count - failed_count - sum(
-            1 for j in job_timing if "elapsed_seconds" in j
-        ),
+        "pending_count": len(state.all_jobs)
+        - completed_count
+        - failed_count
+        - sum(1 for j in job_timing if "elapsed_seconds" in j),
     }
 
     if completed_count > 0 and earliest_start is not None:
@@ -1243,19 +1244,23 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pr
             else:
                 dir_status = "in_progress"
 
-            log_dir_statuses.append({
-                "log_directory": log_dir,
-                "tracker_path": str(tracker_path),
-                "status": dir_status,
-                **status,
-            })
+            log_dir_statuses.append(
+                {
+                    "log_directory": log_dir,
+                    "tracker_path": str(tracker_path),
+                    "status": dir_status,
+                    **status,
+                }
+            )
         except Exception:
-            log_dir_statuses.append({
-                "log_directory": log_dir,
-                "tracker_path": str(tracker_path),
-                "status": "error",
-                "error": "Unable to read tracker file.",
-            })
+            log_dir_statuses.append(
+                {
+                    "log_directory": log_dir,
+                    "tracker_path": str(tracker_path),
+                    "status": "error",
+                    "error": "Unable to read tracker file.",
+                }
+            )
 
     return {
         "log_directories": log_dir_statuses,
@@ -1321,9 +1326,7 @@ def _job_execution_manager() -> None:  # pragma: no cover
     while True:
         with state.lock:
             # Cleans up completed threads.
-            completed_ids = [
-                job_id for job_id, thread in state.active_threads.items() if not thread.is_alive()
-            ]
+            completed_ids = [job_id for job_id, thread in state.active_threads.items() if not thread.is_alive()]
             for job_id in completed_ids:
                 del state.active_threads[job_id]
 

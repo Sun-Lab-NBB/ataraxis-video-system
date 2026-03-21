@@ -140,9 +140,7 @@ def run_log_processing_pipeline(
             requested log ID matches multiple archives, or if resolved archives span multiple directories.
     """
     if not log_directory.exists() or not log_directory.is_dir():
-        message = (
-            f"Unable to process logs in '{log_directory}'. The path does not exist or is not a directory."
-        )
+        message = f"Unable to process logs in '{log_directory}'. The path does not exist or is not a directory."
         console.error(message=message, error=FileNotFoundError)
 
     if log_ids is None or not log_ids:
