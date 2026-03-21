@@ -139,7 +139,8 @@ from ataraxis_time import PrecisionTimer
 from ataraxis_data_structures import DataLogger, assemble_log_archives
 from ataraxis_base_utilities import console, LogLevel
 
-from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces, extract_logged_camera_timestamps
+from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces
+from ataraxis_video_system.log_processing import extract_logged_camera_timestamps
 
 # Since the VideoSystem and DataLogger classes use multiprocessing under-the-hood, the runtime must be protected by the
 # __main__ guard.

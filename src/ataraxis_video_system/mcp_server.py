@@ -7,11 +7,20 @@ library's core features.
 
 from typing import Any, Literal  # pragma: no cover
 from pathlib import Path  # pragma: no cover
-from threading import Thread  # pragma: no cover
-from dataclasses import dataclass  # pragma: no cover
+from threading import Lock, Thread  # pragma: no cover
+import contextlib  # pragma: no cover
+from dataclasses import field, dataclass  # pragma: no cover
 
 import numpy as np  # pragma: no cover
+from ataraxis_time import (  # pragma: no cover  # pragma: no cover
+    PrecisionTimer,
+    TimerPrecisions,
+    TimestampFormats,
+    TimestampPrecisions,
+    get_timestamp,
+)
 from mcp.server.fastmcp import FastMCP  # pragma: no cover
+from ataraxis_base_utilities import resolve_worker_count  # pragma: no cover
 from ataraxis_data_structures import DataLogger, ProcessingStatus, ProcessingTracker  # pragma: no cover
 
 from .saver import (
@@ -28,7 +37,6 @@ from .camera import (
     check_cti_file,
     discover_camera_ids,
 )  # pragma: no cover
-from .pipeline import _TRACKER_FILENAME, process_logs, discover_log_archives  # pragma: no cover
 from .video_system import VideoSystem  # pragma: no cover
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
@@ -36,6 +44,14 @@ from .configuration import (
     read_genicam_node as read_node_info,
     format_genicam_node,
     enumerate_genicam_nodes,
+)  # pragma: no cover
+from .log_processing import (
+    TRACKER_FILENAME,
+    LOG_ARCHIVE_SUFFIX,
+    execute_job,
+    find_log_archive,
+    resolve_recording_roots,
+    initialize_processing_tracker,
 )  # pragma: no cover
 
 mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)  # pragma: no cover
@@ -46,6 +62,48 @@ _active_session: VideoSystem | None = None  # pragma: no cover
 
 _active_logger: DataLogger | None = None  # pragma: no cover
 """Stores the DataLogger instance associated with the active video session, or None when no session is running."""
+
+
+@dataclass(slots=True)  # pragma: no cover
+class _PendingJob:  # pragma: no cover
+    """Describes a single timestamp extraction job queued for execution."""
+
+    log_directory: Path
+    """The path to the DataLogger output directory containing the log archive."""
+    output_directory: Path
+    """The path to the output directory for this log directory's processed data."""
+    tracker_path: Path
+    """The path to the ProcessingTracker file that tracks this job."""
+    job_id: str
+    """The unique hexadecimal identifier for this job in the tracker."""
+    source_id: str
+    """The source ID string identifying the log archive to process."""
+
+
+@dataclass(slots=True)  # pragma: no cover
+class _JobExecutionState:  # pragma: no cover
+    """Tracks runtime state for batch job execution."""
+
+    all_jobs: dict[str, _PendingJob] = field(default_factory=dict)
+    """All submitted jobs keyed by job_id."""
+    pending_queue: list[_PendingJob] = field(default_factory=list)
+    """Jobs awaiting dispatch."""
+    active_threads: dict[str, Thread] = field(default_factory=dict)
+    """Currently running job_id to Thread mapping."""
+    max_parallel_jobs: int = 1
+    """The maximum number of jobs to execute concurrently."""
+    workers_per_job: int = -1
+    """The number of CPU cores to allocate per job."""
+    lock: Lock = field(default_factory=Lock)
+    """Thread synchronization lock for execution state access."""
+    manager_thread: Thread | None = None
+    """Background execution manager thread reference."""
+    canceled: bool = False
+    """Indicates whether the execution session has been canceled."""
+
+
+_job_execution_state: _JobExecutionState | None = None  # pragma: no cover
+"""Stores the active execution state for batch log processing jobs."""  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
@@ -388,7 +446,7 @@ def read_genicam_node(
     """
     blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
 
-    # Opens a temporary connection to the camera. system_id=0 is a placeholder since we only need node map access,
+    # Opens a temporary connection to the camera. system_id=0 is a placeholder since only node map access is needed,
     # not a full VideoSystem lifecycle.
     camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
@@ -542,76 +600,23 @@ def load_genicam_config(
         camera.disconnect()
 
 
-@dataclass  # pragma: no cover
-class _ProcessingBatchState:  # pragma: no cover
-    """Tracks state for background log processing operations."""
-
-    log_directory: Path
-    """The path to the directory containing the log archives being processed."""
-    output_directory: Path
-    """The path to the output directory where processed files and the tracker are written."""
-    log_ids: list[str] | None = None
-    """Optional list of source log IDs being processed, or None for all archives."""
-    thread: Thread | None = None
-    """The background thread running the processing, or None if not yet started."""
-    completed: bool = False
-    """Indicates whether the processing thread has completed successfully."""
-    failed: bool = False
-    """Indicates whether the processing thread has encountered an error."""
-    error_message: str | None = None
-    """Stores the error message if the processing thread failed."""
-
-
-_processing_batch: _ProcessingBatchState | None = None  # pragma: no cover
-"""Stores the state of the currently active or most recently completed log processing operation."""  # pragma: no cover
-
-
-def _run_log_processing(  # pragma: no cover
-    log_directory: Path,
-    output_directory: Path,
-    log_ids: list[str] | None,
-    *,
-    process_timestamps: bool,
-    workers: int,
-) -> None:
-    """Executes log processing in a background thread and updates the batch state on completion.
-
-    Args:
-        log_directory: The path to the directory containing log archives.
-        output_directory: The path to the output directory.
-        log_ids: Optional list of source log IDs to filter.
-        process_timestamps: Determines whether to extract timestamps.
-        workers: The number of worker processes to use.
-    """
-    try:
-        process_logs(
-            log_directory=log_directory,
-            output_directory=output_directory,
-            log_ids=log_ids,
-            process_timestamps=process_timestamps,
-            workers=workers,
-        )
-        if _processing_batch is not None:
-            _processing_batch.completed = True
-    except Exception as error:
-        if _processing_batch is not None:
-            _processing_batch.failed = True
-            _processing_batch.error_message = f"{type(error).__name__}: {error}"
-
-
 @mcp.tool()  # pragma: no cover
-def discover_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Discovers all VideoSystem log archives in the target directory.
+def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers log archives under a root directory, grouped hierarchically by recording and log directory.
 
-    Scans the specified directory for .npz log archives matching the VideoSystem naming convention and returns
-    a mapping of source IDs to their file paths.
+    Recursively searches the root directory for .npz log archives matching the DataLogger naming convention.
+    Archives are grouped by their parent directory (DataLogger output, e.g., ``*_data_log/``), and recording
+    roots are resolved using unique path component detection to reliably identify recording session boundaries
+    regardless of directory depth or naming conventions. Each log directory is an independent processing unit
+    that can be passed directly to prepare_log_processing_batch_tool for targeted processing.
 
     Args:
-        root_directory: The absolute path to the directory to scan for log archives.
+        root_directory: The absolute path to the root directory to search for log archives. Searched recursively.
 
     Returns:
-        A dictionary containing the discovered archives mapping (source ID to file path string) and the total count,
-        or an error description if the directory is invalid.
+        A dictionary containing hierarchical 'recordings' mapping recording roots to their log directories and
+        source IDs, a flat 'log_directories' list for direct use with the batch preparation tool, the union of
+        all discovered source IDs in 'all_source_ids', and total counts.
     """
     root_path = Path(root_directory)
 
@@ -621,143 +626,348 @@ def discover_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
+    # Discovers all log archives and groups them by parent directory (DataLogger output directory).
+    log_dir_data: dict[Path, dict[str, Any]] = {}
+    all_source_ids: set[str] = set()
+    total_archives = 0
+
     try:
-        archives = discover_log_archives(log_directory=root_path)
-    except Exception as error:
-        return {"error": str(error)}
+        for path in sorted(root_path.rglob(f"*{LOG_ARCHIVE_SUFFIX}")):
+            source_id = path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+            if not source_id:
+                continue
+
+            log_dir = path.parent
+            if log_dir not in log_dir_data:
+                log_dir_data[log_dir] = {"source_ids": [], "archive_count": 0}
+
+            log_dir_data[log_dir]["source_ids"].append(source_id)
+            log_dir_data[log_dir]["archive_count"] += 1
+            all_source_ids.add(source_id)
+            total_archives += 1
+    except PermissionError as error:
+        return {"error": f"Permission denied during search: {error}"}
+
+    if not log_dir_data:
+        return {
+            "recordings": {},
+            "log_directories": [],
+            "all_source_ids": [],
+            "total_recordings": 0,
+            "total_log_directories": 0,
+            "total_archives": 0,
+        }
+
+    # Resolves recording roots from log directory paths using unique path component detection.
+    log_dir_paths = list(log_dir_data.keys())
+    try:
+        recording_roots = resolve_recording_roots(paths=log_dir_paths)
+    except RuntimeError:
+        # Falls back to using each log directory's parent as the recording root if unique component detection fails
+        # (e.g., single log directory where all components are trivially unique).
+        recording_roots = tuple(dict.fromkeys(log_dir.parent for log_dir in log_dir_paths))
+
+    # Builds a mapping from each log directory to its recording root by finding the longest matching root prefix.
+    log_dir_to_root: dict[Path, Path] = {}
+    for log_dir in log_dir_paths:
+        for root in recording_roots:
+            if log_dir == root or root in log_dir.parents:
+                log_dir_to_root[log_dir] = root
+                break
+        else:
+            # Falls back to the log directory's parent if no root prefix matches.
+            log_dir_to_root[log_dir] = log_dir.parent
+
+    # Groups log directories under their resolved recording roots for hierarchical display.
+    recordings: dict[str, dict[str, Any]] = {}
+    for log_dir, data in log_dir_data.items():
+        recording_root = str(log_dir_to_root[log_dir])
+        if recording_root not in recordings:
+            recordings[recording_root] = {"log_directories": {}}
+        recordings[recording_root]["log_directories"][str(log_dir)] = {
+            "source_ids": data["source_ids"],
+            "archive_count": data["archive_count"],
+        }
 
     return {
-        "archives": {source_id: str(path) for source_id, path in archives.items()},
-        "count": len(archives),
+        "recordings": recordings,
+        "log_directories": sorted(str(log_dir) for log_dir in log_dir_paths),
+        "all_source_ids": sorted(all_source_ids),
+        "total_recordings": len(recordings),
+        "total_log_directories": len(log_dir_data),
+        "total_archives": total_archives,
     }
 
 
 @mcp.tool()  # pragma: no cover
-def start_log_processing_tool(  # pragma: no cover
-    log_directory: str,
-    output_directory: str,
-    log_ids: list[str] | None = None,
-    *,
-    process_timestamps: bool = True,
-    workers: int = -1,
+def prepare_log_processing_batch_tool(  # pragma: no cover
+    log_directories: list[str],
+    source_ids: list[str] | None = None,
+    output_directories: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Starts background processing of VideoSystem log archives.
+    """Prepares an execution manifest for batch log processing without starting execution.
 
-    Discovers log archives in the specified directory and begins extracting timestamps on a background thread.
-    Returns immediately with confirmation. Use get_log_processing_status_tool to monitor progress.
+    Accepts a list of DataLogger output directories (log directories), each containing .npz log archives.
+    Initializes a ProcessingTracker with one timestamp-extraction job per source ID for each log directory.
+    Idempotent: if a tracker already exists for a log directory, returns the existing manifest with current
+    job statuses instead of reinitializing.
+
+    Use discover_recording_log_archives_tool first to obtain log directory paths. The discovery tool returns
+    both a hierarchical 'recordings' view for understanding the session structure and a flat 'log_directories'
+    list that can be passed directly to this tool. Select all discovered log directories for full processing,
+    or pass a subset for targeted processing of specific sessions or DataLogger outputs.
 
     Important:
-        The AI agent calling this tool MUST ask the user to provide the log_directory and output_directory paths
-        before calling this tool. Do not assume or guess these paths.
+        The AI agent calling this tool MUST ask the user to provide recording or log directory paths before
+        calling this tool. Do not assume or guess directory paths.
 
     Args:
-        log_directory: The absolute path to the directory containing .npz log archives. Must be provided by the user.
-        output_directory: The absolute path to the directory where output files are written. Must be provided by the
-            user. Created automatically if it does not exist.
-        log_ids: An optional list of source log IDs to process. If provided, only archives matching these IDs are
-            included. If not provided, all discovered archives are processed.
-        process_timestamps: Determines whether to extract camera frame timestamps.
-        workers: The number of CPU cores to use per job. Set to -1 for automatic allocation.
+        log_directories: The list of absolute paths to DataLogger output directories containing log archives.
+            Accepts paths from the 'log_directories' list returned by discover_recording_log_archives_tool,
+            or any directory containing .npz log archives directly (non-recursive, immediate children only).
+        source_ids: An optional list of source IDs to process. If not provided, all discovered source IDs in
+            each log directory are included.
+        output_directories: An optional list of absolute paths for per-log-directory output. Must match the
+            length of log_directories. When not provided, output is written to each log directory itself.
 
     Returns:
-        A dictionary containing confirmation of the started processing operation, or an error description.
+        A dictionary containing per-log-directory manifests in 'log_directories' with tracker paths and job
+        lists, total counts, and any invalid paths.
     """
-    global _processing_batch
+    if output_directories is not None and len(output_directories) != len(log_directories):
+        return {
+            "error": (
+                f"Length mismatch: {len(log_directories)} log directories but "
+                f"{len(output_directories)} output directories."
+            ),
+        }
 
-    log_path = Path(log_directory)
-    output_path = Path(output_directory)
+    result_log_dirs: dict[str, Any] = {}
+    invalid_paths: list[str] = []
+    total_jobs = 0
 
-    if not log_path.exists():
-        return {"error": f"Log directory does not exist: {log_directory}"}
+    for entry_index, log_dir_str in enumerate(log_directories):
+        log_dir_path = Path(log_dir_str)
 
-    if not log_path.is_dir():
-        return {"error": f"Log directory is not a directory: {log_directory}"}
+        if not log_dir_path.exists() or not log_dir_path.is_dir():
+            invalid_paths.append(log_dir_str)
+            continue
 
-    # Checks if processing is already active.
-    if _processing_batch is not None and _processing_batch.thread is not None and _processing_batch.thread.is_alive():
-        return {"error": "Log processing already in progress. Wait for it to complete or check status."}
+        # Discovers archives in this log directory (non-recursive, immediate children only).
+        discovered_ids = sorted(
+            path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+            for path in log_dir_path.glob(f"*{LOG_ARCHIVE_SUFFIX}")
+            if path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+        )
 
-    # Initializes batch state.
-    _processing_batch = _ProcessingBatchState(
-        log_directory=log_path,
-        output_directory=output_path,
-        log_ids=log_ids,
+        # Filters by requested source IDs if specified.
+        if source_ids is not None:
+            filtered_ids = [source_id for source_id in discovered_ids if source_id in source_ids]
+        else:
+            filtered_ids = discovered_ids
+
+        if not filtered_ids:
+            result_log_dirs[log_dir_str] = {"source_ids": [], "jobs": [], "tracker_path": None, "summary": {}}
+            continue
+
+        # Resolves the output directory for this log directory. Defaults to the log directory itself.
+        output_path = Path(output_directories[entry_index]) if output_directories is not None else log_dir_path
+
+        output_path.mkdir(parents=True, exist_ok=True)
+        tracker_path = output_path / TRACKER_FILENAME
+
+        if tracker_path.exists():
+            # Idempotent path: returns existing tracker state.
+            try:
+                tracker_status = _read_tracker_status(tracker_path=tracker_path)
+            except Exception:
+                tracker_status = {"jobs": [], "summary": {}}
+
+            result_log_dirs[log_dir_str] = {
+                "tracker_path": str(tracker_path),
+                "output_directory": str(output_path),
+                "source_ids": filtered_ids,
+                **tracker_status,
+            }
+            total_jobs += len(tracker_status.get("jobs", []))
+        else:
+            # Initializes a new tracker with jobs for the filtered source IDs.
+            job_ids = initialize_processing_tracker(output_directory=output_path, source_ids=filtered_ids)
+
+            jobs: list[dict[str, str]] = [
+                {
+                    "job_id": job_ids[source_id],
+                    "source_id": source_id,
+                    "status": "SCHEDULED",
+                    "log_directory": log_dir_str,
+                    "output_directory": str(output_path),
+                    "tracker_path": str(tracker_path),
+                }
+                for source_id in filtered_ids
+            ]
+
+            result_log_dirs[log_dir_str] = {
+                "tracker_path": str(tracker_path),
+                "output_directory": str(output_path),
+                "source_ids": filtered_ids,
+                "jobs": jobs,
+                "summary": {
+                    "total": len(jobs),
+                    "succeeded": 0,
+                    "failed": 0,
+                    "running": 0,
+                    "scheduled": len(jobs),
+                },
+            }
+            total_jobs += len(jobs)
+
+    result: dict[str, Any] = {
+        "success": True,
+        "log_directories": result_log_dirs,
+        "total_log_directories": len(result_log_dirs),
+        "total_jobs": total_jobs,
+    }
+
+    if invalid_paths:
+        result["invalid_paths"] = invalid_paths
+
+    return result
+
+
+@mcp.tool()  # pragma: no cover
+def execute_log_processing_jobs_tool(  # pragma: no cover
+    jobs: list[dict[str, str]],
+    *,
+    workers_per_job: int = -1,
+    max_parallel_jobs: int = -1,
+) -> dict[str, Any]:
+    """Dispatches log processing jobs for background execution with resource allocation.
+
+    Takes job descriptors from the manifest produced by prepare_log_processing_batch_tool and starts a background
+    execution manager that dispatches jobs with the resolved worker and parallelism counts.
+
+    Important:
+        Only one execution session can be active at a time. Use cancel_log_processing_tool to cancel an active
+        session before starting a new one.
+
+    Args:
+        jobs: The list of job descriptors, each a dictionary with 'log_directory', 'output_directory',
+            'tracker_path', 'job_id', and 'source_id' keys.
+        workers_per_job: The number of CPU cores per job. Set to -1 for automatic resolution.
+        max_parallel_jobs: The maximum number of concurrent jobs. Set to -1 for automatic resolution (defaults to 1).
+
+    Returns:
+        A dictionary containing a 'started' flag, 'total_jobs', resolved resource allocation, and any invalid jobs.
+    """
+    global _job_execution_state
+
+    # Enforces single-session constraint.
+    if (
+        _job_execution_state is not None
+        and _job_execution_state.manager_thread is not None
+        and _job_execution_state.manager_thread.is_alive()
+    ):
+        return {"error": "An execution session is already active. Cancel it first or wait for completion."}
+
+    # Validates and builds pending jobs.
+    required_keys = {"log_directory", "output_directory", "tracker_path", "job_id", "source_id"}
+    pending: list[_PendingJob] = []
+    all_jobs: dict[str, _PendingJob] = {}
+    invalid_jobs: list[dict[str, str]] = []
+
+    for job_dict in jobs:
+        if not required_keys.issubset(job_dict.keys()):
+            invalid_jobs.append({**job_dict, "error": f"Missing required keys: {required_keys - job_dict.keys()}"})
+            continue
+
+        tracker_path = Path(job_dict["tracker_path"])
+        if not tracker_path.exists():
+            invalid_jobs.append({**job_dict, "error": f"Tracker file not found: {job_dict['tracker_path']}"})
+            continue
+
+        pending_job = _PendingJob(
+            log_directory=Path(job_dict["log_directory"]),
+            output_directory=Path(job_dict["output_directory"]),
+            tracker_path=tracker_path,
+            job_id=job_dict["job_id"],
+            source_id=job_dict["source_id"],
+        )
+        pending.append(pending_job)
+        all_jobs[pending_job.job_id] = pending_job
+
+    if not pending:
+        return {"error": "No valid jobs to execute.", "invalid_jobs": invalid_jobs}
+
+    # Resolves resource allocation.
+    resolved_workers = resolve_worker_count(requested_workers=workers_per_job)
+    resolved_parallel = max_parallel_jobs if max_parallel_jobs > 0 else 1
+
+    # Creates execution state and starts the manager thread.
+    _job_execution_state = _JobExecutionState(
+        all_jobs=all_jobs,
+        pending_queue=pending,
+        max_parallel_jobs=resolved_parallel,
+        workers_per_job=resolved_workers,
     )
 
-    # Starts processing on a background daemon thread.
-    thread = Thread(
-        target=_run_log_processing,
-        kwargs={
-            "log_directory": log_path,
-            "output_directory": output_path,
-            "log_ids": log_ids,
-            "process_timestamps": process_timestamps,
-            "workers": workers,
-        },
-        daemon=True,
-    )
-    thread.start()
-    _processing_batch.thread = thread
+    manager = Thread(target=_job_execution_manager, daemon=True)
+    manager.start()
+    _job_execution_state.manager_thread = manager
 
     result: dict[str, Any] = {
         "started": True,
-        "log_directory": log_directory,
-        "output_directory": output_directory,
-        "workers": workers,
+        "total_jobs": len(pending),
+        "workers_per_job": resolved_workers,
+        "max_parallel_jobs": resolved_parallel,
     }
 
-    if log_ids is not None:
-        result["log_ids"] = log_ids
+    if invalid_jobs:
+        result["invalid_jobs"] = invalid_jobs
 
     return result
 
 
 @mcp.tool()  # pragma: no cover
 def get_log_processing_status_tool() -> dict[str, Any]:  # pragma: no cover
-    """Returns the current status of background log processing.
+    """Returns the current status of the active log processing execution session.
 
-    Reports thread-level status and per-job progress from the processing tracker. If no processing has been
-    started, returns an inactive status.
+    Reads ProcessingTracker files from disk for each job to report per-job progress. If no execution session
+    exists, returns an inactive status.
 
     Returns:
-        A dictionary containing the processing status, per-job details from the tracker, and a summary of job
-        counts by status.
+        A dictionary containing an 'active' flag, per-job status entries in 'jobs', and a 'summary' with counts
+        for pending, running, succeeded, and failed jobs.
     """
-    if _processing_batch is None:
-        return {"active": False, "message": "No log processing has been started."}
+    if _job_execution_state is None:
+        return {"active": False, "message": "No execution session exists."}
 
-    # Determines thread-level status.
-    thread_alive = _processing_batch.thread is not None and _processing_batch.thread.is_alive()
+    state = _job_execution_state
+    manager_alive = state.manager_thread is not None and state.manager_thread.is_alive()
 
-    result: dict[str, Any] = {
-        "active": thread_alive,
-        "completed": _processing_batch.completed,
-        "failed": _processing_batch.failed,
-        "log_directory": str(_processing_batch.log_directory),
-        "output_directory": str(_processing_batch.output_directory),
-    }
+    # Reads status from tracker files for each job.
+    job_details: list[dict[str, Any]] = []
+    succeeded_count = 0
+    failed_count = 0
+    running_count = 0
+    scheduled_count = 0
 
-    if _processing_batch.error_message is not None:
-        result["error_message"] = _processing_batch.error_message
+    # Groups jobs by tracker path to minimize file reads.
+    tracker_jobs: dict[Path, list[_PendingJob]] = {}
+    for job in state.all_jobs.values():
+        tracker_jobs.setdefault(job.tracker_path, []).append(job)
 
-    # Reads per-job status from the tracker file if it exists.
-    tracker_path = _processing_batch.output_directory / _TRACKER_FILENAME
-    if tracker_path.exists():
+    for tracker_path, path_jobs in tracker_jobs.items():
         try:
             tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
         except Exception:
-            return result
+            job_details.extend(
+                {"job_id": job.job_id, "source_id": job.source_id, "status": "UNKNOWN"} for job in path_jobs
+            )
+            continue
 
-        if tracker.jobs:
-            job_details: list[dict[str, str]] = []
-            succeeded_count = 0
-            failed_count = 0
-            running_count = 0
-            scheduled_count = 0
-
-            for _job_id, job_state in tracker.jobs.items():
-                # Reads the source ID directly from the job's specifier field.
-                source_id = job_state.specifier or _job_id[:8]
+        for job in path_jobs:
+            if job.job_id in tracker.jobs:
+                job_state = tracker.jobs[job.job_id]
                 status = job_state.status
 
                 if status == ProcessingStatus.SUCCEEDED:
@@ -769,23 +979,427 @@ def get_log_processing_status_tool() -> dict[str, Any]:  # pragma: no cover
                 else:
                     scheduled_count += 1
 
-                job_detail: dict[str, str] = {"source_id": source_id, "status": status.name}
+                entry: dict[str, Any] = {"job_id": job.job_id, "source_id": job.source_id, "status": status.name}
                 if job_state.error_message is not None:
-                    job_detail["error_message"] = job_state.error_message
-                job_details.append(job_detail)
+                    entry["error_message"] = job_state.error_message
+                job_details.append(entry)
+            else:
+                job_details.append({"job_id": job.job_id, "source_id": job.source_id, "status": "UNKNOWN"})
 
-            result["jobs"] = job_details
-            result["summary"] = {
-                "total": len(tracker.jobs),
-                "succeeded": succeeded_count,
-                "failed": failed_count,
-                "running": running_count,
-                "scheduled": scheduled_count,
-            }
+    return {
+        "active": manager_alive,
+        "canceled": state.canceled,
+        "jobs": job_details,
+        "summary": {
+            "total": len(state.all_jobs),
+            "succeeded": succeeded_count,
+            "failed": failed_count,
+            "running": running_count,
+            "scheduled": scheduled_count,
+        },
+    }
 
-    return result
+
+@mcp.tool()  # pragma: no cover
+def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
+    """Returns timing information for all jobs in the active execution session.
+
+    Reports elapsed time for running jobs and duration for completed jobs using microsecond-precision UTC
+    timestamps from ProcessingTracker.
+
+    Returns:
+        A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary with
+        total elapsed seconds and throughput.
+    """
+    if _job_execution_state is None:
+        return {"active": False, "message": "No execution session exists."}
+
+    state = _job_execution_state
+    manager_alive = state.manager_thread is not None and state.manager_thread.is_alive()
+    current_us = int(get_timestamp(output_format=TimestampFormats.INTEGER, precision=TimestampPrecisions.MICROSECOND))
+
+    job_timing: list[dict[str, Any]] = []
+    earliest_start: int | None = None
+    completed_count = 0
+    failed_count = 0
+
+    # Groups jobs by tracker path to minimize file reads.
+    tracker_jobs: dict[Path, list[_PendingJob]] = {}
+    for job in state.all_jobs.values():
+        tracker_jobs.setdefault(job.tracker_path, []).append(job)
+
+    for tracker_path, path_jobs in tracker_jobs.items():
+        try:
+            tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
+        except Exception:  # noqa: S112
+            continue
+
+        for job in path_jobs:
+            if job.job_id not in tracker.jobs:
+                continue
+
+            job_info = tracker.jobs[job.job_id]
+            entry: dict[str, Any] = {"job_id": job.job_id, "source_id": job.source_id}
+
+            if job_info.started_at is not None:
+                started_at_us = int(job_info.started_at)
+                entry["started_at"] = started_at_us
+                if earliest_start is None or started_at_us < earliest_start:
+                    earliest_start = started_at_us
+
+            if job_info.status == ProcessingStatus.RUNNING and job_info.started_at is not None:
+                entry["elapsed_seconds"] = round((current_us - int(job_info.started_at)) / 1_000_000, 2)
+
+            if job_info.completed_at is not None:
+                entry["completed_at"] = int(job_info.completed_at)
+                if job_info.started_at is not None:
+                    entry["duration_seconds"] = round(
+                        (int(job_info.completed_at) - int(job_info.started_at)) / 1_000_000, 2
+                    )
+
+            if job_info.status == ProcessingStatus.SUCCEEDED:
+                completed_count += 1
+            elif job_info.status == ProcessingStatus.FAILED:
+                failed_count += 1
+
+            job_timing.append(entry)
+
+    # Computes session-level statistics.
+    session: dict[str, Any] = {
+        "total_elapsed_seconds": round((current_us - earliest_start) / 1_000_000, 2) if earliest_start else 0.0,
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+        "running_count": sum(1 for j in job_timing if "elapsed_seconds" in j),
+        "pending_count": len(state.all_jobs) - completed_count - failed_count - sum(
+            1 for j in job_timing if "elapsed_seconds" in j
+        ),
+    }
+
+    if completed_count > 0 and earliest_start is not None:
+        elapsed_hours = (current_us - earliest_start) / 1_000_000 / 3600
+        if elapsed_hours > 0:
+            session["throughput_jobs_per_hour"] = round(completed_count / elapsed_hours, 2)
+
+    return {"active": manager_alive, "jobs": job_timing, "session": session}
 
 
+@mcp.tool()  # pragma: no cover
+def cancel_log_processing_tool() -> dict[str, Any]:  # pragma: no cover
+    """Cancels the active log processing execution session.
+
+    Clears the pending job queue so no new jobs are dispatched. Active jobs complete naturally but no new jobs
+    are started.
+
+    Returns:
+        A dictionary containing a 'canceled' flag, a 'message', and 'final_state' with counts for succeeded,
+        failed, and active jobs at the time of cancellation.
+    """
+    if _job_execution_state is None:
+        return {"canceled": False, "message": "No execution session is active."}
+
+    state = _job_execution_state
+
+    with state.lock:
+        state.canceled = True
+        cleared_count = len(state.pending_queue)
+        state.pending_queue.clear()
+        active_count = len(state.active_threads)
+
+    # Counts final job statuses from tracker files.
+    succeeded = 0
+    failed = 0
+    tracker_paths: set[Path] = {job.tracker_path for job in state.all_jobs.values()}
+
+    for tracker_path in tracker_paths:
+        try:
+            tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
+            for job_state in tracker.jobs.values():
+                if job_state.status == ProcessingStatus.SUCCEEDED:
+                    succeeded += 1
+                elif job_state.status == ProcessingStatus.FAILED:
+                    failed += 1
+        except Exception:  # noqa: S110
+            pass
+
+    return {
+        "canceled": True,
+        "message": f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing.",
+        "final_state": {
+            "succeeded_jobs": succeeded,
+            "failed_jobs": failed,
+            "active_jobs_at_cancel": active_count,
+        },
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def reset_log_processing_jobs_tool(  # pragma: no cover
+    tracker_path: str,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Resets specific jobs or all jobs in a tracker to scheduled status for re-runs.
+
+    Args:
+        tracker_path: The absolute path to the ProcessingTracker YAML file.
+        source_ids: An optional list of source IDs whose jobs should be reset. If not provided, all jobs are reset.
+
+    Returns:
+        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses.
+    """
+    path = Path(tracker_path)
+
+    if not path.exists():
+        return {"error": f"Tracker file not found: {tracker_path}"}
+
+    try:
+        tracker = ProcessingTracker.from_yaml(file_path=path)
+    except Exception as error:
+        return {"error": f"Unable to read tracker: {error}"}
+
+    # Identifies which job IDs to reset based on source_ids filter.
+    target_ids: set[str] = set()
+    if source_ids is not None:
+        source_id_set = set(source_ids)
+        for job_id, job_state in tracker.jobs.items():
+            if job_state.specifier in source_id_set:
+                target_ids.add(job_id)
+    else:
+        target_ids = set(tracker.jobs.keys())
+
+    if not target_ids:
+        return {"reset": False, "message": "No matching jobs found to reset."}
+
+    # Collects (job_name, specifier) tuples for the jobs to reset.
+    reset_jobs: list[tuple[str, str]] = [
+        (tracker.jobs[job_id].job_name, tracker.jobs[job_id].specifier) for job_id in target_ids
+    ]
+
+    # Removes target jobs and re-initializes them.
+    for job_id in target_ids:
+        del tracker.jobs[job_id]
+    tracker.to_yaml(file_path=path)
+
+    # Re-initializes the reset jobs.
+    reset_tracker = ProcessingTracker(file_path=path)
+    reset_tracker.initialize_jobs(jobs=reset_jobs)
+
+    # Reads back the updated state for the response.
+    try:
+        updated_status = _read_tracker_status(tracker_path=path)
+    except Exception:
+        updated_status = {"jobs": [], "summary": {}}
+
+    return {"reset": True, "jobs_reset": len(target_ids), **updated_status}
+
+
+@mcp.tool()  # pragma: no cover
+def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers and summarizes processing status for all log directories under a root directory.
+
+    Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker
+    corresponds to a single DataLogger output directory.
+
+    Args:
+        root_directory: The absolute path to the root directory to search for tracker files.
+
+    Returns:
+        A dictionary containing per-log-directory status summaries and aggregate counts.
+    """
+    root_path = Path(root_directory)
+
+    if not root_path.exists():
+        return {"error": f"Directory does not exist: {root_directory}"}
+
+    if not root_path.is_dir():
+        return {"error": f"Path is not a directory: {root_directory}"}
+
+    log_dir_statuses: list[dict[str, Any]] = []
+    aggregate_succeeded = 0
+    aggregate_failed = 0
+    aggregate_running = 0
+    aggregate_scheduled = 0
+
+    for tracker_path in sorted(root_path.rglob(TRACKER_FILENAME)):
+        log_dir = str(tracker_path.parent)
+        try:
+            status = _read_tracker_status(tracker_path=tracker_path)
+            summary = status.get("summary", {})
+
+            aggregate_succeeded += summary.get("succeeded", 0)
+            aggregate_failed += summary.get("failed", 0)
+            aggregate_running += summary.get("running", 0)
+            aggregate_scheduled += summary.get("scheduled", 0)
+
+            # Derives a high-level status from job counts.
+            total = summary.get("total", 0)
+            if summary.get("failed", 0) > 0:
+                dir_status = "failed"
+            elif summary.get("succeeded", 0) == total and total > 0:
+                dir_status = "completed"
+            elif summary.get("running", 0) > 0:
+                dir_status = "processing"
+            elif summary.get("scheduled", 0) == total and total > 0:
+                dir_status = "not_started"
+            else:
+                dir_status = "in_progress"
+
+            log_dir_statuses.append({
+                "log_directory": log_dir,
+                "tracker_path": str(tracker_path),
+                "status": dir_status,
+                **status,
+            })
+        except Exception:
+            log_dir_statuses.append({
+                "log_directory": log_dir,
+                "tracker_path": str(tracker_path),
+                "status": "error",
+                "error": "Unable to read tracker file.",
+            })
+
+    return {
+        "log_directories": log_dir_statuses,
+        "total_log_directories": len(log_dir_statuses),
+        "summary": {
+            "succeeded": aggregate_succeeded,
+            "failed": aggregate_failed,
+            "running": aggregate_running,
+            "scheduled": aggregate_scheduled,
+        },
+    }
+
+
+def _job_worker(job: _PendingJob, workers: int) -> None:  # pragma: no cover
+    """Executes a single timestamp extraction job in a background thread.
+
+    Resolves the log archive path, runs timestamp extraction, writes output, and updates the ProcessingTracker.
+    If the pipeline terminates without updating the tracker to a terminal state, marks the job as failed.
+
+    Args:
+        job: The pending job descriptor containing directory paths, source ID, and job ID.
+        workers: The number of CPU cores to allocate for parallel processing within this job.
+    """
+    tracker = ProcessingTracker(file_path=job.tracker_path)
+
+    # execute_job already calls tracker.fail_job on exception, so the tracker state is updated. The exception
+    # is suppressed here to prevent it from terminating the worker thread.
+    with contextlib.suppress(Exception):
+        log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
+        execute_job(
+            log_path=log_path,
+            output_directory=job.output_directory,
+            source_id=job.source_id,
+            job_id=job.job_id,
+            workers=workers,
+            tracker=tracker,
+            display_progress=False,
+        )
+
+    # Failsafe: if the tracker was not updated to a terminal state, marks the job as failed.
+    try:
+        reloaded = ProcessingTracker.from_yaml(file_path=job.tracker_path)
+        if job.job_id in reloaded.jobs:
+            status = reloaded.jobs[job.job_id].status
+            if status not in (ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED):
+                tracker.fail_job(job_id=job.job_id, error_message="Job terminated without updating tracker status.")
+    except Exception:  # noqa: S110
+        pass
+
+
+def _job_execution_manager() -> None:  # pragma: no cover
+    """Dispatches queued jobs with concurrency control.
+
+    Runs as a daemon thread, polling at 1-second intervals. Dispatches jobs from the pending queue up to the
+    max_parallel_jobs limit. Exits when the queue is empty and no active threads remain.
+    """
+    if _job_execution_state is None:
+        return
+
+    state = _job_execution_state
+    poll_timer = PrecisionTimer(precision=TimerPrecisions.SECOND)
+
+    while True:
+        with state.lock:
+            # Cleans up completed threads.
+            completed_ids = [
+                job_id for job_id, thread in state.active_threads.items() if not thread.is_alive()
+            ]
+            for job_id in completed_ids:
+                del state.active_threads[job_id]
+
+            # Exits when no pending jobs and no active threads remain.
+            if not state.pending_queue and not state.active_threads:
+                break
+
+            # Stops dispatching new jobs if canceled. Waits for active jobs to finish.
+            if state.canceled:
+                if not state.active_threads:
+                    break
+            else:
+                # Dispatches jobs up to the concurrency limit.
+                while state.pending_queue and len(state.active_threads) < state.max_parallel_jobs:
+                    job = state.pending_queue.pop(0)
+                    thread = Thread(
+                        target=_job_worker,
+                        kwargs={"job": job, "workers": state.workers_per_job},
+                        daemon=True,
+                    )
+                    thread.start()
+                    state.active_threads[job.job_id] = thread
+
+        # Polls at 1-second intervals outside the lock to avoid blocking other threads.
+        poll_timer.delay(delay=1, allow_sleep=True)
+
+
+def _read_tracker_status(tracker_path: Path) -> dict[str, Any]:  # pragma: no cover
+    """Reads a log processing tracker file and returns structured per-job status information.
+
+    Args:
+        tracker_path: The path to the ProcessingTracker YAML file.
+
+    Returns:
+        A dictionary containing per-job status details and summary counts.
+    """
+    tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
+
+    job_details: list[dict[str, Any]] = []
+    succeeded_count = 0
+    failed_count = 0
+    running_count = 0
+    scheduled_count = 0
+
+    for job_id, job_state in tracker.jobs.items():
+        source_id = job_state.specifier or job_id[:8]
+        status = job_state.status
+
+        if status == ProcessingStatus.SUCCEEDED:
+            succeeded_count += 1
+        elif status == ProcessingStatus.FAILED:
+            failed_count += 1
+        elif status == ProcessingStatus.RUNNING:
+            running_count += 1
+        else:
+            scheduled_count += 1
+
+        entry: dict[str, Any] = {"job_id": job_id, "source_id": source_id, "status": status.name}
+        if job_state.error_message is not None:
+            entry["error_message"] = job_state.error_message
+        job_details.append(entry)
+
+    return {
+        "jobs": job_details,
+        "summary": {
+            "total": len(tracker.jobs),
+            "succeeded": succeeded_count,
+            "failed": failed_count,
+            "running": running_count,
+            "scheduled": scheduled_count,
+        },
+    }
+
+
+# Placed after all @mcp.tool() definitions so that all tools are registered with the FastMCP instance before the
+# server run loop is callable.
 def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:  # pragma: no cover
     """Starts the MCP server with the specified transport.
 

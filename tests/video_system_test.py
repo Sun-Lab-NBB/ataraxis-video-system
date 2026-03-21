@@ -15,8 +15,8 @@ from ataraxis_video_system import (
     OutputPixelFormats,
     EncoderSpeedPresets,
     check_ffmpeg_availability,
-    extract_logged_camera_timestamps,
 )
+from ataraxis_video_system.log_processing import extract_logged_camera_timestamps
 
 
 @pytest.fixture
