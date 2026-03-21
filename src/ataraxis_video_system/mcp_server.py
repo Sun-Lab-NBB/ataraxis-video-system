@@ -12,6 +12,7 @@ import contextlib  # pragma: no cover
 from dataclasses import field, dataclass  # pragma: no cover
 
 import numpy as np  # pragma: no cover
+import polars as pl  # pragma: no cover
 from ataraxis_time import (  # pragma: no cover  # pragma: no cover
     PrecisionTimer,
     TimerPrecisions,
@@ -104,6 +105,15 @@ class _JobExecutionState:  # pragma: no cover
 
 _job_execution_state: _JobExecutionState | None = None  # pragma: no cover
 """Stores the active execution state for batch log processing jobs."""  # pragma: no cover
+
+_FEATHER_GLOB_PATTERN: str = "camera_*_timestamps.feather"  # pragma: no cover
+"""Glob pattern for discovering processed camera timestamp feather files."""  # pragma: no cover
+
+_FEATHER_PREFIX: str = "camera_"  # pragma: no cover
+"""Filename prefix for camera timestamp feather files."""  # pragma: no cover
+
+_FEATHER_SUFFIX: str = "_timestamps.feather"  # pragma: no cover
+"""Filename suffix for camera timestamp feather files."""  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
@@ -1271,6 +1281,303 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pr
             "running": aggregate_running,
             "scheduled": aggregate_scheduled,
         },
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def discover_processed_camera_logs_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers processed camera timestamp feather files under a root directory.
+
+    Recursively searches for feather files matching the ``camera_*_timestamps.feather`` naming convention produced by
+    the log processing pipeline. Groups results by parent directory and cross-references with processing tracker files
+    to identify fully processed, partially processed, and unprocessed directories.
+
+    Args:
+        root_directory: The absolute path to the root directory to search for feather files. Searched recursively.
+
+    Returns:
+        A dictionary containing per-directory feather file details grouped under 'directories', aggregate counts,
+        and a 'status_summary' section derived from cross-referencing tracker files when available.
+    """
+    root_path = Path(root_directory)
+
+    if not root_path.exists():
+        return {"error": f"Directory does not exist: {root_directory}"}
+
+    if not root_path.is_dir():
+        return {"error": f"Path is not a directory: {root_directory}"}
+
+    # Discovers all feather files and groups them by parent directory.
+    dir_data: dict[Path, list[dict[str, Any]]] = {}
+
+    try:
+        for path in sorted(root_path.rglob(_FEATHER_GLOB_PATTERN)):
+            source_id = path.name.removeprefix(_FEATHER_PREFIX).removesuffix(_FEATHER_SUFFIX)
+            if not source_id:
+                continue
+
+            parent = path.parent
+            if parent not in dir_data:
+                dir_data[parent] = []
+
+            dir_data[parent].append(
+                {
+                    "source_id": source_id,
+                    "path": str(path),
+                    "size_bytes": path.stat().st_size,
+                }
+            )
+    except PermissionError as error:
+        return {"error": f"Permission denied during search: {error}"}
+
+    if not dir_data:
+        return {
+            "directories": {},
+            "all_source_ids": [],
+            "total_directories": 0,
+            "total_files": 0,
+            "total_size_bytes": 0,
+            "status_summary": {
+                "fully_processed": 0,
+                "partially_processed": 0,
+                "unprocessed": 0,
+                "no_tracker": 0,
+            },
+        }
+
+    # Builds per-directory results and cross-references with tracker files.
+    all_source_ids: set[str] = set()
+    total_files = 0
+    total_size_bytes = 0
+    status_counts: dict[str, int] = {
+        "fully_processed": 0,
+        "partially_processed": 0,
+        "unprocessed": 0,
+        "no_tracker": 0,
+    }
+
+    directories: dict[str, dict[str, Any]] = {}
+    for directory, files in sorted(dir_data.items(), key=lambda item: item[0]):
+        source_ids = [entry["source_id"] for entry in files]
+        dir_size = sum(entry["size_bytes"] for entry in files)
+        all_source_ids.update(source_ids)
+        total_files += len(files)
+        total_size_bytes += dir_size
+
+        # Checks for a processing tracker in the same directory.
+        tracker_candidate = directory / TRACKER_FILENAME
+        tracker_path_str: str | None = None
+        if tracker_candidate.exists():
+            try:
+                tracker_status = _read_tracker_status(tracker_path=tracker_candidate)
+                tracker_source_ids = {job["source_id"] for job in tracker_status.get("jobs", [])}
+                summary = tracker_status.get("summary", {})
+                tracker_path_str = str(tracker_candidate)
+
+                # Classifies directory based on tracker state and feather file presence.
+                feather_source_set = set(source_ids)
+                if summary.get("succeeded", 0) == summary.get("total", 0) and feather_source_set >= tracker_source_ids:
+                    processing_status = "fully_processed"
+                elif feather_source_set:
+                    processing_status = "partially_processed"
+                else:
+                    processing_status = "unprocessed"
+            except Exception:
+                processing_status = "no_tracker"
+        else:
+            processing_status = "no_tracker"
+
+        status_counts[processing_status] += 1
+
+        directories[str(directory)] = {
+            "feather_files": files,
+            "source_ids": sorted(source_ids),
+            "file_count": len(files),
+            "total_size_bytes": dir_size,
+            "processing_status": processing_status,
+            "tracker_path": tracker_path_str,
+        }
+
+    return {
+        "directories": directories,
+        "all_source_ids": sorted(all_source_ids),
+        "total_directories": len(directories),
+        "total_files": total_files,
+        "total_size_bytes": total_size_bytes,
+        "status_summary": status_counts,
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def analyze_camera_frame_statistics_tool(  # pragma: no cover
+    feather_file: str,
+    drop_threshold_us: int = 0,
+    max_drop_locations: int = 50,
+) -> dict[str, Any]:  # pragma: no cover
+    """Reads a processed camera timestamp feather file and computes frame acquisition statistics.
+
+    Computes basic recording statistics (total frames, duration, estimated frame rate), inter-frame timing distribution
+    (mean, median, standard deviation, min, max), and frame drop analysis (gap detection, estimated drop count, drop
+    locations). Frame drops are identified as inter-frame intervals exceeding a threshold, which defaults to 2x the
+    median inter-frame interval when not specified.
+
+    Args:
+        feather_file: The absolute path to a camera timestamp feather file produced by the log processing pipeline.
+            Expected filename pattern: ``camera_{source_id}_timestamps.feather``.
+        drop_threshold_us: The inter-frame interval threshold in microseconds above which a gap is classified as a
+            frame drop. If set to 0 (default), the threshold is automatically computed as 2x the median inter-frame
+            interval.
+        max_drop_locations: The maximum number of frame drop locations to include in the output. Caps the
+            'drop_locations' list to prevent oversized responses. Defaults to 50.
+
+    Returns:
+        A dictionary containing 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' sections with computed
+        statistics, or an error dictionary if the file cannot be read.
+    """
+    file_path = Path(feather_file)
+
+    if not file_path.exists():
+        return {"error": f"File does not exist: {feather_file}"}
+
+    if not file_path.is_file():
+        return {"error": f"Path is not a file: {feather_file}"}
+
+    # Reads the feather file and validates the expected schema.
+    try:
+        dataframe = pl.read_ipc(source=file_path)
+    except Exception as error:
+        return {"error": f"Unable to read feather file: {error}"}
+
+    if "frame_time_us" not in dataframe.columns:
+        return {"error": f"Missing required 'frame_time_us' column. Found columns: {dataframe.columns}"}
+
+    timestamps = dataframe["frame_time_us"].to_numpy()
+    total_frames = len(timestamps)
+
+    # Handles edge cases for empty or single-frame recordings.
+    if total_frames == 0:
+        return {
+            "file": feather_file,
+            "basic_stats": {"total_frames": 0},
+            "inter_frame_timing": {},
+            "frame_drop_analysis": {},
+        }
+
+    if total_frames == 1:
+        return {
+            "file": feather_file,
+            "basic_stats": {
+                "total_frames": 1,
+                "first_timestamp_us": int(timestamps[0]),
+                "last_timestamp_us": int(timestamps[0]),
+                "duration_us": 0,
+                "duration_seconds": 0.0,
+                "estimated_fps": 0.0,
+            },
+            "inter_frame_timing": {},
+            "frame_drop_analysis": {},
+        }
+
+    # Computes basic recording statistics.
+    first_timestamp_us = int(timestamps[0])
+    last_timestamp_us = int(timestamps[-1])
+    duration_us = last_timestamp_us - first_timestamp_us
+    duration_seconds = round(duration_us / 1_000_000, 6)
+    estimated_fps = round((total_frames - 1) / (duration_us / 1_000_000), 3) if duration_us > 0 else 0.0
+
+    # Computes inter-frame interval statistics. Casts to int64 to handle potential uint64 underflow.
+    intervals_us = np.diff(timestamps).astype(np.int64)
+    mean_us = round(float(np.mean(intervals_us)), 2)
+    median_us = round(float(np.median(intervals_us)), 2)
+    std_us = round(float(np.std(intervals_us)), 2)
+    min_us = int(np.min(intervals_us))
+    max_us = int(np.max(intervals_us))
+
+    # Performs frame drop analysis using the specified or auto-detected threshold.
+    if drop_threshold_us > 0:
+        threshold = float(drop_threshold_us)
+        threshold_source = "user_specified"
+    else:
+        threshold = 2.0 * median_us
+        threshold_source = "auto_2x_median"
+
+    drop_mask = intervals_us > threshold
+    drop_indices = np.where(drop_mask)[0]
+    total_gaps_detected = len(drop_indices)
+
+    if total_gaps_detected > 0:
+        # Estimates the number of dropped frames per gap using the median interval as expected spacing.
+        expected_interval = median_us if median_us > 0 else 1.0
+        dropped_per_gap = np.round(intervals_us[drop_mask] / expected_interval).astype(np.int64) - 1
+        total_estimated_dropped_frames = int(np.sum(np.maximum(dropped_per_gap, 0)))
+
+        total_expected_frames = total_frames + total_estimated_dropped_frames
+        drop_rate_percent = round(total_estimated_dropped_frames / total_expected_frames * 100, 4)
+
+        longest_gap_us = int(np.max(intervals_us[drop_mask]))
+        longest_gap_ms = round(longest_gap_us / 1000, 4)
+
+        # Builds the capped drop locations list.
+        drop_locations: list[dict[str, Any]] = []
+        for index in drop_indices[:max_drop_locations]:
+            gap_us = int(intervals_us[index])
+            estimated_lost = max(round(gap_us / expected_interval) - 1, 0)
+            drop_locations.append(
+                {
+                    "frame_index": int(index),
+                    "gap_us": gap_us,
+                    "gap_ms": round(gap_us / 1000, 4),
+                    "estimated_frames_lost": estimated_lost,
+                }
+            )
+
+        frame_drop_analysis: dict[str, Any] = {
+            "threshold_us": round(threshold, 2),
+            "threshold_source": threshold_source,
+            "total_gaps_detected": total_gaps_detected,
+            "total_estimated_dropped_frames": total_estimated_dropped_frames,
+            "drop_rate_percent": drop_rate_percent,
+            "longest_gap_us": longest_gap_us,
+            "longest_gap_ms": longest_gap_ms,
+            "drop_locations": drop_locations,
+            "drop_locations_truncated": total_gaps_detected > max_drop_locations,
+        }
+    else:
+        frame_drop_analysis = {
+            "threshold_us": round(threshold, 2),
+            "threshold_source": threshold_source,
+            "total_gaps_detected": 0,
+            "total_estimated_dropped_frames": 0,
+            "drop_rate_percent": 0.0,
+            "longest_gap_us": 0,
+            "longest_gap_ms": 0.0,
+            "drop_locations": [],
+            "drop_locations_truncated": False,
+        }
+
+    return {
+        "file": feather_file,
+        "basic_stats": {
+            "total_frames": total_frames,
+            "first_timestamp_us": first_timestamp_us,
+            "last_timestamp_us": last_timestamp_us,
+            "duration_us": duration_us,
+            "duration_seconds": duration_seconds,
+            "estimated_fps": estimated_fps,
+        },
+        "inter_frame_timing": {
+            "mean_us": mean_us,
+            "median_us": median_us,
+            "std_us": std_us,
+            "min_us": min_us,
+            "max_us": max_us,
+            "mean_ms": round(mean_us / 1000, 4),
+            "median_ms": round(median_us / 1000, 4),
+            "std_ms": round(std_us / 1000, 4),
+            "min_ms": round(min_us / 1000, 4),
+            "max_ms": round(max_us / 1000, 4),
+        },
+        "frame_drop_analysis": frame_drop_analysis,
     }
 
 

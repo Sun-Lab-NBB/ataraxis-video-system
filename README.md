@@ -31,7 +31,8 @@ ___
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
 - Supports inspecting, modifying, saving, and loading GenICam camera configurations for reproducible setups.
-- Provides a log data processing pipeline for extracting frame acquisition timestamps from runtime log archives.
+- Provides a log data processing pipeline for extracting frame acquisition timestamps from runtime log archives,
+  with post-processing tools for frame timing analysis and frame drop detection.
 - Includes an MCP server for AI agent integration (compatible with Claude Desktop and other MCP clients).
 - Apache 2.0 License.
 
@@ -348,6 +349,8 @@ axvs mcp
 | `cancel_log_processing_tool`           | Cancels the active log processing execution session                              |
 | `reset_log_processing_jobs_tool`       | Resets failed or all jobs in a processing tracker for re-execution               |
 | `get_batch_status_overview_tool`       | Summarizes processing status for all log directories under a root directory      |
+| `discover_processed_camera_logs_tool`  | Discovers processed camera timestamp feather files under a root directory        |
+| `analyze_camera_frame_statistics_tool` | Computes frame timing statistics and frame drop analysis from a feather file     |
 
 #### Client Registration
 

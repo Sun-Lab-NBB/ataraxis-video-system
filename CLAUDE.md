@@ -133,7 +133,9 @@ video encoding using CPU or GPU.
   remote (single job by ID) execution modes. Outputs Polars DataFrames as Feather files.
 - **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`) enforcing a single
   active VideoSystem session at a time. Also exposes batch log processing tools for discovering, preparing,
-  executing, monitoring, and cancelling log processing jobs across multiple recording directories.
+  executing, monitoring, and cancelling log processing jobs across multiple recording directories. Includes
+  post-processing tools for discovering output feather files and analyzing camera frame statistics (inter-frame
+  timing distribution, frame drop detection and estimation).
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
