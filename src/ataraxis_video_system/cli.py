@@ -291,6 +291,7 @@ def live_run(
     video_system = VideoSystem(
         system_id=np.uint8(111),
         data_logger=logger,
+        name="live_camera",
         output_directory=output_directory,
         camera_interface=camera_interface,
         camera_index=camera_index,

@@ -33,14 +33,18 @@ from .saver import (
     check_ffmpeg_availability,
 )
 from .camera import CameraInterfaces, CameraInformation, add_cti_file, check_cti_file, discover_camera_ids
+from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, CameraSourceData
 from .video_system import VideoSystem
 from .configuration import DEFAULT_BLACKLISTED_NODES, GenicamNodeInfo, GenicamConfiguration
 from .log_processing import run_log_processing_pipeline
 
 __all__ = [
+    "CAMERA_MANIFEST_FILENAME",
     "DEFAULT_BLACKLISTED_NODES",
     "CameraInformation",
     "CameraInterfaces",
+    "CameraManifest",
+    "CameraSourceData",
     "EncoderSpeedPresets",
     "GenicamConfiguration",
     "GenicamNodeInfo",

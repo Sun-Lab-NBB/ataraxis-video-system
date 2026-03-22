@@ -392,6 +392,7 @@ def start_video_session(
         _active_session = VideoSystem(
             system_id=np.uint8(112),
             data_logger=_active_logger,
+            name="live_camera",
             output_directory=output_path,
             camera_interface=camera_interface,
             camera_index=camera_index,
@@ -414,6 +415,7 @@ def start_video_session(
         # Captures session configuration for status reporting. VideoSystem does not expose constructor parameters
         # as public properties, so they are stored here at creation time.
         _session_info = {
+            "name": "live_camera",
             "interface": interface.lower(),
             "camera_index": camera_index,
             "width": width,
@@ -644,6 +646,7 @@ def get_session_status() -> dict[str, Any]:  # pragma: no cover
 
     # Enriches the response with session configuration captured at creation time.
     if _session_info is not None:
+        result["name"] = _session_info["name"]
         result["interface"] = _session_info["interface"]
         result["camera_index"] = _session_info["camera_index"]
         result["resolution"] = f"{_session_info['width']}x{_session_info['height']}"

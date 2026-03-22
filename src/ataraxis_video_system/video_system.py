@@ -39,6 +39,7 @@ from .saver import (
     check_ffmpeg_availability,
 )
 from .camera import MockCamera, OpenCVCamera, CameraInterfaces, HarvestersCamera
+from .manifest import write_camera_manifest
 
 if TYPE_CHECKING:
     from multiprocessing.managers import SyncManager
@@ -75,6 +76,8 @@ class VideoSystem:
             terminal messages, video files).
         data_logger: An initialized DataLogger instance used to log the timestamps for all frames saved by this
             VideoSystem instance.
+        name: A colloquial human-readable name for this camera source (e.g., 'face_camera'). Written to the camera
+            manifest file alongside the system_id to identify the camera this VideoSystem instance controls.
         output_directory: The path to the output directory where to store the acquired frames as the .mp4 video file.
             Setting this argument to None disabled video saving functionality.
         camera_interface: The interface to use for working with the camera hardware. Must be one of the CameraInterfaces
@@ -143,6 +146,7 @@ class VideoSystem:
         self,
         system_id: np.uint8,
         data_logger: DataLogger,
+        name: str,
         output_directory: Path | None,
         camera_interface: CameraInterfaces | str = CameraInterfaces.OPENCV,
         camera_index: int = 0,
@@ -173,6 +177,14 @@ class VideoSystem:
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected an initialized "
                 f"DataLogger instance as the 'data_logger' argument value, but encountered {data_logger} of type "
                 f"{type(data_logger).__name__}."
+            )
+            console.error(message=message, error=TypeError)
+
+        # Ensures that the name is a non-empty string.
+        if not isinstance(name, str) or not name:
+            message = (
+                f"Unable to initialize the VideoSystem instance with id {system_id}. Expected a non-empty string "
+                f"as the 'name' argument value, but encountered {name!r} of type {type(name).__name__}."
             )
             console.error(message=message, error=TypeError)
 
@@ -407,6 +419,10 @@ class VideoSystem:
         self._producer_process: Process | None = None
         self._consumer_process: Process | None = None
         self._watchdog_thread: Thread | None = None
+
+        # Writes the camera manifest entry to the DataLogger output directory. The manifest identifies this
+        # archive set as axvs-produced and associates the system_id with the human-readable name.
+        write_camera_manifest(log_directory=data_logger.output_directory, source_id=int(self._system_id), name=name)
 
     def __del__(self) -> None:
         """Releases all reserved resources before the instance is garbage-collected."""
