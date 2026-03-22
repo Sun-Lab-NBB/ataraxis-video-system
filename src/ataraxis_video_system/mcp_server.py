@@ -12,6 +12,7 @@ from threading import Lock, Thread  # pragma: no cover
 import contextlib  # pragma: no cover
 import subprocess  # pragma: no cover
 from dataclasses import field, dataclass  # pragma: no cover
+from concurrent.futures import ProcessPoolExecutor  # pragma: no cover
 
 import numpy as np  # pragma: no cover
 import polars as pl  # pragma: no cover
@@ -28,6 +29,7 @@ from ataraxis_data_structures import (
     DataLogger,
     ProcessingStatus,
     ProcessingTracker,
+    delete_directory,
     assemble_log_archives,
 )  # pragma: no cover
 
@@ -56,6 +58,7 @@ from .configuration import (
 from .log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
+    CAMERA_DATA_DIRECTORY,
     PARALLEL_PROCESSING_THRESHOLD,
     execute_job,
     find_log_archive,
@@ -96,27 +99,39 @@ class _PendingJob:  # pragma: no cover
         """Returns the composite key that uniquely identifies this job across the entire batch, combining the tracker
         path with the job ID.
         """
-        return (str(self.tracker_path), self.job_id)
+        return str(self.tracker_path), self.job_id
+
+
+@dataclass(slots=True)  # pragma: no cover
+class _ActiveGroup:  # pragma: no cover
+    """Tracks a group of jobs executing sequentially with a shared ProcessPoolExecutor."""
+
+    source_id: str
+    """The shared source ID for all jobs in this group, or a unique identifier for single-job groups."""
+    jobs: list[_PendingJob]
+    """The jobs in this group, processed sequentially by the group worker thread."""
+    workers: int
+    """The number of CPU cores allocated to this group's ProcessPoolExecutor."""
+    thread: Thread
+    """The background thread executing the group."""
 
 
 @dataclass(slots=True)  # pragma: no cover
 class _JobExecutionState:  # pragma: no cover
     """Tracks runtime state for batch job execution with budget-based worker allocation.
 
-    The execution manager maintains a total worker budget and allocates cores to each job based on its archive size.
-    Large archives (>= 2000 messages) receive more workers, while small archives receive 1 worker since they process
-    sequentially regardless. The manager dispatches jobs greedily, filling available budget with smaller jobs when
-    large jobs cannot fit.
+    The execution manager groups pending jobs by source ID so that archives with similar sizes share a single
+    ProcessPoolExecutor. Each group is dispatched as one thread that processes its jobs sequentially, reusing the
+    pool across all archives in the group. This avoids the overhead of repeatedly spawning and tearing down worker
+    processes for archives of the same size.
     """
 
     all_jobs: dict[tuple[str, str], _PendingJob] = field(default_factory=dict)
     """All submitted jobs keyed by (tracker_path, job_id) dispatch key."""
     pending_queue: list[_PendingJob] = field(default_factory=list)
     """Jobs awaiting dispatch."""
-    active_threads: dict[tuple[str, str], Thread] = field(default_factory=dict)
-    """Currently running (tracker_path, job_id) dispatch key to Thread mapping."""
-    active_workers: dict[tuple[str, str], int] = field(default_factory=dict)
-    """Maps each active dispatch key to its allocated worker count."""
+    active_groups: list[_ActiveGroup] = field(default_factory=list)
+    """Currently executing job groups, each with its own thread and worker allocation."""
     job_message_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     """Maps each dispatch key to its archive message count, probed before execution."""
     worker_budget: int = 1
@@ -1105,8 +1120,10 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
         # Resolves the output directory for this log directory. Falls back to the log directory itself.
         output_path = Path(output_directories[entry_index]) if output_directories is not None else log_dir_path
 
-        output_path.mkdir(parents=True, exist_ok=True)
-        tracker_path = output_path / TRACKER_FILENAME
+        # Creates the camera_data subdirectory under the output path for tracker and feather files.
+        camera_data_path = output_path / CAMERA_DATA_DIRECTORY
+        camera_data_path.mkdir(parents=True, exist_ok=True)
+        tracker_path = camera_data_path / TRACKER_FILENAME
 
         if tracker_path.exists():
             # Idempotent path: returns existing tracker state.
@@ -1117,14 +1134,14 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
 
             result_log_dirs[log_dir_str] = {
                 "tracker_path": str(tracker_path),
-                "output_directory": str(output_path),
+                "output_directory": str(camera_data_path),
                 "source_ids": filtered_ids,
                 **tracker_status,
             }
             total_jobs += len(tracker_status.get("jobs", []))
         else:
             # Initializes a new tracker with jobs for the filtered source IDs.
-            job_ids = initialize_processing_tracker(output_directory=output_path, source_ids=filtered_ids)
+            job_ids = initialize_processing_tracker(output_directory=camera_data_path, source_ids=filtered_ids)
 
             jobs: list[dict[str, str]] = [
                 {
@@ -1132,7 +1149,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
                     "source_id": source_id,
                     "status": "SCHEDULED",
                     "log_directory": log_dir_str,
-                    "output_directory": str(output_path),
+                    "output_directory": str(camera_data_path),
                     "tracker_path": str(tracker_path),
                 }
                 for source_id in filtered_ids
@@ -1140,7 +1157,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
 
             result_log_dirs[log_dir_str] = {
                 "tracker_path": str(tracker_path),
-                "output_directory": str(output_path),
+                "output_directory": str(camera_data_path),
                 "source_ids": filtered_ids,
                 "jobs": jobs,
                 "summary": {
@@ -1207,7 +1224,7 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
     # Validates and builds pending jobs.
     required_keys = {"log_directory", "output_directory", "tracker_path", "job_id", "source_id"}
     pending: list[_PendingJob] = []
-    all_jobs: dict[str, _PendingJob] = {}
+    all_jobs: dict[tuple[str, str], _PendingJob] = {}
     invalid_jobs: list[dict[str, str]] = []
 
     for job_dict in jobs:
@@ -1444,7 +1461,7 @@ def cancel_log_processing_tool() -> dict[str, Any]:  # pragma: no cover
         state.canceled = True
         cleared_count = len(state.pending_queue)
         state.pending_queue.clear()
-        active_count = len(state.active_threads)
+        active_count = len(state.active_groups)
 
     # Counts final job statuses from tracker files.
     succeeded = 0
@@ -1464,7 +1481,7 @@ def cancel_log_processing_tool() -> dict[str, Any]:  # pragma: no cover
 
     return {
         "canceled": True,
-        "message": f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing.",
+        "message": f"Canceled. Cleared {cleared_count} pending job(s). {active_count} group(s) still completing.",
         "final_state": {
             "succeeded_jobs": succeeded,
             "failed_jobs": failed,
@@ -1910,6 +1927,127 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
     }
 
 
+@mcp.tool()  # pragma: no cover
+def get_log_directory_status_tool(output_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Returns the processing status for a specific output directory without scanning a root directory tree.
+
+    Checks for a ProcessingTracker file in the ``camera_data/`` subdirectory under the given path and returns
+    per-job status information. Use this tool for targeted status queries on individual log directories instead of
+    get_batch_status_overview_tool, which scans an entire directory tree recursively.
+
+    Args:
+        output_directory: The absolute path to the output directory that contains (or should contain) a
+            ``camera_data/`` subdirectory with processing results and a tracker file.
+
+    Returns:
+        A dictionary containing a 'status' field with the high-level processing state ('not_started', 'processing',
+        'completed', 'failed', or 'in_progress'), per-job details in 'jobs', a 'summary' with counts, and the
+        'tracker_path' when a tracker file exists.
+    """
+    output_path = Path(output_directory)
+
+    if not output_path.exists():
+        return {"error": f"Directory does not exist: {output_directory}"}
+
+    if not output_path.is_dir():
+        return {"error": f"Path is not a directory: {output_directory}"}
+
+    camera_data_path = output_path / CAMERA_DATA_DIRECTORY
+    tracker_path = camera_data_path / TRACKER_FILENAME
+
+    if not tracker_path.exists():
+        return {
+            "success": True,
+            "output_directory": output_directory,
+            "status": "not_started",
+            "message": "No processing tracker found.",
+        }
+
+    try:
+        tracker_status = _read_tracker_status(tracker_path=tracker_path)
+    except Exception as error:
+        return {
+            "success": False,
+            "output_directory": output_directory,
+            "tracker_path": str(tracker_path),
+            "error": f"Unable to read tracker: {error}",
+        }
+
+    summary = tracker_status.get("summary", {})
+    total = summary.get("total", 0)
+
+    if summary.get("failed", 0) > 0:
+        status = "failed"
+    elif summary.get("succeeded", 0) == total and total > 0:
+        status = "completed"
+    elif summary.get("running", 0) > 0:
+        status = "processing"
+    elif summary.get("scheduled", 0) == total and total > 0:
+        status = "not_started"
+    else:
+        status = "in_progress"
+
+    return {
+        "success": True,
+        "output_directory": output_directory,
+        "tracker_path": str(tracker_path),
+        "status": status,
+        **tracker_status,
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def clean_log_processing_output_tool(output_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Deletes the entire camera_data subdirectory under the given output directory.
+
+    Removes the ``camera_data/`` subdirectory and all of its contents, including processed feather files and the
+    processing tracker. Uses ``delete_directory`` from ataraxis-data-structures for parallel file deletion with
+    platform-safe retry logic. After cleanup, the output directory can be passed to prepare_log_processing_batch_tool
+    to reinitialize from scratch.
+
+    Args:
+        output_directory: The absolute path to the output directory containing the ``camera_data/`` subdirectory
+            to delete.
+
+    Returns:
+        A dictionary containing a 'cleaned' flag, the 'camera_data_path' that was deleted, and a 'message'
+        describing the outcome.
+    """
+    output_path = Path(output_directory)
+
+    if not output_path.exists():
+        return {"error": f"Directory does not exist: {output_directory}"}
+
+    if not output_path.is_dir():
+        return {"error": f"Path is not a directory: {output_directory}"}
+
+    camera_data_path = output_path / CAMERA_DATA_DIRECTORY
+
+    if not camera_data_path.exists():
+        return {
+            "cleaned": True,
+            "output_directory": output_directory,
+            "message": "No camera_data subdirectory found. Nothing to clean.",
+        }
+
+    try:
+        delete_directory(directory_path=camera_data_path)
+    except Exception as error:
+        return {
+            "cleaned": False,
+            "output_directory": output_directory,
+            "camera_data_path": str(camera_data_path),
+            "error": f"Unable to delete camera_data directory: {error}",
+        }
+
+    return {
+        "cleaned": True,
+        "output_directory": output_directory,
+        "camera_data_path": str(camera_data_path),
+        "message": "Deleted camera_data directory and all contents.",
+    }
+
+
 def _probe_archive_message_count(job: _PendingJob) -> int:  # pragma: no cover
     """Probes the message count of a job's log archive by reading the .npz zip directory.
 
@@ -1957,84 +2095,69 @@ def _compute_sqrt_minimum(message_count: int) -> int:  # pragma: no cover
     return max(_WORKER_MULTIPLE, round(raw / _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
 
 
-def _resolve_parallel_allocation(budget: int, parallel_job_count: int, min_workers: int) -> tuple[int, int]:
-    """Resolves worker allocation and concurrency for parallel jobs using saturating budget division.
+def _group_worker(jobs: list[_PendingJob], workers: int, state: _JobExecutionState) -> None:  # pragma: no cover
+    """Executes a group of jobs sequentially using a shared ProcessPoolExecutor.
 
-    Divides the available budget evenly among concurrent parallel jobs, snapping worker counts to multiples of
-    ``_WORKER_MULTIPLE``. If the resulting per-job allocation falls below the sqrt-derived minimum, reduces
-    concurrency until each job receives at least ``min_workers`` cores.
-
-    Args:
-        budget: The total number of available CPU cores for parallel jobs.
-        parallel_job_count: The number of parallel jobs awaiting dispatch.
-        min_workers: The minimum workers per job derived from the largest archive's sqrt scaling.
-
-    Returns:
-        A tuple of (workers_per_job, concurrent_job_count).
-    """
-    # Determines the maximum concurrency that fits in the budget at the minimum allocation granularity.
-    max_concurrent = min(parallel_job_count, budget // _WORKER_MULTIPLE)
-    if max_concurrent < 1:
-        return max(1, budget), 1
-
-    concurrent = max_concurrent
-    per_job_raw = budget // concurrent
-    per_job = max(_WORKER_MULTIPLE, (per_job_raw // _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
-
-    # Reduces concurrency until each job receives at least the sqrt-derived minimum workers.
-    while per_job < min_workers and concurrent > 1:
-        concurrent -= 1
-        per_job_raw = budget // concurrent
-        per_job = max(_WORKER_MULTIPLE, (per_job_raw // _WORKER_MULTIPLE) * _WORKER_MULTIPLE)
-
-    return per_job, concurrent
-
-
-def _job_worker(job: _PendingJob, workers: int) -> None:  # pragma: no cover
-    """Executes a single timestamp extraction job in a background thread.
-
-    Resolves the log archive path, runs timestamp extraction, writes output, and updates the ProcessingTracker.
-    If the pipeline terminates without updating the tracker to a terminal state, marks the job as failed.
+    Creates one ProcessPoolExecutor for the entire group and processes each job in sequence, reusing the pool
+    across all archives. This avoids the overhead of spawning and tearing down worker processes for each individual
+    archive. Checks for cancellation between jobs to allow responsive shutdown. If a job's tracker is not updated
+    to a terminal state, marks it as failed.
 
     Args:
-        job: The pending job descriptor containing directory paths, source ID, and job ID.
-        workers: The number of CPU cores to allocate for parallel processing within this job.
+        jobs: The list of pending job descriptors to process sequentially.
+        workers: The number of CPU cores allocated to this group's ProcessPoolExecutor.
+        state: The execution state, checked for cancellation between jobs.
     """
-    tracker = ProcessingTracker(file_path=job.tracker_path)
+    shared_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
 
-    # execute_job already calls tracker.fail_job on exception, so the tracker state is updated. The exception
-    # is suppressed here to prevent it from terminating the worker thread.
-    with contextlib.suppress(Exception):
-        log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
-        execute_job(
-            log_path=log_path,
-            output_directory=job.output_directory,
-            source_id=job.source_id,
-            job_id=job.job_id,
-            workers=workers,
-            tracker=tracker,
-            display_progress=False,
-        )
-
-    # Failsafe: if the tracker was not updated to a terminal state, marks the job as failed.
     try:
-        reloaded = ProcessingTracker.from_yaml(file_path=job.tracker_path)
-        if job.job_id in reloaded.jobs:
-            status = reloaded.jobs[job.job_id].status
-            if status not in (ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED):
-                tracker.fail_job(job_id=job.job_id, error_message="Job terminated without updating tracker status.")
-    except Exception:  # noqa: S110
-        pass
+        for job in jobs:
+            # Checks for cancellation between jobs so the group stops promptly.
+            if state.canceled:
+                break
+
+            tracker = ProcessingTracker(file_path=job.tracker_path)
+
+            # execute_job already calls tracker.fail_job on exception, so the tracker state is updated. The
+            # exception is suppressed here to prevent it from terminating the group worker thread.
+            with contextlib.suppress(Exception):
+                log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
+                execute_job(
+                    log_path=log_path,
+                    output_directory=job.output_directory,
+                    source_id=job.source_id,
+                    job_id=job.job_id,
+                    workers=workers,
+                    tracker=tracker,
+                    display_progress=False,
+                    executor=shared_executor,
+                )
+
+            # Failsafe: if the tracker was not updated to a terminal state, marks the job as failed.
+            try:
+                reloaded = ProcessingTracker.from_yaml(file_path=job.tracker_path)
+                if job.job_id in reloaded.jobs:
+                    status = reloaded.jobs[job.job_id].status
+                    if status not in (ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED):
+                        tracker.fail_job(
+                            job_id=job.job_id, error_message="Job terminated without updating tracker status."
+                        )
+            except Exception:  # noqa: S110
+                pass
+    finally:
+        if shared_executor is not None:
+            shared_executor.shutdown(wait=True)
 
 
 def _job_execution_manager() -> None:  # pragma: no cover
-    """Dispatches queued jobs with saturating budget division.
+    """Dispatches queued jobs as worker-tier groups with shared process pools.
 
     Runs as a daemon thread, polling at 1-second intervals. Each dispatch cycle classifies pending jobs into
-    small (< 2000 messages, 1 worker each) and parallel (>= 2000 messages). The available budget is divided
-    evenly among parallel jobs, snapped to multiples of 5, with concurrency reduced if the per-job allocation
-    would fall below the sqrt-derived minimum. Remaining budget is filled with small jobs. Exits when the queue
-    is empty and no active threads remain.
+    small (< 2000 messages, 1 worker each) and parallel (>= 2000 messages). Parallel jobs are grouped by their
+    precomputed worker tier from ``_compute_sqrt_minimum``, which snaps archive sizes to discrete worker counts
+    (multiples of 5). Jobs in the same tier share a single ProcessPoolExecutor sized exactly to that tier.
+    Each tier is split into as many concurrent groups as the budget allows. Small jobs are dispatched individually.
+    Exits when the queue is empty and no active groups remain.
     """
     if _job_execution_state is None:
         return
@@ -2044,22 +2167,19 @@ def _job_execution_manager() -> None:  # pragma: no cover
 
     while True:
         with state.lock:
-            # Cleans up completed threads and returns their workers to the budget.
-            completed_keys = [key for key, thread in state.active_threads.items() if not thread.is_alive()]
-            for key in completed_keys:
-                del state.active_threads[key]
-                state.active_workers.pop(key, None)
+            # Removes completed groups and frees their budget.
+            state.active_groups = [group for group in state.active_groups if group.thread.is_alive()]
 
-            # Exits when no pending jobs and no active threads remain.
-            if not state.pending_queue and not state.active_threads:
+            # Exits when no pending jobs and no active groups remain.
+            if not state.pending_queue and not state.active_groups:
                 break
 
-            # Stops dispatching new jobs if canceled. Waits for active jobs to finish.
+            # Stops dispatching new groups if canceled. Waits for active groups to finish.
             if state.canceled:
-                if not state.active_threads:
+                if not state.active_groups:
                     break
             else:
-                available = state.worker_budget - sum(state.active_workers.values())
+                available = state.worker_budget - sum(group.workers for group in state.active_groups)
                 if available < 1:
                     poll_timer.delay(delay=1, allow_sleep=True)
                     continue
@@ -2074,44 +2194,60 @@ def _job_execution_manager() -> None:  # pragma: no cover
                     else:
                         parallel_pending.append(job)
 
-                dispatch_list: list[tuple[_PendingJob, int]] = []
+                dispatch_groups: list[tuple[list[_PendingJob], int]] = []
 
-                # Phase 1: Allocates budget to parallel jobs using saturating division.
+                # Phase 1: Groups parallel jobs by worker tier. Each job's optimal worker count is precomputed
+                # via _compute_sqrt_minimum, which snaps archive sizes to discrete tiers (multiples of 5). Jobs
+                # in the same tier share a ProcessPoolExecutor sized exactly to that tier. Each tier is split
+                # into as many concurrent groups as the available budget allows.
                 if parallel_pending and available >= _WORKER_MULTIPLE:
-                    # Computes the sqrt minimum from the largest pending archive.
-                    max_sqrt_min = max(
-                        _compute_sqrt_minimum(message_count=state.job_message_counts.get(job.dispatch_key, 0))
-                        for job in parallel_pending
-                    )
+                    worker_tiers: dict[int, list[_PendingJob]] = {}
+                    for job in parallel_pending:
+                        tier = _compute_sqrt_minimum(message_count=state.job_message_counts.get(job.dispatch_key, 0))
+                        worker_tiers.setdefault(tier, []).append(job)
 
-                    workers_per_job, concurrent_count = _resolve_parallel_allocation(
-                        budget=available,
-                        parallel_job_count=len(parallel_pending),
-                        min_workers=max_sqrt_min,
-                    )
+                    # Dispatches tiers from largest to smallest so large archives get budget priority.
+                    for tier_workers in sorted(worker_tiers, reverse=True):
+                        if available < tier_workers:
+                            continue
 
-                    for job in parallel_pending[:concurrent_count]:
-                        dispatch_list.append((job, workers_per_job))
-                        available -= workers_per_job
+                        tier_jobs = worker_tiers[tier_workers]
+                        max_concurrent = available // tier_workers
+                        concurrent = min(max_concurrent, len(tier_jobs))
 
-                # Phase 2: Fills remaining budget with small jobs (1 worker each).
+                        # Splits tier jobs evenly across concurrent groups via chunking.
+                        chunk_size = -(-len(tier_jobs) // concurrent)  # Ceiling division.
+                        for start in range(0, len(tier_jobs), chunk_size):
+                            chunk = tier_jobs[start : start + chunk_size]
+                            dispatch_groups.append((chunk, tier_workers))
+                            available -= tier_workers
+
+                # Phase 2: Fills remaining budget with small jobs (1 worker each, dispatched individually).
                 for job in small_pending:
                     if available < 1:
                         break
-                    dispatch_list.append((job, 1))
+                    dispatch_groups.append(([job], 1))
                     available -= 1
 
-                # Dispatches all allocated jobs.
-                for job, workers in dispatch_list:
-                    state.pending_queue.remove(job)
-                    state.active_workers[job.dispatch_key] = workers
+                # Dispatches all groups.
+                for group_jobs, workers in dispatch_groups:
+                    for job in group_jobs:
+                        state.pending_queue.remove(job)
+
                     thread = Thread(
-                        target=_job_worker,
-                        kwargs={"job": job, "workers": workers},
+                        target=_group_worker,
+                        kwargs={"jobs": group_jobs, "workers": workers, "state": state},
                         daemon=True,
                     )
                     thread.start()
-                    state.active_threads[job.dispatch_key] = thread
+                    state.active_groups.append(
+                        _ActiveGroup(
+                            source_id=group_jobs[0].source_id,
+                            jobs=group_jobs,
+                            workers=workers,
+                            thread=thread,
+                        )
+                    )
 
         # Polls at 1-second intervals outside the lock to avoid blocking other threads.
         poll_timer.delay(delay=1, allow_sleep=True)

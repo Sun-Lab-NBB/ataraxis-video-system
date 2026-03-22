@@ -21,6 +21,10 @@ LOG_ARCHIVE_SUFFIX: str = "_log.npz"
 TRACKER_FILENAME: str = "camera_processing_tracker.yaml"
 """Filename for the processing tracker file placed in the output directory."""
 
+CAMERA_DATA_DIRECTORY: str = "camera_data"
+"""Name of the subdirectory created under the output path for camera processing results. All tracker files and
+processed feather outputs are written into this subdirectory."""
+
 PARALLEL_PROCESSING_THRESHOLD: int = 2000
 """The minimum number of messages in a log archive required to enable parallel processing. Archives with fewer messages
 are processed sequentially to avoid multiprocessing overhead. Matches LogArchiveReader.PARALLEL_PROCESSING_THRESHOLD.
@@ -129,8 +133,8 @@ def run_log_processing_pipeline(
     Args:
         log_directory: The path to the root directory to search for .npz log archives. The directory is searched
             recursively, so archives may be nested at any depth below this path.
-        output_directory: The path to the directory where processed output files and the tracker file are written.
-            Created automatically if it does not exist.
+        output_directory: The path to the root output directory. A ``camera_data/`` subdirectory is created
+            automatically under this path, and all tracker and feather output files are written there.
         job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
             matching this ID is executed (remote mode). If not provided, all requested jobs are run sequentially
             with automatic tracker management (local mode).
@@ -169,10 +173,11 @@ def run_log_processing_pipeline(
         )
         console.error(message=message, error=ValueError)
 
-    # Creates the output directory if it does not exist.
-    output_directory.mkdir(parents=True, exist_ok=True)
+    # Creates the camera_data subdirectory under the output path. All tracker and feather files are written here.
+    camera_data_path = output_directory / CAMERA_DATA_DIRECTORY
+    camera_data_path.mkdir(parents=True, exist_ok=True)
 
-    tracker = ProcessingTracker(file_path=output_directory / TRACKER_FILENAME)
+    tracker = ProcessingTracker(file_path=camera_data_path / TRACKER_FILENAME)
 
     if job_id is not None:
         # Generates all possible job IDs and executes only the one matching the provided job_id (remote mode).
@@ -190,7 +195,7 @@ def run_log_processing_pipeline(
         source_id = id_to_source[job_id]
         execute_job(
             log_path=archive_paths[source_id],
-            output_directory=output_directory,
+            output_directory=camera_data_path,
             source_id=source_id,
             job_id=job_id,
             workers=workers,
@@ -198,20 +203,29 @@ def run_log_processing_pipeline(
             display_progress=display_progress,
         )
     else:
-        # Initializes the tracker and runs all requested jobs sequentially (local mode).
+        # Initializes the tracker and runs all requested jobs sequentially (local mode). Resolves workers once and
+        # creates a shared ProcessPoolExecutor to reuse across all jobs, avoiding repeated process pool creation.
         console.echo(message=f"Initializing processing tracker for {len(source_ids)} job(s)...")
-        job_ids = initialize_processing_tracker(output_directory=output_directory, source_ids=source_ids)
+        job_ids = initialize_processing_tracker(output_directory=camera_data_path, source_ids=source_ids)
 
-        for source_id in source_ids:
-            execute_job(
-                log_path=archive_paths[source_id],
-                output_directory=output_directory,
-                source_id=source_id,
-                job_id=job_ids[source_id],
-                workers=workers,
-                tracker=tracker,
-                display_progress=display_progress,
-            )
+        resolved_workers = resolve_worker_count(requested_workers=workers)
+        shared_executor = ProcessPoolExecutor(max_workers=resolved_workers) if resolved_workers > 1 else None
+
+        try:
+            for source_id in source_ids:
+                execute_job(
+                    log_path=archive_paths[source_id],
+                    output_directory=camera_data_path,
+                    source_id=source_id,
+                    job_id=job_ids[source_id],
+                    workers=resolved_workers,
+                    tracker=tracker,
+                    display_progress=display_progress,
+                    executor=shared_executor,
+                )
+        finally:
+            if shared_executor is not None:
+                shared_executor.shutdown(wait=True)
 
     console.echo(message="All processing jobs completed successfully.", level=LogLevel.SUCCESS)
 
@@ -221,6 +235,7 @@ def extract_logged_camera_timestamps(
     n_workers: int = -1,
     *,
     display_progress: bool = True,
+    executor: ProcessPoolExecutor | None = None,
 ) -> NDArray[np.uint64]:
     """Extracts the video camera frame acquisition timestamps from the target .npz log file generated by a VideoSystem
     instance during runtime.
@@ -240,12 +255,20 @@ def extract_logged_camera_timestamps(
         recording over 1.5 hours (~648,000 frames), this reduces timestamp storage from ~25 MB (Python objects) to
         ~5 MB (contiguous uint64 buffer).
 
+        When an external executor is provided, batch processing is submitted to that executor instead of creating a
+        new ProcessPoolExecutor. The caller is responsible for executor lifecycle management. This allows multiple
+        archives with similar sizes to share a single process pool, avoiding the overhead of repeatedly spawning and
+        tearing down worker processes.
+
     Args:
         log_path: The path to the .npz log file that stores the logged data generated by the VideoSystem
             instance during runtime.
         n_workers: The number of parallel worker processes (CPU cores) to use for processing. Setting this to a value
             below 1 uses all available CPU cores. Setting this to a value of 1 conducts the processing sequentially.
         display_progress: Determines whether to display a progress bar during parallel batch processing.
+        executor: An optional pre-created ProcessPoolExecutor to use for parallel batch processing. When provided,
+            the function submits work to this executor instead of creating its own. The caller must ensure the
+            executor's worker count matches the n_workers value used for batch generation.
 
     Returns:
         A contiguous numpy array of frame acquisition timestamps. Each timestamp is stored as the number of
@@ -276,9 +299,13 @@ def extract_logged_camera_timestamps(
             dtype=np.uint64,
         )
 
-    # Resolves the number of workers and generates batches optimized for parallel processing. The batch_multiplier of 4
-    # creates (workers * 4) batches for over-batching, which improves load distribution when processing times vary.
-    n_workers = resolve_worker_count(requested_workers=n_workers)
+    # Resolves the number of workers if not already resolved by the caller. External executors are pre-sized, so
+    # the caller provides a positive n_workers that matches the executor's pool size.
+    if n_workers < 1:
+        n_workers = resolve_worker_count(requested_workers=n_workers)
+
+    # Generates batches optimized for parallel processing. The batch_multiplier of 4 creates (workers * 4) batches
+    # for over-batching, which improves load distribution when processing times vary.
     batches = reader.get_batches(workers=n_workers, batch_multiplier=4)
 
     if not batches:  # pragma: no cover
@@ -288,11 +315,16 @@ def extract_logged_camera_timestamps(
     # skips redundant onset scanning.
     onset_us = reader.onset_timestamp_us
 
-    # Processes batches using ProcessPoolExecutor. Each worker returns a contiguous numpy array of timestamps,
-    # avoiding Python object overhead for each individual timestamp value.
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+    # Uses the provided executor or creates a managed one for this invocation. Managed executors are shut down after
+    # use; external executors are left open for reuse across multiple archives.
+    managed = executor is None
+    active_executor = executor if executor is not None else ProcessPoolExecutor(max_workers=n_workers)
+
+    try:
         future_to_index = {
-            executor.submit(_process_frame_message_batch, log_path=log_path, keys=batch_keys, onset_us=onset_us): index
+            active_executor.submit(
+                _process_frame_message_batch, log_path=log_path, keys=batch_keys, onset_us=onset_us
+            ): index
             for index, batch_keys in enumerate(batches)
         }
 
@@ -309,6 +341,9 @@ def extract_logged_camera_timestamps(
         else:
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()
+    finally:
+        if managed:
+            active_executor.shutdown(wait=True)
 
     # Concatenates batch arrays into a single contiguous array. Filters out None placeholders from batches that
     # yielded no frame messages.
@@ -354,6 +389,7 @@ def execute_job(
     tracker: ProcessingTracker,
     *,
     display_progress: bool = True,
+    executor: ProcessPoolExecutor | None = None,
 ) -> None:
     """Executes a single timestamp extraction job for the target log archive.
 
@@ -368,6 +404,8 @@ def execute_job(
         workers: The number of worker processes to use for parallel processing.
         tracker: The ProcessingTracker instance used to track the pipeline's runtime status.
         display_progress: Determines whether to display a progress bar during timestamp extraction.
+        executor: An optional pre-created ProcessPoolExecutor to reuse for parallel processing. When provided,
+            the executor is passed through to extract_logged_camera_timestamps to avoid creating a new process pool.
     """
     console.echo(message=f"Running '{_TIMESTAMP_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
     tracker.start_job(job_id=job_id)
@@ -375,7 +413,7 @@ def execute_job(
     try:
         # Extracts frame acquisition timestamps from the log archive as a contiguous numpy array.
         timestamps = extract_logged_camera_timestamps(
-            log_path=log_path, n_workers=workers, display_progress=display_progress
+            log_path=log_path, n_workers=workers, display_progress=display_progress, executor=executor
         )
 
         # Wraps the numpy array in a Polars DataFrame for Feather output. Polars can reference the numpy buffer

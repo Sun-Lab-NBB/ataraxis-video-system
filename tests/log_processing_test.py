@@ -9,6 +9,7 @@ from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
 from ataraxis_video_system.log_processing import (
+    CAMERA_DATA_DIRECTORY,
     LOG_ARCHIVE_SUFFIX,
     TRACKER_FILENAME,
     _TIMESTAMP_JOB_NAME,
@@ -400,10 +401,12 @@ def test_run_log_processing_pipeline_local_mode(tmp_path: Path) -> None:
         display_progress=False,
     )
 
-    # Verifies that output files were created for both sources.
-    assert (output_dir / "camera_cam1_timestamps.feather").exists()
-    assert (output_dir / "camera_cam2_timestamps.feather").exists()
-    assert (output_dir / TRACKER_FILENAME).exists()
+    # Verifies that output files were created in the camera_data subdirectory for both sources.
+    camera_data_dir = output_dir / CAMERA_DATA_DIRECTORY
+    assert camera_data_dir.is_dir()
+    assert (camera_data_dir / "camera_cam1_timestamps.feather").exists()
+    assert (camera_data_dir / "camera_cam2_timestamps.feather").exists()
+    assert (camera_data_dir / TRACKER_FILENAME).exists()
 
 
 def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
@@ -420,10 +423,11 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
     )
 
     output_dir = tmp_path / "output"
-    output_dir.mkdir()
+    camera_data_dir = output_dir / CAMERA_DATA_DIRECTORY
+    camera_data_dir.mkdir(parents=True)
 
-    # Pre-creates the tracker and initializes the job (simulates remote orchestration).
-    tracker = ProcessingTracker(file_path=output_dir / TRACKER_FILENAME)
+    # Pre-creates the tracker in the camera_data subdirectory (simulates remote orchestration).
+    tracker = ProcessingTracker(file_path=camera_data_dir / TRACKER_FILENAME)
     job_id = ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier="cam1")
     tracker.initialize_jobs(jobs=[(_TIMESTAMP_JOB_NAME, "cam1")])
 
@@ -436,7 +440,7 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
         display_progress=False,
     )
 
-    assert (output_dir / "camera_cam1_timestamps.feather").exists()
+    assert (camera_data_dir / "camera_cam1_timestamps.feather").exists()
 
 
 def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
