@@ -1,10 +1,10 @@
 """Contains tests for classes and methods provided by the saver.py module."""
 
 import subprocess
-import time
 
 import numpy as np
 import pytest
+from ataraxis_time import PrecisionTimer, TimerPrecisions
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import (
@@ -394,7 +394,7 @@ def test_video_saver_ffmpeg_error_on_stop(tmp_path, has_ffmpeg) -> None:
         gpu=-1,
     )
     saver.start()
-    time.sleep(0.2)
+    PrecisionTimer(precision=TimerPrecisions.MILLISECOND).delay(delay=200, allow_sleep=True, block=False)
 
     # Terminates the FFMPEG process to produce a non-zero exit code with stderr output.
     saver._ffmpeg_process.terminate()
@@ -419,7 +419,7 @@ def test_video_saver_save_frame_ffmpeg_crash(tmp_path, has_ffmpeg) -> None:
         gpu=-1,
     )
     saver.start()
-    time.sleep(0.1)
+    PrecisionTimer(precision=TimerPrecisions.MILLISECOND).delay(delay=100, allow_sleep=True, block=False)
 
     # Kills the FFMPEG process to simulate an unexpected termination.
     saver._ffmpeg_process.kill()

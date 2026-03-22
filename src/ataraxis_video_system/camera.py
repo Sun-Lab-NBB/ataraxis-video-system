@@ -16,6 +16,7 @@ from dataclasses import dataclass
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from numpy.typing import NDArray
     from genicam.genapi import NodeMap  # type: ignore[import-untyped]
 
 import cv2
@@ -41,10 +42,6 @@ from .configuration import (
     enumerate_genicam_nodes,
     apply_genicam_configuration,
 )
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
 
 _MONOCHROME_FORMATS: set[Any] = set(mono_location_formats)
 """Stores monochrome Harvesters color formats as a set to optimize membership checks in the HarvestersCamera
@@ -463,6 +460,9 @@ class HarvestersCamera:
             cameras.
         _camera: Stores the Harvesters ImageAcquirer object that interfaces with the camera.
         _color: Tracks whether the frames are acquired using a monochrome or a colored data format.
+        _model: Stores the model name of the connected camera. Populated during connect(), reset during disconnect().
+        _serial_number: Stores the serial number of the connected camera. Populated during connect(), reset during
+            disconnect().
     """
 
     def __init__(

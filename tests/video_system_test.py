@@ -22,7 +22,7 @@ from ataraxis_video_system.log_processing import extract_logged_camera_timestamp
 @pytest.fixture
 def data_logger(tmp_path) -> DataLogger:
     """Creates a DataLogger instance and returns it to the caller."""
-    return DataLogger(output_directory=tmp_path, instance_name=str(randint(0, 100000000000)))
+    return DataLogger(output_directory=tmp_path, instance_name=str(randint(a=0, b=100000000000)))
 
 
 def test_init_repr(tmp_path, data_logger) -> None:
@@ -40,7 +40,7 @@ def test_init_repr(tmp_path, data_logger) -> None:
     assert not vs_instance.started
     assert vs_instance.video_file_path is not None
 
-    # Verifies the __repr()__ method
+    # Verifies the __repr__() method.
     representation_string: str = (
         f"VideoSystem(system_id={np.uint8(1)}, started={False}, camera=MockCamera, frame_saving={True})"
     )
@@ -312,7 +312,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     assert video_system_2.started
 
     # Tests frame saving control
-    timer = PrecisionTimer("s")
+    timer = PrecisionTimer(precision="s")
     video_system_1.start_frame_saving()
     timer.delay(delay=2, allow_sleep=True, block=False)  # 2-second delay
     video_system_1.stop_frame_saving()
@@ -497,7 +497,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     data_logger.start()
     video_system.start()
 
-    timer = PrecisionTimer("s")
+    timer = PrecisionTimer(precision="s")
 
     # First segment: 1 second of recording
     video_system.start_frame_saving()
@@ -590,7 +590,7 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     data_logger.start()
     video_system.start()
 
-    timer = PrecisionTimer("s")
+    timer = PrecisionTimer(precision="s")
     video_system.start_frame_saving()
     timer.delay(delay=75, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
@@ -609,5 +609,5 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
 
         # Both methods should return the same timestamps.
         assert len(timestamps_parallel) == len(timestamps_sequential)
-        assert timestamps_parallel == timestamps_sequential
+        np.testing.assert_array_equal(timestamps_parallel, timestamps_sequential)
         assert len(timestamps_parallel) > 2000

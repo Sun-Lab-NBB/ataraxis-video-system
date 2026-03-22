@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 from ataraxis_base_utilities import error_format
-from ataraxis_data_structures import ProcessingTracker
+from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
 from ataraxis_video_system.log_processing import (
     LOG_ARCHIVE_SUFFIX,
@@ -82,9 +82,6 @@ def _create_test_archive(
     np.savez(archive_path, **arrays)
 
 
-# -- Tests for resolve_recording_roots() --
-
-
 def test_resolve_recording_roots_basic(tmp_path: Path) -> None:
     """Verifies that resolve_recording_roots correctly identifies unique recording roots."""
     # Creates two recording directories with shared subdirectory structure.
@@ -119,9 +116,6 @@ def test_resolve_recording_roots_deduplication(tmp_path: Path) -> None:
 
     # Both paths share "day1" as parent, unique components are "logs_a" and "logs_b", so they remain distinct.
     assert len(roots) == 2
-
-
-# -- Tests for find_log_archive() --
 
 
 def test_find_log_archive_success(tmp_path: Path) -> None:
@@ -194,9 +188,6 @@ def test_find_log_archive_multiple_matches(tmp_path: Path) -> None:
         find_log_archive(log_directory=tmp_path, source_id="cam1")
 
 
-# -- Tests for extract_logged_camera_timestamps() --
-
-
 def test_extract_logged_camera_timestamps_invalid_path(tmp_path: Path) -> None:
     """Verifies that extract_logged_camera_timestamps raises ValueError for a non-existent archive."""
     missing_path = tmp_path / "nonexistent.npz"
@@ -236,8 +227,8 @@ def test_extract_logged_camera_timestamps_frames_only(tmp_path: Path) -> None:
     assert len(timestamps) == 5
 
     # Verifies that all timestamps are absolute (onset + elapsed).
-    expected = tuple(np.uint64(onset_us + e) for e in frame_elapsed)
-    assert timestamps == expected
+    expected = np.array([np.uint64(onset_us + e) for e in frame_elapsed], dtype=np.uint64)
+    np.testing.assert_array_equal(timestamps, expected)
 
 
 def test_extract_logged_camera_timestamps_mixed_messages(tmp_path: Path) -> None:
@@ -258,11 +249,8 @@ def test_extract_logged_camera_timestamps_mixed_messages(tmp_path: Path) -> None
 
     # Only frame messages should be extracted.
     assert len(timestamps) == 3
-    expected = tuple(np.uint64(onset_us + e) for e in frame_elapsed)
-    assert timestamps == expected
-
-
-# -- Tests for initialize_processing_tracker() --
+    expected = np.array([np.uint64(onset_us + e) for e in frame_elapsed], dtype=np.uint64)
+    np.testing.assert_array_equal(timestamps, expected)
 
 
 def test_initialize_processing_tracker_creates_tracker(tmp_path: Path) -> None:
@@ -284,9 +272,6 @@ def test_initialize_processing_tracker_creates_tracker(tmp_path: Path) -> None:
         for source_id in source_ids
     }
     assert job_ids == expected_ids
-
-
-# -- Tests for execute_job() --
 
 
 def test_execute_job_success(tmp_path: Path) -> None:
@@ -328,8 +313,6 @@ def test_execute_job_success(tmp_path: Path) -> None:
     assert len(dataframe) == 3
 
     # Verifies the tracker shows the job as completed.
-    from ataraxis_data_structures import ProcessingStatus
-
     assert tracker.get_job_status(job_id=job_id) == ProcessingStatus.SUCCEEDED
 
 
@@ -356,12 +339,7 @@ def test_execute_job_failure_updates_tracker(tmp_path: Path) -> None:
         )
 
     # Verifies the tracker shows the job as failed.
-    from ataraxis_data_structures import ProcessingStatus
-
     assert tracker.get_job_status(job_id=job_id) == ProcessingStatus.FAILED
-
-
-# -- Tests for run_log_processing_pipeline() --
 
 
 def test_run_log_processing_pipeline_directory_not_found(tmp_path: Path) -> None:
@@ -516,9 +494,6 @@ def test_run_log_processing_pipeline_multiple_directories(tmp_path: Path) -> Non
         )
 
 
-# -- Tests for _extract_unique_components() --
-
-
 def test_extract_unique_components_two_paths() -> None:
     """Verifies extraction of unique components from two paths with shared structure."""
     paths = [Path("/data/day1/recordings/logs"), Path("/data/day2/recordings/logs")]
@@ -551,9 +526,6 @@ def test_extract_unique_components_no_unique_raises() -> None:
     paths = [Path("/a/b/c"), Path("/a/b/c")]
     with pytest.raises(RuntimeError, match=error_format("Unable to extract a unique component")):
         _extract_unique_components(paths=paths)
-
-
-# -- Tests for _generate_job_ids() --
 
 
 def test_generate_job_ids_basic() -> None:

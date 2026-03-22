@@ -15,7 +15,7 @@ from dataclasses import field, dataclass  # pragma: no cover
 
 import numpy as np  # pragma: no cover
 import polars as pl  # pragma: no cover
-from ataraxis_time import (  # pragma: no cover  # pragma: no cover
+from ataraxis_time import (  # pragma: no cover
     PrecisionTimer,
     TimerPrecisions,
     TimestampFormats,

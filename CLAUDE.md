@@ -197,7 +197,7 @@ video encoding using CPU or GPU.
 
 1. Review `src/ataraxis_video_system/saver.py` for the VideoSaver class
 2. Encoder command construction happens in `__init__()` based on VideoEncoders enum selection
-3. CPU presets (ultrafast-veryslow) map to GPU p1-p7 equivalents
+3. CPU presets (veryfast-veryslow) map to GPU p1-p7 equivalents
 4. The stderr drain thread is critical and must not be removed
 
 **Modifying GenICam configuration:**
