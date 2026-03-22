@@ -46,8 +46,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-_MAXIMUM_QUANTIZATION_VALUE: int = 51
-"""The maximum qp value used when initializing VideoSystem instances."""
+MAXIMUM_QUANTIZATION_VALUE: int = 51
+"""The maximum quantization parameter value accepted by FFMPEG encoders."""
 
 _PROCESS_INITIALIZATION_TIME: int = 20
 """The maximum number of seconds to wait for the consumer and producer processes to initialize."""
@@ -352,7 +352,7 @@ class VideoSystem:
                 console.error(message=message, error=ValueError)
             if (
                 not isinstance(quantization_parameter, int)
-                or not -1 <= quantization_parameter <= _MAXIMUM_QUANTIZATION_VALUE
+                or not -1 <= quantization_parameter <= MAXIMUM_QUANTIZATION_VALUE
             ):
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "

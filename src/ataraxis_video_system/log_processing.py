@@ -1,13 +1,19 @@
 """Provides the log data processing pipeline for extracting frame timestamps from VideoSystem log archives."""
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import polars as pl
-from numpy.typing import NDArray
 from ataraxis_base_utilities import LogLevel, console, resolve_worker_count
 from ataraxis_data_structures import LogArchiveReader, ProcessingTracker
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from numpy.typing import NDArray
 
 LOG_ARCHIVE_SUFFIX: str = "_log.npz"
 """Naming convention suffix for log archives produced by assemble_log_archives()."""
@@ -286,7 +292,7 @@ def extract_logged_camera_timestamps(
     # avoiding Python object overhead for each individual timestamp value.
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         future_to_index = {
-            executor.submit(_process_frame_message_batch, log_path, batch_keys, onset_us): index
+            executor.submit(_process_frame_message_batch, log_path=log_path, keys=batch_keys, onset_us=onset_us): index
             for index, batch_keys in enumerate(batches)
         }
 
@@ -404,14 +410,18 @@ def _extract_unique_components(paths: list[Path] | tuple[Path, ...]) -> tuple[st
     paths_list = list(paths)
     unique_components: list[str] = []
 
-    for idx, path in enumerate(paths_list):
+    for index, path in enumerate(paths_list):
         # Iterates components from right to left to find the first one unique to this path.
         components = list(path.parts)[::-1]
         found_unique = False
 
         for component in components:
             # Checks whether this component appears in any other path.
-            is_unique = all(component not in other_path.parts for j, other_path in enumerate(paths_list) if j != idx)
+            is_unique = all(
+                component not in other_path.parts
+                for other_index, other_path in enumerate(paths_list)
+                if other_index != index
+            )
 
             if is_unique:
                 unique_components.append(component)

@@ -58,11 +58,6 @@ class _AccessMode(IntEnum):
     """Node can be both read and written."""
 
 
-_VALUE_NODE_TYPES: frozenset[int] = frozenset(
-    {_NodeType.INTEGER, _NodeType.BOOLEAN, _NodeType.FLOAT, _NodeType.STRING, _NodeType.ENUMERATION}
-)
-"""The GenICam node type codes that represent collectible leaf value nodes."""
-
 DEFAULT_BLACKLISTED_NODES: frozenset[str] = frozenset({"CustomerIDKey", "CustomerValueKey", "TestPattern"})
 """Node names silently skipped during configuration enumeration and apply operations.
 
@@ -70,6 +65,11 @@ Some vendor-specific nodes report ReadWrite access but reject writes at the hard
 errors. These nodes are excluded by default from all configuration operations. End users can override this set
 via the ``blacklisted_nodes`` parameter on ``enumerate_genicam_nodes`` and ``apply_genicam_configuration``.
 """
+
+_VALUE_NODE_TYPES: frozenset[int] = frozenset(
+    {_NodeType.INTEGER, _NodeType.BOOLEAN, _NodeType.FLOAT, _NodeType.STRING, _NodeType.ENUMERATION}
+)
+"""The GenICam node type codes that represent collectible leaf value nodes."""
 
 _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
     # Phase 1 — Unlock: disables auto-controls and centering that lock dependent nodes.

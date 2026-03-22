@@ -1,6 +1,7 @@
 """Provides shared fixtures for all test modules."""
 
 import json
+from collections.abc import Generator
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -62,7 +63,7 @@ def _all_cameras(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> tu
     cache_file = root_tmp_dir / "camera_discovery.json"
     lock_file = root_tmp_dir / "camera_discovery.lock"
 
-    with filelock.FileLock(str(lock_file), timeout=120):
+    with filelock.FileLock(lock_file=str(lock_file), timeout=120):
         if cache_file.exists():
             # Reads cached discovery results written by the first worker.
             data = json.loads(cache_file.read_text())
@@ -87,7 +88,7 @@ def has_opencv(_all_cameras: tuple[CameraInformation, ...]) -> bool:
 
 
 @pytest.fixture(scope="session")
-def has_harvesters(_all_cameras: tuple[CameraInformation, ...]):
+def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[bool, None, None]:
     """Checks for Harvesters camera availability and saves camera state for restore at session end.
 
     Captures the camera's original Width, Height, and AcquisitionFrameRate from the discovery results (without an
@@ -116,7 +117,7 @@ def has_harvesters(_all_cameras: tuple[CameraInformation, ...]):
 
 
 @pytest.fixture(scope="session")
-def has_nvidia():
+def has_nvidia() -> bool:
     """Checks for NVIDIA GPU availability in the test environment."""
     try:
         subprocess.run(
@@ -133,6 +134,6 @@ def has_nvidia():
 
 
 @pytest.fixture(scope="session")
-def has_ffmpeg():
+def has_ffmpeg() -> bool:
     """Checks for FFMPEG availability in the test environment."""
     return check_ffmpeg_availability()
