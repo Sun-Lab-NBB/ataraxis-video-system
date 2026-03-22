@@ -8,6 +8,7 @@ import pytest
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
+from ataraxis_video_system.manifest import write_camera_manifest
 from ataraxis_video_system.log_processing import (
     CAMERA_DATA_DIRECTORY,
     LOG_ARCHIVE_SUFFIX,
@@ -355,10 +356,14 @@ def test_run_log_processing_pipeline_directory_not_found(tmp_path: Path) -> None
         )
 
 
-def test_run_log_processing_pipeline_no_log_ids(tmp_path: Path) -> None:
-    """Verifies that run_log_processing_pipeline raises ValueError when no log IDs are provided."""
-    message = "Unable to process logs. No log IDs were provided."
-    with pytest.raises(ValueError, match=error_format(message)):
+def test_run_log_processing_pipeline_no_manifest(tmp_path: Path) -> None:
+    """Verifies that run_log_processing_pipeline raises FileNotFoundError when no manifest exists and no log IDs
+    are provided."""
+    message = (
+        f"Unable to process logs in '{tmp_path}'. No camera_manifest.yaml was found. A camera manifest is "
+        f"required to identify which log archives were produced by ataraxis-video-system."
+    )
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         run_log_processing_pipeline(
             log_directory=tmp_path,
             output_directory=tmp_path / "output",
@@ -366,10 +371,14 @@ def test_run_log_processing_pipeline_no_log_ids(tmp_path: Path) -> None:
         )
 
 
-def test_run_log_processing_pipeline_empty_log_ids(tmp_path: Path) -> None:
-    """Verifies that run_log_processing_pipeline raises ValueError for an empty log IDs list."""
-    message = "Unable to process logs. No log IDs were provided."
-    with pytest.raises(ValueError, match=error_format(message)):
+def test_run_log_processing_pipeline_no_manifest_empty_ids(tmp_path: Path) -> None:
+    """Verifies that run_log_processing_pipeline raises FileNotFoundError when no manifest exists and an empty log
+    IDs list is provided."""
+    message = (
+        f"Unable to process logs in '{tmp_path}'. No camera_manifest.yaml was found. A camera manifest is "
+        f"required to identify which log archives were produced by ataraxis-video-system."
+    )
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         run_log_processing_pipeline(
             log_directory=tmp_path,
             output_directory=tmp_path / "output",
@@ -391,6 +400,10 @@ def test_run_log_processing_pipeline_local_mode(tmp_path: Path) -> None:
             onset_us=onset_us,
             frame_timestamps_us=[1000, 2000],
         )
+
+    # Writes a camera manifest registering both sources.
+    write_camera_manifest(log_directory=log_dir, source_id=0, name="cam1")
+    write_camera_manifest(log_directory=log_dir, source_id=0, name="cam2")
 
     output_dir = tmp_path / "output"
     run_log_processing_pipeline(
@@ -421,6 +434,9 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
         onset_us=onset_us,
         frame_timestamps_us=[1000, 2000, 3000],
     )
+
+    # Writes a camera manifest registering the source.
+    write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
 
     output_dir = tmp_path / "output"
     camera_data_dir = output_dir / CAMERA_DATA_DIRECTORY
@@ -453,6 +469,7 @@ def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
         onset_us=1700000000000000,
         frame_timestamps_us=[1000],
     )
+    write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
 
     output_dir = tmp_path / "output"
     with pytest.raises(ValueError, match=error_format("does not match any jobs")):
@@ -487,10 +504,15 @@ def test_run_log_processing_pipeline_multiple_directories(tmp_path: Path) -> Non
         frame_timestamps_us=[1000],
     )
 
+    # Writes a manifest at the search root so both sources are registered.
+    log_root = tmp_path / "logs"
+    write_camera_manifest(log_directory=log_root, source_id=1, name="cam1")
+    write_camera_manifest(log_directory=log_root, source_id=2, name="cam2")
+
     output_dir = tmp_path / "output"
     with pytest.raises(ValueError, match=error_format("span multiple directories")):
         run_log_processing_pipeline(
-            log_directory=tmp_path / "logs",
+            log_directory=log_root,
             output_directory=output_dir,
             log_ids=["cam1", "cam2"],
             workers=1,

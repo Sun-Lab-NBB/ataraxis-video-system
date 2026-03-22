@@ -382,8 +382,8 @@ def live_run(
     "--log-id",
     type=str,
     multiple=True,
-    required=True,
-    help="Source log ID to process. Repeat to specify multiple IDs.",
+    help="Source log ID to process. Repeat to specify multiple IDs. If not provided, resolves all source IDs from "
+    "the camera_manifest.yaml file in the log directory.",
 )
 @click.option(
     "-w",
@@ -418,7 +418,7 @@ def process(
         log_directory=log_directory,
         output_directory=output_directory,
         job_id=job_id,
-        log_ids=list(log_id),
+        log_ids=list(log_id) if log_id else None,
         workers=workers,
         display_progress=progress,
     )

@@ -47,6 +47,11 @@ from .camera import (
     check_cti_file,
     discover_camera_ids,
 )  # pragma: no cover
+from .manifest import (
+    CAMERA_MANIFEST_FILENAME,
+    CameraManifest,
+    write_camera_manifest,
+)  # pragma: no cover
 from .video_system import MAXIMUM_QUANTIZATION_VALUE, VideoSystem  # pragma: no cover
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
@@ -955,22 +960,100 @@ def load_genicam_config(
 
 
 @mcp.tool()  # pragma: no cover
-def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Discovers log archives under a root directory, grouped hierarchically by recording and log directory.
+def read_camera_manifest_tool(manifest_path: str) -> dict[str, Any]:  # pragma: no cover
+    """Reads a camera manifest file and returns its contents.
 
-    Recursively searches the root directory for .npz log archives matching the DataLogger naming convention.
-    Archives are grouped by their parent directory (DataLogger output, e.g., ``*_data_log/``), and recording
-    roots are resolved using unique path component detection to reliably identify recording session boundaries
-    regardless of directory depth or naming conventions. Each log directory is an independent processing unit
-    that can be passed directly to prepare_log_processing_batch_tool for targeted processing.
+    Reads the specified camera_manifest.yaml file and returns the list of camera sources registered in it.
+    Each source entry contains the numeric source ID and the colloquial name assigned to the camera.
 
     Args:
-        root_directory: The absolute path to the root directory to search for log archives. Searched recursively.
+        manifest_path: The absolute path to the camera_manifest.yaml file to read.
 
     Returns:
-        A dictionary containing hierarchical 'recordings' mapping recording roots to their log directories and
-        source IDs, a flat 'log_directories' list for direct use with the batch preparation tool, the union of
-        all discovered source IDs in 'all_source_ids', and total counts.
+        A dictionary containing the list of sources with their IDs and names, or an error message.
+    """
+    path = Path(manifest_path)
+
+    if not path.exists():
+        return {"error": f"Manifest file does not exist: {manifest_path}"}
+
+    if not path.is_file():
+        return {"error": f"Path is not a file: {manifest_path}"}
+
+    try:
+        manifest = CameraManifest.from_yaml(file_path=path)
+    except Exception as error:
+        return {"error": f"Failed to read manifest: {error}"}
+
+    return {
+        "manifest_path": manifest_path,
+        "sources": [{"id": source.id, "name": source.name} for source in manifest.sources],
+        "total_sources": len(manifest.sources),
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def write_camera_manifest_tool(  # pragma: no cover
+    log_directory: str,
+    source_id: int,
+    name: str,
+) -> dict[str, Any]:
+    """Writes or updates a camera manifest file in the specified log directory.
+
+    Registers a camera source in the camera_manifest.yaml file located in the target log directory. If
+    the manifest already exists, appends the new source entry. Otherwise, creates a new manifest. Use this
+    tool to retroactively tag existing log archives as axvs-produced, or to manually register additional
+    camera sources.
+
+    Args:
+        log_directory: The absolute path to the DataLogger output directory where the manifest file is stored.
+        source_id: The numeric source ID to register in the manifest.
+        name: The colloquial human-readable name for the camera source (e.g., 'face_camera').
+
+    Returns:
+        A dictionary confirming the write operation with the manifest path and registered source, or an error message.
+    """
+    dir_path = Path(log_directory)
+
+    if not dir_path.exists():
+        return {"error": f"Directory does not exist: {log_directory}"}
+
+    if not dir_path.is_dir():
+        return {"error": f"Path is not a directory: {log_directory}"}
+
+    if not name:
+        return {"error": "The 'name' parameter must be a non-empty string."}
+
+    try:
+        write_camera_manifest(log_directory=dir_path, source_id=source_id, name=name)
+    except Exception as error:
+        return {"error": f"Failed to write manifest: {error}"}
+
+    manifest_path = dir_path / CAMERA_MANIFEST_FILENAME
+    return {
+        "manifest_path": str(manifest_path),
+        "registered_source": {"id": source_id, "name": name},
+        "status": "success",
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers camera data by searching for camera_manifest.yaml files under a root directory.
+
+    Recursively searches the root directory for camera_manifest.yaml files. Each manifest identifies a
+    DataLogger output directory containing axvs-produced log archives. For each manifest source, locates
+    the corresponding log archive, video file, and processed feather output. Video files are matched by
+    camera name first (searching for ``*{name}*.mp4`` under the recording root), then by source ID
+    (``*{id:03d}*.mp4``) as a fallback. Recording roots are resolved using unique path component detection.
+
+    Args:
+        root_directory: The absolute path to the root directory to search for camera manifests. Searched recursively.
+
+    Returns:
+        A dictionary containing hierarchical 'recordings' mapping recording roots to their log directories
+        and per-source data (log archives, video files, feather outputs), a flat 'log_directories' list for
+        batch processing, and aggregate counts.
     """
     root_path = Path(root_directory)
 
@@ -980,25 +1063,50 @@ def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    # Discovers all log archives and groups them by parent directory (DataLogger output directory).
+    # Discovers all camera manifests and reads their source entries.
     log_dir_data: dict[Path, dict[str, Any]] = {}
     all_source_ids: set[str] = set()
     total_archives = 0
 
     try:
-        for path in sorted(root_path.rglob(f"*{LOG_ARCHIVE_SUFFIX}")):
-            source_id = path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
-            if not source_id:
+        for manifest_path in sorted(root_path.rglob(CAMERA_MANIFEST_FILENAME)):
+            log_dir = manifest_path.parent
+
+            try:
+                manifest = CameraManifest.from_yaml(file_path=manifest_path)
+            except Exception:  # noqa: S112
                 continue
 
-            log_dir = path.parent
-            if log_dir not in log_dir_data:
-                log_dir_data[log_dir] = {"source_ids": [], "archive_count": 0}
+            if not manifest.sources:
+                continue
 
-            log_dir_data[log_dir]["source_ids"].append(source_id)
-            log_dir_data[log_dir]["archive_count"] += 1
-            all_source_ids.add(source_id)
-            total_archives += 1
+            # Uses the manifest source entries to identify expected archives.
+            source_ids: list[str] = []
+            archive_count = 0
+            sources_data: list[dict[str, Any]] = []
+            for source in manifest.sources:
+                source_id = str(source.id)
+                archive_path = log_dir / f"{source.id}{LOG_ARCHIVE_SUFFIX}"
+                has_archive = archive_path.exists()
+                if has_archive:
+                    archive_count += 1
+                source_ids.append(source_id)
+                all_source_ids.add(source_id)
+
+                sources_data.append(
+                    {
+                        "id": source.id,
+                        "name": source.name,
+                        "log_archive": str(archive_path) if has_archive else None,
+                    }
+                )
+
+            log_dir_data[log_dir] = {
+                "source_ids": source_ids,
+                "archive_count": archive_count,
+                "sources": sources_data,
+            }
+            total_archives += archive_count
     except PermissionError as error:
         return {"error": f"Permission denied during search: {error}"}
 
@@ -1032,14 +1140,26 @@ def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:
             # Falls back to the log directory's parent if no root prefix matches.
             log_dir_to_root[log_dir] = log_dir.parent
 
-    # Groups log directories under their resolved recording roots for hierarchical display.
+    # Groups log directories under their resolved recording roots. For each source, searches for the
+    # corresponding video file and processed feather output under the recording root.
     recordings: dict[str, dict[str, Any]] = {}
     for log_dir, data in log_dir_data.items():
-        recording_root = str(log_dir_to_root[log_dir])
-        if recording_root not in recordings:
-            recordings[recording_root] = {"log_directories": {}}
-        recordings[recording_root]["log_directories"][str(log_dir)] = {
+        recording_root = log_dir_to_root[log_dir]
+        recording_root_str = str(recording_root)
+        if recording_root_str not in recordings:
+            recordings[recording_root_str] = {"log_directories": {}}
+
+        # Enriches each source entry with video file and feather output paths.
+        for source_entry in data["sources"]:
+            source_entry["video_file"] = _find_video_file(
+                recording_root=recording_root, name=source_entry["name"], source_id=source_entry["id"]
+            )
+            feather_path = _find_feather_file(log_directory=log_dir, source_id=source_entry["id"])
+            source_entry["feather_file"] = str(feather_path) if feather_path is not None else None
+
+        recordings[recording_root_str]["log_directories"][str(log_dir)] = {
             "source_ids": data["source_ids"],
+            "sources": data["sources"],
             "archive_count": data["archive_count"],
         }
 
@@ -1051,6 +1171,50 @@ def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:
         "total_log_directories": len(log_dir_data),
         "total_archives": total_archives,
     }
+
+
+def _find_video_file(recording_root: Path, name: str, source_id: int) -> str | None:  # pragma: no cover
+    """Searches for a video file matching a camera source under the recording root.
+
+    Matches by camera name first (``*{name}*.mp4``), falling back to source ID (``*{source_id:03d}*.mp4``).
+    Returns the path to the first match, or None if no video file is found.
+
+    Args:
+        recording_root: The recording root directory to search recursively.
+        name: The colloquial camera name from the manifest (e.g., 'body_camera').
+        source_id: The numeric source ID from the manifest.
+
+    Returns:
+        The string path to the matched video file, or None if no match is found.
+    """
+    # Searches by camera name first.
+    if name:
+        matches = sorted(recording_root.rglob(f"*{name}*.mp4"))
+        if matches:
+            return str(matches[0])
+
+    # Falls back to source ID pattern.
+    matches = sorted(recording_root.rglob(f"*{source_id:03d}*.mp4"))
+    return str(matches[0]) if matches else None
+
+
+def _find_feather_file(log_directory: Path, source_id: int) -> Path | None:  # pragma: no cover
+    """Searches for a processed feather file for the given source ID.
+
+    Checks the ``camera_data/`` subdirectory under the log directory's parent for a feather file matching the
+    ``camera_{source_id}_timestamps.feather`` naming convention.
+
+    Args:
+        log_directory: The DataLogger output directory containing the log archives.
+        source_id: The numeric source ID to search for.
+
+    Returns:
+        The path to the feather file, or None if not found.
+    """
+    # Checks the standard camera_data output location (sibling to or under the log directory's parent).
+    for candidate in log_directory.parent.rglob(f"{_FEATHER_PREFIX}{source_id}{_FEATHER_SUFFIX}"):
+        return candidate
+    return None
 
 
 @mcp.tool()  # pragma: no cover
@@ -1635,130 +1799,6 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pr
             "running": aggregate_running,
             "scheduled": aggregate_scheduled,
         },
-    }
-
-
-@mcp.tool()  # pragma: no cover
-def discover_processed_camera_logs_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Discovers processed camera timestamp feather files under a root directory.
-
-    Recursively searches for feather files matching the ``camera_*_timestamps.feather`` naming convention produced by
-    the log processing pipeline. Groups results by parent directory and cross-references with processing tracker files
-    to identify fully processed, partially processed, and unprocessed directories.
-
-    Args:
-        root_directory: The absolute path to the root directory to search for feather files. Searched recursively.
-
-    Returns:
-        A dictionary containing per-directory feather file details grouped under 'directories', aggregate counts,
-        and a 'status_summary' section derived from cross-referencing tracker files when available.
-    """
-    root_path = Path(root_directory)
-
-    if not root_path.exists():
-        return {"error": f"Directory does not exist: {root_directory}"}
-
-    if not root_path.is_dir():
-        return {"error": f"Path is not a directory: {root_directory}"}
-
-    # Discovers all feather files and groups them by parent directory.
-    dir_data: dict[Path, list[dict[str, Any]]] = {}
-
-    try:
-        for path in sorted(root_path.rglob(_FEATHER_GLOB_PATTERN)):
-            source_id = path.name.removeprefix(_FEATHER_PREFIX).removesuffix(_FEATHER_SUFFIX)
-            if not source_id:
-                continue
-
-            parent = path.parent
-            if parent not in dir_data:
-                dir_data[parent] = []
-
-            dir_data[parent].append(
-                {
-                    "source_id": source_id,
-                    "path": str(path),
-                    "size_bytes": path.stat().st_size,
-                }
-            )
-    except PermissionError as error:
-        return {"error": f"Permission denied during search: {error}"}
-
-    if not dir_data:
-        return {
-            "directories": {},
-            "all_source_ids": [],
-            "total_directories": 0,
-            "total_files": 0,
-            "total_size_bytes": 0,
-            "status_summary": {
-                "fully_processed": 0,
-                "partially_processed": 0,
-                "unprocessed": 0,
-                "no_tracker": 0,
-            },
-        }
-
-    # Builds per-directory results and cross-references with tracker files.
-    all_source_ids: set[str] = set()
-    total_files = 0
-    total_size_bytes = 0
-    status_counts: dict[str, int] = {
-        "fully_processed": 0,
-        "partially_processed": 0,
-        "unprocessed": 0,
-        "no_tracker": 0,
-    }
-
-    directories: dict[str, dict[str, Any]] = {}
-    for directory, files in sorted(dir_data.items(), key=lambda item: item[0]):
-        source_ids = [entry["source_id"] for entry in files]
-        dir_size = sum(entry["size_bytes"] for entry in files)
-        all_source_ids.update(source_ids)
-        total_files += len(files)
-        total_size_bytes += dir_size
-
-        # Checks for a processing tracker in the same directory.
-        tracker_candidate = directory / TRACKER_FILENAME
-        tracker_path_str: str | None = None
-        if tracker_candidate.exists():
-            try:
-                tracker_status = _read_tracker_status(tracker_path=tracker_candidate)
-                tracker_source_ids = {job["source_id"] for job in tracker_status.get("jobs", [])}
-                summary = tracker_status.get("summary", {})
-                tracker_path_str = str(tracker_candidate)
-
-                # Classifies directory based on tracker state and feather file presence.
-                feather_source_set = set(source_ids)
-                if summary.get("succeeded", 0) == summary.get("total", 0) and feather_source_set >= tracker_source_ids:
-                    processing_status = "fully_processed"
-                elif feather_source_set:
-                    processing_status = "partially_processed"
-                else:
-                    processing_status = "unprocessed"
-            except Exception:
-                processing_status = "no_tracker"
-        else:
-            processing_status = "no_tracker"
-
-        status_counts[processing_status] += 1
-
-        directories[str(directory)] = {
-            "feather_files": files,
-            "source_ids": sorted(source_ids),
-            "file_count": len(files),
-            "total_size_bytes": dir_size,
-            "processing_status": processing_status,
-            "tracker_path": tracker_path_str,
-        }
-
-    return {
-        "directories": directories,
-        "all_source_ids": sorted(all_source_ids),
-        "total_directories": len(directories),
-        "total_files": total_files,
-        "total_size_bytes": total_size_bytes,
-        "status_summary": status_counts,
     }
 
 
