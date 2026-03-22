@@ -10,6 +10,8 @@ import polars as pl
 from ataraxis_base_utilities import LogLevel, console, resolve_worker_count
 from ataraxis_data_structures import LogArchiveReader, ProcessingTracker
 
+from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -139,24 +141,60 @@ def run_log_processing_pipeline(
             matching this ID is executed (remote mode). If not provided, all requested jobs are run sequentially
             with automatic tracker management (local mode).
         log_ids: A list of source log IDs to process. Each ID must correspond to exactly one archive under the
-            log directory, and all archives must reside in the same parent directory.
+            log directory, and all archives must reside in the same parent directory. If not provided, reads the
+            camera_manifest.yaml file from the log directory to resolve all registered source IDs.
         workers: The number of worker processes to use for parallel processing. Setting this to a value less than 1
             uses all available CPU cores. Setting this to 1 conducts processing sequentially.
         display_progress: Determines whether to display progress bars during timestamp extraction. Defaults to True
             for interactive CLI use. Set to False for MCP batch processing.
 
     Raises:
-        FileNotFoundError: If the log_directory does not exist or a requested log ID has no matching archive.
-        ValueError: If the provided job_id does not match any discoverable job, if no log IDs are provided, if a
-            requested log ID matches multiple archives, or if resolved archives span multiple directories.
+        FileNotFoundError: If the log_directory does not exist, a requested log ID has no matching archive, or no
+            camera manifest is found when log_ids is not provided.
+        ValueError: If the provided job_id does not match any discoverable job, if no source IDs can be resolved,
+            if a requested log ID matches multiple archives, or if resolved archives span multiple directories.
     """
     if not log_directory.exists() or not log_directory.is_dir():
         message = f"Unable to process logs in '{log_directory}'. The path does not exist or is not a directory."
         console.error(message=message, error=FileNotFoundError)
 
-    if log_ids is None or not log_ids:
-        message = "Unable to process logs. No log IDs were provided."
+    # Locates the camera manifest to resolve or validate source IDs. The manifest ensures only
+    # axvs-produced log archives are processed, preventing accidental processing of logs from other
+    # libraries (e.g., ataraxis-communication-interface, sl-experiment).
+    candidates = sorted(log_directory.rglob(CAMERA_MANIFEST_FILENAME))
+    if not candidates:
+        message = (
+            f"Unable to process logs in '{log_directory}'. No {CAMERA_MANIFEST_FILENAME} was found. "
+            f"A camera manifest is required to identify which log archives were produced by "
+            f"ataraxis-video-system."
+        )
+        console.error(message=message, error=FileNotFoundError)
+
+    manifest_path = candidates[0]
+    manifest = CameraManifest.from_yaml(file_path=manifest_path)
+    manifest_ids = {str(source.id) for source in manifest.sources} | {source.name for source in manifest.sources}
+
+    if not manifest_ids:
+        message = (
+            f"Unable to process logs in '{log_directory}'. The {CAMERA_MANIFEST_FILENAME} at "
+            f"'{manifest_path}' contains no source entries."
+        )
         console.error(message=message, error=ValueError)
+
+    # Resolves source IDs from the manifest when none are explicitly provided. When IDs are provided,
+    # validates them against the manifest to prevent processing non-video logs.
+    if log_ids is None or not log_ids:
+        log_ids = sorted(manifest_ids)
+        console.echo(message=f"Resolved {len(log_ids)} source ID(s) from manifest: {', '.join(log_ids)}")
+    else:
+        invalid_ids = [source_id for source_id in log_ids if source_id not in manifest_ids]
+        if invalid_ids:
+            message = (
+                f"Unable to process logs in '{log_directory}'. The following source IDs are not registered "
+                f"in the {CAMERA_MANIFEST_FILENAME}: {', '.join(invalid_ids)}. Registered source IDs: "
+                f"{', '.join(sorted(manifest_ids))}."
+            )
+            console.error(message=message, error=ValueError)
 
     source_ids = sorted(log_ids)
 

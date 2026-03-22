@@ -30,6 +30,7 @@ def test_init_repr(tmp_path, data_logger) -> None:
     vs_instance = VideoSystem(
         system_id=np.uint8(1),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=tmp_path.joinpath("test_output_directory"),
         camera_interface=CameraInterfaces.MOCK,
         camera_index=0,
@@ -56,6 +57,7 @@ def test_init_errors(data_logger) -> None:
         VideoSystem(
             system_id=invalid_system_id,  # type: ignore[arg-type]
             data_logger=data_logger,
+            name="test_camera",
             output_directory=data_logger.output_directory,
             camera_interface=CameraInterfaces.MOCK,
         )
@@ -71,6 +73,7 @@ def test_init_errors(data_logger) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=invalid_data_logger,  # type: ignore[arg-type]
+            name="test_camera",
             output_directory=data_logger.output_directory,
         )
 
@@ -85,6 +88,7 @@ def test_init_errors(data_logger) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=invalid_output_directory,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
@@ -105,6 +109,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_index=invalid_index,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -121,6 +126,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             frame_rate=invalid_frame_rate,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -137,6 +143,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             frame_width=invalid_frame_width,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -153,6 +160,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             frame_height=invalid_frame_height,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -165,6 +173,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_interface=invalid_interface,  # type: ignore[arg-type]
         )
@@ -179,6 +188,7 @@ def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
         vs = VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             gpu=0,
@@ -192,6 +202,7 @@ def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
         vs = VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             gpu=-1,
@@ -217,6 +228,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             gpu=invalid_gpu,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -229,6 +241,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             video_encoder=invalid_encoder,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -241,6 +254,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             encoder_speed_preset=invalid_preset,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -253,6 +267,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             output_pixel_format=invalid_format,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -269,6 +284,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             quantization_parameter=invalid_qp,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
@@ -287,6 +303,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     video_system_1 = VideoSystem(
         system_id=np.uint8(101),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=output_directory,
         camera_interface=CameraInterfaces.MOCK,
         frame_rate=10,
@@ -297,6 +314,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     video_system_2 = VideoSystem(
         system_id=np.uint8(202),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=None,  # No saving configured
         camera_interface=CameraInterfaces.MOCK,
         frame_rate=5,
@@ -348,6 +366,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     video_system_3 = VideoSystem(
         system_id=np.uint8(234),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=None,  # No output directory
         camera_interface=CameraInterfaces.MOCK,
     )
@@ -367,6 +386,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
             vs = VideoSystem(
                 system_id=np.uint8(1),
                 data_logger=data_logger,
+                name="test_camera",
                 output_directory=output_directory,
                 camera_interface=CameraInterfaces.MOCK,
                 display_frame_rate=30,
@@ -385,6 +405,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             frame_rate=30,
@@ -403,6 +424,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
+            name="test_camera",
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             frame_rate=30,
@@ -422,6 +444,7 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
     vs = VideoSystem(
         system_id=np.uint8(50),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=output_directory,
         camera_interface=CameraInterfaces.OPENCV,
         camera_index=0,
@@ -441,6 +464,7 @@ def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> Non
     vs = VideoSystem(
         system_id=np.uint8(51),
         data_logger=data_logger,
+        name="test_camera",
         output_directory=output_directory,
         camera_interface=CameraInterfaces.HARVESTERS,
         camera_index=0,
@@ -485,6 +509,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     video_system = VideoSystem(
         system_id=system_id,
         data_logger=data_logger,
+        name="test_camera",
         output_directory=output_directory,
         camera_interface=CameraInterfaces.MOCK,
         frame_rate=frame_rate,
@@ -578,6 +603,7 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     video_system = VideoSystem(
         system_id=system_id,
         data_logger=data_logger,
+        name="test_camera",
         output_directory=output_directory,
         camera_interface=CameraInterfaces.MOCK,
         frame_rate=frame_rate,
