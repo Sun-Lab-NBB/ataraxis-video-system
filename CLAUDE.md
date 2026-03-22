@@ -85,17 +85,22 @@ when appropriate.
 
 ## Available Skills
 
-| Skill                     | Description                                                         |
-|---------------------------|---------------------------------------------------------------------|
-| `/explore-codebase`       | Perform in-depth codebase exploration at session start              |
-| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes) |
-| `/readme-style`           | Apply Sun Lab README conventions                                    |
-| `/commit`                 | Draft Sun Lab style-compliant git commit messages                   |
-| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                            |
-| `/tox-config`             | Apply Sun Lab tox.ini conventions                                   |
-| `/log-input-format`       | Reference for NPZ archive format, source IDs, and DataLogger output |
-| `/log-processing`         | Orchestrate log archive processing workflow via MCP tools           |
-| `/log-processing-results` | Reference for output data formats and frame statistics analysis     |
+| Skill                     | Description                                                          |
+|---------------------------|----------------------------------------------------------------------|
+| `/explore-codebase`       | Perform in-depth codebase exploration at session start               |
+| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes)  |
+| `/readme-style`           | Apply Sun Lab README conventions                                     |
+| `/commit`                 | Draft Sun Lab style-compliant git commit messages                    |
+| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                             |
+| `/tox-config`             | Apply Sun Lab tox.ini conventions                                    |
+| `/camera-setup`           | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
+| `/camera-interface`       | VideoSystem API usage, constructor parameters, and encoding guidance |
+| `/mcp-environment-setup`  | MCP server connectivity diagnostics and environment verification     |
+| `/post-recording`         | Post-recording verification: log assembly, video validation, handoff |
+| `/pipeline`               | End-to-end pipeline orchestration and multi-camera planning          |
+| `/log-input-format`       | Reference for NPZ archive format, source IDs, and DataLogger output  |
+| `/log-processing`         | Orchestrate log archive processing workflow via MCP tools            |
+| `/log-processing-results` | Reference for output data formats and frame statistics analysis      |
 
 ## Project Context
 
@@ -135,8 +140,12 @@ video encoding using CPU or GPU.
   minimize memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job
   lifecycle management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job
   by ID) execution modes. Outputs Polars DataFrames as Feather files.
-- **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`) enforcing a single
-  active VideoSystem session at a time. Exposes batch log processing tools with budget-based worker allocation:
+- **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`, `_session_info`)
+  enforcing a single active VideoSystem session at a time. Session tools expose configurable encoding
+  parameters (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log
+  archives and returns output paths. `get_session_status` returns detailed session configuration.
+  `assemble_log_archives_tool` provides standalone archive assembly. `validate_video_file_tool` runs ffprobe
+  for video metadata inspection. Exposes batch log processing tools with budget-based worker allocation:
   the execution manager divides the CPU budget evenly among concurrent parallel jobs (snapped to multiples of
   5) with a sqrt-derived saturation floor that reduces concurrency when per-job allocation would be too thin.
   Includes post-processing tools for discovering output feather files and analyzing camera frame statistics

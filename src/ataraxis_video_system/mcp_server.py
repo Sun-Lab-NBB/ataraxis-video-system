@@ -5,10 +5,12 @@ management functionality through the MCP protocol, enabling AI agents to program
 library's core features.
 """
 
+import json  # pragma: no cover
 from typing import Any, Literal  # pragma: no cover
 from pathlib import Path  # pragma: no cover
 from threading import Lock, Thread  # pragma: no cover
 import contextlib  # pragma: no cover
+import subprocess  # pragma: no cover
 from dataclasses import field, dataclass  # pragma: no cover
 
 import numpy as np  # pragma: no cover
@@ -22,7 +24,12 @@ from ataraxis_time import (  # pragma: no cover  # pragma: no cover
 )
 from mcp.server.fastmcp import FastMCP  # pragma: no cover
 from ataraxis_base_utilities import resolve_worker_count  # pragma: no cover
-from ataraxis_data_structures import DataLogger, ProcessingStatus, ProcessingTracker  # pragma: no cover
+from ataraxis_data_structures import (
+    DataLogger,
+    ProcessingStatus,
+    ProcessingTracker,
+    assemble_log_archives,
+)  # pragma: no cover
 
 from .saver import (
     VideoEncoders,
@@ -38,7 +45,7 @@ from .camera import (
     check_cti_file,
     discover_camera_ids,
 )  # pragma: no cover
-from .video_system import VideoSystem  # pragma: no cover
+from .video_system import MAXIMUM_QUANTIZATION_VALUE, VideoSystem  # pragma: no cover
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
     GenicamConfiguration,
@@ -64,6 +71,9 @@ _active_session: VideoSystem | None = None  # pragma: no cover
 
 _active_logger: DataLogger | None = None  # pragma: no cover
 """Stores the DataLogger instance associated with the active video session, or None when no session is running."""
+
+_session_info: dict[str, Any] | None = None  # pragma: no cover
+"""Stores session configuration parameters captured at creation time for status reporting."""  # pragma: no cover
 
 
 @dataclass(slots=True)  # pragma: no cover
@@ -266,6 +276,10 @@ def start_video_session(
     display_frame_rate: int | None = 25,
     *,
     monochrome: bool = False,
+    video_encoder: str = "H264",
+    encoder_speed_preset: int = 3,
+    output_pixel_format: str = "yuv420p",
+    quantization_parameter: int = 15,
 ) -> str:  # pragma: no cover
     """Starts a video capture session with the specified parameters.
 
@@ -279,22 +293,28 @@ def start_video_session(
     Args:
         output_directory: The path to the directory where video files will be saved. This must be provided by the
             user - the AI agent should always ask for this value explicitly.
-        interface: The camera interface to use ('opencv', 'harvesters', or 'mock'). Defaults to 'opencv'.
-        camera_index: The index of the camera to use. Defaults to 0.
-        width: The width of frames to capture in pixels. Defaults to 600.
-        height: The height of frames to capture in pixels. Defaults to 400.
-        frame_rate: The target frame rate in frames per second. Defaults to 30.
-        gpu_index: The GPU index for hardware encoding, or -1 for CPU encoding. Defaults to -1.
-        display_frame_rate: The rate at which to display acquired frames in a preview window. Defaults to 25 fps.
-            Set to 'None' to disable frame display. The display rate cannot exceed the acquisition frame rate.
-            Note that frame display is not supported on macOS.
-        monochrome: Determines whether to capture in grayscale. Defaults to False (color).
+        interface: The camera interface to use ('opencv', 'harvesters', or 'mock').
+        camera_index: The index of the camera to use.
+        width: The width of frames to capture in pixels.
+        height: The height of frames to capture in pixels.
+        frame_rate: The target frame rate in frames per second.
+        gpu_index: The GPU index for hardware encoding, or -1 for CPU encoding.
+        display_frame_rate: The rate at which to display acquired frames in a preview window. Set to None to
+            disable frame display. The display rate cannot exceed the acquisition frame rate. Frame display is
+            not supported on macOS.
+        monochrome: Determines whether to capture in grayscale.
+        video_encoder: The video encoder to use. Must be 'H264' or 'H265'.
+        encoder_speed_preset: The encoder speed preset from 1 (fastest) to 7 (slowest). Higher values produce
+            better compression at the expense of CPU time.
+        output_pixel_format: The output video pixel format. Must be 'yuv420p' or 'yuv444p'.
+        quantization_parameter: The quantization parameter controlling compression quality. Lower values produce
+            higher quality at larger file sizes (0 = best, 51 = worst).
 
     Returns:
-        A summary of the session parameters including interface, camera index, resolution, frame rate, and output
-        directory on success, or an error message describing the failure.
+        A summary of the session parameters including interface, camera index, resolution, frame rate, encoding
+        configuration, and output directory on success, or an error message describing the failure.
     """
-    global _active_session, _active_logger
+    global _active_session, _active_logger, _session_info
 
     # Enforces the single-session constraint. Only one VideoSystem can be active at a time because each session
     # exclusively owns the camera device and its associated encoding pipeline.
@@ -307,6 +327,30 @@ def start_video_session(
         return f"Error: Directory not found: {output_directory}"
     if not output_path.is_dir():
         return f"Error: Not a directory: {output_directory}"
+
+    # Validates and maps the video encoder string to the corresponding enum member.
+    encoder_upper = video_encoder.upper()
+    if encoder_upper not in {member.value for member in VideoEncoders}:
+        return f"Error: Invalid video_encoder '{video_encoder}'. Must be 'H264' or 'H265'."
+    resolved_encoder = VideoEncoders(encoder_upper)
+
+    # Validates the encoder speed preset against the legal range (1-7).
+    if encoder_speed_preset not in {member.value for member in EncoderSpeedPresets}:
+        return f"Error: Invalid encoder_speed_preset {encoder_speed_preset}. Must be 1-7."
+    resolved_preset = EncoderSpeedPresets(encoder_speed_preset)
+
+    # Validates the output pixel format against the corresponding enum.
+    pixel_format_lower = output_pixel_format.lower()
+    if pixel_format_lower not in {member.value for member in OutputPixelFormats}:
+        return f"Error: Invalid output_pixel_format '{output_pixel_format}'. Must be 'yuv420p' or 'yuv444p'."
+    resolved_pixel_format = OutputPixelFormats(pixel_format_lower)
+
+    # Validates the quantization parameter is within the legal FFMPEG range.
+    if not 0 <= quantization_parameter <= MAXIMUM_QUANTIZATION_VALUE:
+        return (
+            f"Error: quantization_parameter must be between 0 and {MAXIMUM_QUANTIZATION_VALUE}, "
+            f"got {quantization_parameter}."
+        )
 
     # Maps the string interface name to the corresponding CameraInterfaces enum member.
     if interface.lower() == "mock":
@@ -321,9 +365,8 @@ def start_video_session(
         _active_logger = DataLogger(output_directory=output_path, instance_name="mcp_video_session")
         _active_logger.start()
 
-        # Creates the VideoSystem with conservative encoding defaults (H.264, fast preset, YUV420) to maximize
-        # compatibility across hardware configurations. The system_id 112 distinguishes MCP-initiated sessions from
-        # CLI sessions (111) in log output.
+        # Creates the VideoSystem with user-specified encoding parameters. The system_id 112 distinguishes
+        # MCP-initiated sessions from CLI sessions (111) in log output.
         _active_session = VideoSystem(
             system_id=np.uint8(112),
             data_logger=_active_logger,
@@ -336,15 +379,33 @@ def start_video_session(
             display_frame_rate=display_frame_rate,
             color=not monochrome,
             gpu=gpu_index,
-            video_encoder=VideoEncoders.H264,
-            encoder_speed_preset=EncoderSpeedPresets.FAST,
-            output_pixel_format=OutputPixelFormats.YUV420,
-            quantization_parameter=15,
+            video_encoder=resolved_encoder,
+            encoder_speed_preset=resolved_preset,
+            output_pixel_format=resolved_pixel_format,
+            quantization_parameter=quantization_parameter,
         )
 
         # Spawns camera acquisition and encoding child processes. After this call, frames are being acquired but
         # not yet saved to disk (saving requires an explicit start_frame_saving call).
         _active_session.start()
+
+        # Captures session configuration for status reporting. VideoSystem does not expose constructor parameters
+        # as public properties, so they are stored here at creation time.
+        _session_info = {
+            "interface": interface.lower(),
+            "camera_index": camera_index,
+            "width": width,
+            "height": height,
+            "frame_rate": frame_rate,
+            "gpu_encoding": gpu_index >= 0,
+            "monochrome": monochrome,
+            "video_encoder": resolved_encoder.value,
+            "encoder_speed_preset": encoder_speed_preset,
+            "output_pixel_format": resolved_pixel_format.value,
+            "quantization_parameter": quantization_parameter,
+            "output_directory": output_directory,
+            "display_frame_rate": display_frame_rate,
+        }
 
     except Exception as e:
         # Cleans up partially initialized resources on failure to avoid leaving orphaned processes or file handles.
@@ -352,24 +413,36 @@ def start_video_session(
             _active_logger.stop()
             _active_logger = None
         _active_session = None
+        _session_info = None
         return f"Error: {e}"
     else:
-        return f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps -> {output_directory}"
+        return (
+            f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps "
+            f"encoder={resolved_encoder.value} preset={encoder_speed_preset} "
+            f"pixel_format={resolved_pixel_format.value} qp={quantization_parameter} -> {output_directory}"
+        )
 
 
 @mcp.tool()  # pragma: no cover
-def stop_video_session() -> str:  # pragma: no cover
-    """Stops the active video capture session and releases all resources.
+def stop_video_session() -> dict[str, Any]:  # pragma: no cover
+    """Stops the active video capture session, releases all resources, and assembles log archives.
 
-    Stops the VideoSystem and DataLogger, freeing the camera and saving any remaining buffered frames.
+    Stops the VideoSystem and DataLogger, freeing the camera and saving any remaining buffered frames. After
+    stopping the DataLogger, assembles raw .npy log entries into consolidated .npz archives grouped by source ID.
 
     Returns:
-        A confirmation that the session has stopped, or an error message if no session is active or shutdown fails.
+        A dictionary containing the session stop status, video file path, log directory path, archive assembly
+        result, and source IDs found in assembled archives. Returns an error dictionary if no session is active or
+        shutdown fails.
     """
-    global _active_session, _active_logger
+    global _active_session, _active_logger, _session_info
 
     if _active_session is None:
-        return "Error: No active session"
+        return {"error": "No active session"}
+
+    # Captures output paths before stopping, since module-level references are cleared in the finally block.
+    video_path = _active_session.video_file_path
+    log_directory: Path | None = _active_logger.output_directory if _active_logger is not None else None
 
     try:
         # Stops the VideoSystem first, which terminates camera acquisition and flushes any buffered frames still in
@@ -381,13 +454,107 @@ def stop_video_session() -> str:  # pragma: no cover
         if _active_logger is not None:
             _active_logger.stop()
     except Exception as e:
-        return f"Error: {e}"
+        return {"error": str(e)}
     finally:
         # Clears the module-level references regardless of success or failure to allow a new session to be started.
         _active_session = None
         _active_logger = None
+        _session_info = None
 
-    return "Session stopped"
+    # Assembles log archives from the DataLogger output directory. Assembly converts raw .npy files into
+    # consolidated .npz archives grouped by source ID, which the log processing pipeline requires as input.
+    archives_assembled = False
+    source_ids: list[str] = []
+    if log_directory is not None:
+        try:
+            assemble_log_archives(log_directory=log_directory, remove_sources=True, verbose=False)
+            archives_assembled = True
+
+            # Scans for assembled archives and extracts source IDs from filenames.
+            for archive_path in sorted(log_directory.glob(f"*{LOG_ARCHIVE_SUFFIX}")):
+                source_id = archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+                if source_id:
+                    source_ids.append(source_id)
+        except Exception:  # noqa: S110
+            # Archive assembly failure is non-fatal. The primary operation (stopping the session) has already
+            # succeeded. The archives_assembled flag communicates the failure without raising an error.
+            pass
+
+    return {
+        "status": "stopped",
+        "video_file": str(video_path) if video_path is not None else None,
+        "log_directory": str(log_directory) if log_directory is not None else None,
+        "archives_assembled": archives_assembled,
+        "source_ids": source_ids,
+    }
+
+
+@mcp.tool()  # pragma: no cover
+def assemble_log_archives_tool(  # pragma: no cover
+    log_directory: str,
+    *,
+    remove_sources: bool = True,
+    verify_integrity: bool = False,
+) -> dict[str, Any]:
+    """Consolidates raw .npy log entries in a DataLogger output directory into .npz archives by source ID.
+
+    Assembles the raw .npy files produced by a DataLogger instance into consolidated .npz archives, one per unique
+    source ID. This is required before the log processing pipeline can extract frame timestamps.
+
+    This tool is useful when log archives need to be assembled independently of a video session stop operation,
+    for example when processing log directories from previous sessions or when the automatic assembly was skipped or
+    failed.
+
+    Important:
+        The AI agent calling this tool MUST ask the user to provide the log_directory path before calling this
+        tool. Do not assume or guess the log directory path.
+
+    Args:
+        log_directory: The absolute path to the DataLogger output directory containing raw .npy log entries. Must
+            be provided by the user.
+        remove_sources: Determines whether to remove the original .npy files after successful archive assembly.
+        verify_integrity: Determines whether to verify archive integrity against original log entries before
+            removing sources.
+
+    Returns:
+        A dictionary containing the assembly status, directory path, list of created archive filenames, extracted
+        source IDs, and archive count. Returns an error dictionary if the directory does not exist or assembly
+        fails.
+    """
+    directory_path = Path(log_directory)
+
+    if not directory_path.exists():
+        return {"error": f"Directory not found: {log_directory}"}
+
+    if not directory_path.is_dir():
+        return {"error": f"Not a directory: {log_directory}"}
+
+    try:
+        assemble_log_archives(
+            log_directory=directory_path,
+            remove_sources=remove_sources,
+            verify_integrity=verify_integrity,
+            verbose=False,
+        )
+    except Exception as e:
+        return {"error": f"Archive assembly failed: {e}"}
+
+    # Scans for created archives and extracts source IDs from filenames.
+    archives: list[str] = []
+    source_ids: list[str] = []
+    for archive_path in sorted(directory_path.glob(f"*{LOG_ARCHIVE_SUFFIX}")):
+        archives.append(archive_path.name)
+        source_id = archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+        if source_id:
+            source_ids.append(source_id)
+
+    return {
+        "status": "assembled",
+        "directory": log_directory,
+        "archives": archives,
+        "source_ids": source_ids,
+        "archive_count": len(archives),
+    }
 
 
 @mcp.tool()  # pragma: no cover
@@ -435,23 +602,149 @@ def stop_frame_saving() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def get_session_status() -> str:  # pragma: no cover
-    """Returns the current status of the video session.
+def get_session_status() -> dict[str, Any]:  # pragma: no cover
+    """Returns detailed status information about the current video session.
 
-    Reports whether a session is active and its current state (acquiring frames, saving frames, etc.).
+    Reports whether a session is active, and when active, includes camera interface, resolution, frame rate,
+    encoding parameters, video file path, and log directory.
 
     Returns:
-        The session status as "Inactive", "Running", or "Stopped".
+        A dictionary containing session status and configuration details. Returns ``{"status": "inactive"}``
+        when no session exists.
     """
     # No session object exists: either none was started or the previous session was fully torn down.
     if _active_session is None:
-        return "Status: Inactive"
+        return {"status": "inactive"}
 
-    # A session object exists. The 'started' flag indicates whether its child processes are still running. A session
-    # that exists but is not started has been stopped and is awaiting cleanup.
-    if _active_session.started:
-        return "Status: Running"
-    return "Status: Stopped"
+    # Determines the high-level session state from the started flag.
+    status = "running" if _active_session.started else "stopped"
+    result: dict[str, Any] = {"status": status}
+
+    # Enriches the response with session configuration captured at creation time.
+    if _session_info is not None:
+        result["interface"] = _session_info["interface"]
+        result["camera_index"] = _session_info["camera_index"]
+        result["resolution"] = f"{_session_info['width']}x{_session_info['height']}"
+        result["frame_rate"] = _session_info["frame_rate"]
+        result["monochrome"] = _session_info["monochrome"]
+        result["encoder"] = _session_info["video_encoder"]
+        result["encoder_speed_preset"] = _session_info["encoder_speed_preset"]
+        result["output_pixel_format"] = _session_info["output_pixel_format"]
+        result["quantization_parameter"] = _session_info["quantization_parameter"]
+        result["gpu_encoding"] = _session_info["gpu_encoding"]
+        result["output_directory"] = _session_info["output_directory"]
+        result["display_frame_rate"] = _session_info["display_frame_rate"]
+
+    # Appends runtime-derived information from the VideoSystem and DataLogger instances.
+    video_path = _active_session.video_file_path
+    result["video_file"] = str(video_path) if video_path is not None else None
+
+    if _active_logger is not None:
+        result["log_directory"] = str(_active_logger.output_directory)
+
+    return result
+
+
+@mcp.tool()  # pragma: no cover
+def validate_video_file_tool(video_file: str) -> dict[str, Any]:  # pragma: no cover
+    """Validates a video file and extracts metadata using ffprobe.
+
+    Runs ffprobe on the specified video file to extract duration, frame count, codec, resolution, file size,
+    and bit rate. Verifies video integrity after a recording session.
+
+    Important:
+        The AI agent calling this tool MUST ask the user to provide the video_file path before calling this
+        tool. Do not assume or guess the video file path.
+
+    Args:
+        video_file: The absolute path to the video file to validate. Must be provided by the user.
+
+    Returns:
+        A dictionary containing video metadata (duration, frame count, codec, resolution, file size, bit rate)
+        on success, or an error dictionary if the file cannot be read or ffprobe is not available.
+    """
+    file_path = Path(video_file)
+
+    if not file_path.exists():
+        return {"error": f"File not found: {video_file}"}
+
+    if not file_path.is_file():
+        return {"error": f"Not a file: {video_file}"}
+
+    # Verifies that ffprobe is available on the system PATH.
+    try:
+        subprocess.run(args=["ffprobe", "-version"], capture_output=True, text=True, check=True)
+    except Exception:
+        return {"error": "ffprobe is not available on the system PATH. Install FFMPEG to use this tool."}
+
+    # Runs ffprobe to extract stream and format metadata in JSON format.
+    try:
+        probe_result = subprocess.run(
+            args=[
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        return {"error": f"ffprobe failed: {e.stderr.strip() if e.stderr else 'unknown error'}"}
+
+    # Parses the JSON output from ffprobe.
+    try:
+        probe_data = json.loads(probe_result.stdout)
+    except json.JSONDecodeError:
+        return {"error": "Unable to parse ffprobe output."}
+
+    # Extracts the first video stream from the probe output.
+    video_stream: dict[str, Any] | None = None
+    for stream in probe_data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            video_stream = stream
+            break
+
+    if video_stream is None:
+        return {"error": "No video stream found in file."}
+
+    format_info = probe_data.get("format", {})
+
+    # Extracts frame count. ffprobe may report it as nb_frames or may not include it for some containers.
+    frame_count_raw = video_stream.get("nb_frames")
+    frame_count = int(frame_count_raw) if frame_count_raw and frame_count_raw != "N/A" else None
+
+    # Extracts duration from the format-level metadata (more reliable than stream-level for MP4 containers).
+    duration_raw = format_info.get("duration")
+    duration_seconds = round(float(duration_raw), 6) if duration_raw else None
+
+    # Extracts bit rate from the format-level metadata.
+    bit_rate_raw = format_info.get("bit_rate")
+    bit_rate_bps = int(bit_rate_raw) if bit_rate_raw else None
+
+    # Extracts file size, falling back to filesystem stat if ffprobe does not report it.
+    size_raw = format_info.get("size")
+    file_size_bytes = int(size_raw) if size_raw else file_path.stat().st_size
+
+    return {
+        "file": video_file,
+        "valid": True,
+        "codec": video_stream.get("codec_name"),
+        "codec_long_name": video_stream.get("codec_long_name"),
+        "width": video_stream.get("width"),
+        "height": video_stream.get("height"),
+        "frame_count": frame_count,
+        "duration_seconds": duration_seconds,
+        "bit_rate_bps": bit_rate_bps,
+        "file_size_bytes": file_size_bytes,
+        "pixel_format": video_stream.get("pix_fmt"),
+        "frame_rate": video_stream.get("r_frame_rate"),
+    }
 
 
 @mcp.tool()  # pragma: no cover
@@ -469,7 +762,7 @@ def read_genicam_node(
         camera_index: The index of the Harvesters camera to read from.
         node_name: The name of a specific GenICam node to read (e.g., "Width", "ExposureTime"). If empty, all nodes
             are listed.
-        blacklisted_nodes: A list of GenICam node names to exclude from enumeration. Defaults to the built-in
+        blacklisted_nodes: A list of GenICam node names to exclude from enumeration. When None, uses the built-in
             blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes vendor-specific nodes that report
             ReadWrite access but reject writes at the hardware level. Pass an empty list to disable blacklisting.
 
@@ -553,10 +846,10 @@ def dump_genicam_config(
     Args:
         camera_index: The index of the Harvesters camera to dump the configuration from.
         output_file: The absolute path to the output YAML file. Must be provided by the user.
-        blacklisted_nodes: A list of GenICam node names to exclude from the configuration dump. Defaults to the
-            built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes vendor-specific nodes
-            that report ReadWrite access but reject writes at the hardware level. Pass an empty list to disable
-            blacklisting.
+        blacklisted_nodes: A list of GenICam node names to exclude from the configuration dump. When None, uses
+            the built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes vendor-specific
+            nodes that report ReadWrite access but reject writes at the hardware level. Pass an empty list to
+            disable blacklisting.
 
     Returns:
         A confirmation with the number of nodes saved, or an error description.
@@ -601,7 +894,7 @@ def load_genicam_config(
         config_file: The absolute path to the YAML configuration file to load. Must be provided by the user.
         strict_identity: Determines whether to abort on camera identity mismatch instead of warning.
         blacklisted_nodes: A list of GenICam node names to silently skip during validation and write operations.
-            Defaults to the built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes
+            When None, uses the built-in blacklist (CustomerIDKey, CustomerValueKey, TestPattern) which excludes
             vendor-specific nodes that report ReadWrite access but reject writes at the hardware level. Pass an
             empty list to disable blacklisting.
 
@@ -802,7 +1095,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
             result_log_dirs[log_dir_str] = {"source_ids": [], "jobs": [], "tracker_path": None, "summary": {}}
             continue
 
-        # Resolves the output directory for this log directory. Defaults to the log directory itself.
+        # Resolves the output directory for this log directory. Falls back to the log directory itself.
         output_path = Path(output_directories[entry_index]) if output_directories is not None else log_dir_path
 
         output_path.mkdir(parents=True, exist_ok=True)
@@ -1455,10 +1748,9 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
         feather_file: The absolute path to a camera timestamp feather file produced by the log processing pipeline.
             Expected filename pattern: ``camera_{source_id}_timestamps.feather``.
         drop_threshold_us: The inter-frame interval threshold in microseconds above which a gap is classified as a
-            frame drop. If set to 0 (default), the threshold is automatically computed as 2x the median inter-frame
-            interval.
+            frame drop. When 0, the threshold is automatically computed as 2x the median inter-frame interval.
         max_drop_locations: The maximum number of frame drop locations to include in the output. Caps the
-            'drop_locations' list to prevent oversized responses. Defaults to 50.
+            'drop_locations' list to prevent oversized responses.
 
     Returns:
         A dictionary containing 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' sections with computed
