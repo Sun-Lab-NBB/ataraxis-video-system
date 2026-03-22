@@ -91,6 +91,13 @@ class _PendingJob:  # pragma: no cover
     source_id: str
     """The source ID string identifying the log archive to process."""
 
+    @property  # pragma: no cover
+    def dispatch_key(self) -> tuple[str, str]:
+        """Returns the composite key that uniquely identifies this job across the entire batch, combining the tracker
+        path with the job ID.
+        """
+        return (str(self.tracker_path), self.job_id)
+
 
 @dataclass(slots=True)  # pragma: no cover
 class _JobExecutionState:  # pragma: no cover
@@ -102,16 +109,16 @@ class _JobExecutionState:  # pragma: no cover
     large jobs cannot fit.
     """
 
-    all_jobs: dict[str, _PendingJob] = field(default_factory=dict)
-    """All submitted jobs keyed by job_id."""
+    all_jobs: dict[tuple[str, str], _PendingJob] = field(default_factory=dict)
+    """All submitted jobs keyed by (tracker_path, job_id) dispatch key."""
     pending_queue: list[_PendingJob] = field(default_factory=list)
     """Jobs awaiting dispatch."""
-    active_threads: dict[str, Thread] = field(default_factory=dict)
-    """Currently running job_id to Thread mapping."""
-    active_workers: dict[str, int] = field(default_factory=dict)
-    """Maps each active job_id to its allocated worker count."""
-    job_message_counts: dict[str, int] = field(default_factory=dict)
-    """Maps each job_id to its archive message count, probed before execution."""
+    active_threads: dict[tuple[str, str], Thread] = field(default_factory=dict)
+    """Currently running (tracker_path, job_id) dispatch key to Thread mapping."""
+    active_workers: dict[tuple[str, str], int] = field(default_factory=dict)
+    """Maps each active dispatch key to its allocated worker count."""
+    job_message_counts: dict[tuple[str, str], int] = field(default_factory=dict)
+    """Maps each dispatch key to its archive message count, probed before execution."""
     worker_budget: int = 1
     """Total CPU cores available for the execution session."""
     lock: Lock = field(default_factory=Lock)
@@ -1221,7 +1228,7 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
             source_id=job_dict["source_id"],
         )
         pending.append(pending_job)
-        all_jobs[pending_job.job_id] = pending_job
+        all_jobs[pending_job.dispatch_key] = pending_job
 
     if not pending:
         return {"error": "No valid jobs to execute.", "invalid_jobs": invalid_jobs}
@@ -1231,9 +1238,9 @@ def execute_log_processing_jobs_tool(  # pragma: no cover
 
     # Probes archive message counts for all pending jobs. This reads only the zip directory of each .npz file,
     # which is fast and does not load message data into memory.
-    job_message_counts: dict[str, int] = {}
+    job_message_counts: dict[tuple[str, str], int] = {}
     for job in pending:
-        job_message_counts[job.job_id] = _probe_archive_message_count(job=job)
+        job_message_counts[job.dispatch_key] = _probe_archive_message_count(job=job)
 
     # Creates execution state and starts the manager thread.
     _job_execution_state = _JobExecutionState(
@@ -2038,10 +2045,10 @@ def _job_execution_manager() -> None:  # pragma: no cover
     while True:
         with state.lock:
             # Cleans up completed threads and returns their workers to the budget.
-            completed_ids = [job_id for job_id, thread in state.active_threads.items() if not thread.is_alive()]
-            for job_id in completed_ids:
-                del state.active_threads[job_id]
-                state.active_workers.pop(job_id, None)
+            completed_keys = [key for key, thread in state.active_threads.items() if not thread.is_alive()]
+            for key in completed_keys:
+                del state.active_threads[key]
+                state.active_workers.pop(key, None)
 
             # Exits when no pending jobs and no active threads remain.
             if not state.pending_queue and not state.active_threads:
@@ -2061,7 +2068,7 @@ def _job_execution_manager() -> None:  # pragma: no cover
                 small_pending: list[_PendingJob] = []
                 parallel_pending: list[_PendingJob] = []
                 for job in state.pending_queue:
-                    message_count = state.job_message_counts.get(job.job_id, 0)
+                    message_count = state.job_message_counts.get(job.dispatch_key, 0)
                     if message_count < PARALLEL_PROCESSING_THRESHOLD:
                         small_pending.append(job)
                     else:
@@ -2073,7 +2080,7 @@ def _job_execution_manager() -> None:  # pragma: no cover
                 if parallel_pending and available >= _WORKER_MULTIPLE:
                     # Computes the sqrt minimum from the largest pending archive.
                     max_sqrt_min = max(
-                        _compute_sqrt_minimum(message_count=state.job_message_counts.get(job.job_id, 0))
+                        _compute_sqrt_minimum(message_count=state.job_message_counts.get(job.dispatch_key, 0))
                         for job in parallel_pending
                     )
 
@@ -2097,14 +2104,14 @@ def _job_execution_manager() -> None:  # pragma: no cover
                 # Dispatches all allocated jobs.
                 for job, workers in dispatch_list:
                     state.pending_queue.remove(job)
-                    state.active_workers[job.job_id] = workers
+                    state.active_workers[job.dispatch_key] = workers
                     thread = Thread(
                         target=_job_worker,
                         kwargs={"job": job, "workers": workers},
                         daemon=True,
                     )
                     thread.start()
-                    state.active_threads[job.job_id] = thread
+                    state.active_threads[job.dispatch_key] = thread
 
         # Polls at 1-second intervals outside the lock to avoid blocking other threads.
         poll_timer.delay(delay=1, allow_sleep=True)
