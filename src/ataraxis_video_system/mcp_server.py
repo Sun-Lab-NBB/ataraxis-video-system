@@ -693,19 +693,21 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:  # pragma: no c
     if not file_path.is_file():
         return {"error": f"Not a file: {video_file}"}
 
-    # Verifies that ffprobe is available on the system PATH.
-    try:
-        subprocess.run(args=["ffprobe", "-version"], capture_output=True, text=True, check=True)
-    except Exception:
-        return {"error": "ffprobe is not available on the system PATH. Install FFMPEG to use this tool."}
-
-    # Runs ffprobe to extract stream and format metadata in JSON format.
+    # Runs ffprobe to extract stream and format metadata in JSON format. Limits analysis to the first 10 MB and
+    # 5 seconds of the file to avoid scanning the entire file for containers that lack header-level metadata.
+    # Selects only the first video stream to skip audio, subtitle, and data streams.
     try:
         probe_result = subprocess.run(
             args=[
                 "ffprobe",
                 "-v",
                 "quiet",
+                "-probesize",
+                "10000000",
+                "-analyzeduration",
+                "5000000",
+                "-select_streams",
+                "v:0",
                 "-print_format",
                 "json",
                 "-show_format",
@@ -716,6 +718,8 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:  # pragma: no c
             text=True,
             check=True,
         )
+    except FileNotFoundError:
+        return {"error": "ffprobe is not available on the system PATH. Install FFMPEG to use this tool."}
     except subprocess.CalledProcessError as e:
         return {"error": f"ffprobe failed: {e.stderr.strip() if e.stderr else 'unknown error'}"}
 
