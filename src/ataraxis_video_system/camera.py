@@ -158,7 +158,7 @@ def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
 
     # Resolves the path to the library-specific .txt file used to store the path to the currently used .cti file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
-    cti_path_file = application_directory.joinpath("cti_path.txt")
+    cti_path_file = application_directory / "cti_path.txt"
 
     # Ensures the application directory exists before writing.
     ensure_directory_exists(cti_path_file)
@@ -180,7 +180,7 @@ def check_cti_file() -> Path | None:  # pragma: no cover
     """
     # Resolves the path to the .cti path file using platformdirs.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
-    cti_path_file = application_directory.joinpath("cti_path.txt")
+    cti_path_file = application_directory / "cti_path.txt"
 
     # Checks if the path file exists.
     if not cti_path_file.exists():
@@ -1222,7 +1222,7 @@ def _get_cti_path() -> Path:
     """
     # Uses platformdirs to locate the user's data directory and resolve the path to the .cti path file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
-    cti_path_file = application_directory.joinpath("cti_path.txt")
+    cti_path_file = application_directory / "cti_path.txt"
 
     # Aborts with an error if the path file does not exist.
     if not cti_path_file.exists():  # pragma: no cover

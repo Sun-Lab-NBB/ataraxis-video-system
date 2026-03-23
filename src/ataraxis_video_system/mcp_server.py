@@ -12,15 +12,18 @@ from threading import Lock, Thread  # pragma: no cover
 import contextlib  # pragma: no cover
 import subprocess  # pragma: no cover
 from dataclasses import field, dataclass  # pragma: no cover
+from collections.abc import Generator  # pragma: no cover
 from concurrent.futures import ProcessPoolExecutor  # pragma: no cover
 
 import numpy as np  # pragma: no cover
 import polars as pl  # pragma: no cover
 from ataraxis_time import (  # pragma: no cover
+    TimeUnits,
     PrecisionTimer,
     TimerPrecisions,
     TimestampFormats,
     TimestampPrecisions,
+    convert_time,
     get_timestamp,
 )
 from mcp.server.fastmcp import FastMCP  # pragma: no cover
@@ -63,7 +66,7 @@ from .configuration import (
 from .log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
-    CAMERA_DATA_DIRECTORY,
+    CAMERA_TIMESTAMPS_DIRECTORY,
     PARALLEL_PROCESSING_THRESHOLD,
     execute_job,
     find_log_archive,
@@ -73,6 +76,26 @@ from .log_processing import (
 
 mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)  # pragma: no cover
 """Stores the MCP server instance used to expose tools to AI agents."""  # pragma: no cover
+
+_WORKER_SCALING_FACTOR: int = 1000  # pragma: no cover
+"""Controls the saturation floor via the formula ``ceil(sqrt(messages / factor))``. The square root models diminishing
+returns from process parallelism. This value sets the minimum workers a job receives before the budget division can
+push it lower. With a factor of 1,000, a 648,000-message archive (120 fps x 1.5 h) has a saturation floor of 25
+workers."""  # pragma: no cover
+
+_WORKER_MULTIPLE: int = 5  # pragma: no cover
+"""Worker counts above 1 are rounded down to the nearest multiple of this value for clean allocation."""
+
+_RESERVED_CORES: int = 2  # pragma: no cover
+"""The number of CPU cores reserved for system operations. The worker budget is computed as available cores minus this
+value, with a minimum of 1."""
+
+_FEATHER_PREFIX: str = "camera_"  # pragma: no cover
+"""Filename prefix for camera timestamp feather files."""  # pragma: no cover
+
+_FEATHER_SUFFIX: str = "_timestamps.feather"  # pragma: no cover
+"""Filename suffix for camera timestamp feather files."""  # pragma: no cover
+
 
 _active_session: VideoSystem | None = None  # pragma: no cover
 """Stores the currently active VideoSystem instance, or None when no session is running."""  # pragma: no cover
@@ -151,28 +174,6 @@ class _JobExecutionState:  # pragma: no cover
 
 _job_execution_state: _JobExecutionState | None = None  # pragma: no cover
 """Stores the active execution state for batch log processing jobs."""  # pragma: no cover
-
-_WORKER_SCALING_FACTOR: int = 1000  # pragma: no cover
-"""Controls the saturation floor via the formula ``ceil(sqrt(messages / factor))``. The square root models diminishing
-returns from process parallelism. This value sets the minimum workers a job receives before the budget division can
-push it lower. With a factor of 1,000, a 648,000-message archive (120 fps x 1.5 h) has a saturation floor of 25
-workers."""  # pragma: no cover
-
-_WORKER_MULTIPLE: int = 5  # pragma: no cover
-"""Worker counts above 1 are rounded down to the nearest multiple of this value for clean allocation."""
-
-_RESERVED_CORES: int = 2  # pragma: no cover
-"""The number of CPU cores reserved for system operations. The worker budget is computed as available cores minus this
-value, with a minimum of 1."""
-
-_FEATHER_GLOB_PATTERN: str = "camera_*_timestamps.feather"  # pragma: no cover
-"""Glob pattern for discovering processed camera timestamp feather files."""  # pragma: no cover
-
-_FEATHER_PREFIX: str = "camera_"  # pragma: no cover
-"""Filename prefix for camera timestamp feather files."""  # pragma: no cover
-
-_FEATHER_SUFFIX: str = "_timestamps.feather"  # pragma: no cover
-"""Filename suffix for camera timestamp feather files."""  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
@@ -498,12 +499,7 @@ def stop_video_session() -> dict[str, Any]:  # pragma: no cover
         try:
             assemble_log_archives(log_directory=log_directory, remove_sources=True, verbose=False)
             archives_assembled = True
-
-            # Scans for assembled archives and extracts source IDs from filenames.
-            for archive_path in sorted(log_directory.glob(f"*{LOG_ARCHIVE_SUFFIX}")):
-                source_id = archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
-                if source_id:
-                    source_ids.append(source_id)
+            source_ids = _scan_archive_source_ids(directory=log_directory)
         except Exception:  # noqa: S110
             # Archive assembly failure is non-fatal. The primary operation (stopping the session) has already
             # succeeded. The archives_assembled flag communicates the failure without raising an error.
@@ -569,13 +565,8 @@ def assemble_log_archives_tool(  # pragma: no cover
         return {"error": f"Archive assembly failed: {e}"}
 
     # Scans for created archives and extracts source IDs from filenames.
-    archives: list[str] = []
-    source_ids: list[str] = []
-    for archive_path in sorted(directory_path.glob(f"*{LOG_ARCHIVE_SUFFIX}")):
-        archives.append(archive_path.name)
-        source_id = archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
-        if source_id:
-            source_ids.append(source_id)
+    source_ids = _scan_archive_source_ids(directory=directory_path)
+    archives = [f"{source_id}{LOG_ARCHIVE_SUFFIX}" for source_id in source_ids]
 
     return {
         "status": "assembled",
@@ -803,38 +794,31 @@ def read_genicam_node(
     Returns:
         Detailed node information for a single node, or a newline-separated summary of all nodes.
     """
-    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+    blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
-    # Opens a temporary connection to the camera. system_id=0 is a placeholder since only node map access is needed,
-    # not a full VideoSystem lifecycle.
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
-        camera.connect()
+        with _harvester_connection(camera_index=camera_index) as camera:
+            # Single-node mode: returns a detailed formatted description including the node's type, current value,
+            # valid range or enumeration entries, and access mode.
+            if node_name:
+                return format_genicam_node(node_map=camera.node_map, name=node_name)
 
-        # Single-node mode: returns a detailed formatted description including the node's type, current value,
-        # valid range or enumeration entries, and access mode.
-        if node_name:
-            return format_genicam_node(node_map=camera.node_map, name=node_name)
-
-        # All-nodes mode: enumerates every writable node and reads its current value. Nodes that raise exceptions
-        # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
-        # rather than aborting the entire listing.
-        node_map = camera.node_map
-        names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
-        lines = [f"Found {len(names)} writable GenICam nodes:"]
-        for name in names:
-            # noinspection PyBroadException
-            try:
-                info = read_node_info(node_map=node_map, name=name)
-                lines.append(f"  {info.name} = {info.value}")
-            except Exception:
-                lines.append(f"  {name} = <unreadable>")
-        return "\n".join(lines)
+            # All-nodes mode: enumerates every writable node and reads its current value. Nodes that raise exceptions
+            # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
+            # rather than aborting the entire listing.
+            node_map = camera.node_map
+            names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
+            lines = [f"Found {len(names)} writable GenICam nodes:"]
+            for name in names:
+                # noinspection PyBroadException
+                try:
+                    info = read_node_info(node_map=node_map, name=name)
+                    lines.append(f"  {info.name} = {info.value}")
+                except Exception:
+                    lines.append(f"  {name} = <unreadable>")
+            return "\n".join(lines)
     except Exception as e:
         return f"Error: {e}"
-    finally:
-        # Always disconnects to release the GenTL handle, allowing other processes to access the camera.
-        camera.disconnect()
 
 
 @mcp.tool()  # pragma: no cover
@@ -851,18 +835,15 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  #
     Returns:
         A confirmation with the node name and written value, or an error description.
     """
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
-        # Connects to the camera and delegates value conversion and writing to the camera's set_node_value method,
-        # which inspects the node's type and casts the string value to int, float, bool, or enum as needed.
-        camera.connect()
-        camera.set_node_value(name=node_name, value=value)
+        with _harvester_connection(camera_index=camera_index) as camera:
+            # Delegates value conversion and writing to the camera's set_node_value method, which inspects the node's
+            # type and casts the string value to int, float, bool, or enum as needed.
+            camera.set_node_value(name=node_name, value=value)
     except Exception as e:
         return f"Error: {e}"
     else:
         return f"Node '{node_name}' set to {value}"
-    finally:
-        camera.disconnect()
 
 
 @mcp.tool()  # pragma: no cover
@@ -888,25 +869,21 @@ def dump_genicam_config(
     Returns:
         A confirmation with the number of nodes saved, or an error description.
     """
-    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+    blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
     try:
-        camera.connect()
+        with _harvester_connection(camera_index=camera_index) as camera:
+            # Reads every accessible node from the camera's GenICam node map and packages them into a
+            # GenicamConfiguration object that includes the camera's model, serial number, and per-node metadata
+            # (value, range, enum entries).
+            config = camera.get_configuration(blacklisted_nodes=blacklist)
 
-        # Reads every accessible node from the camera's GenICam node map and packages them into a
-        # GenicamConfiguration object that includes the camera's model, serial number, and per-node metadata
-        # (value, range, enum entries).
-        config = camera.get_configuration(blacklisted_nodes=blacklist)
-
-        # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
-        # of the same model.
-        config.to_yaml(file_path=Path(output_file))
-        return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
+            # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
+            # of the same model.
+            config.to_yaml(file_path=Path(output_file))
+            return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
     except Exception as e:
         return f"Error: {e}"
-    finally:
-        camera.disconnect()
 
 
 @mcp.tool()  # pragma: no cover
@@ -935,28 +912,24 @@ def load_genicam_config(
     Returns:
         The number of nodes applied and any errors encountered, or an error description.
     """
-    blacklist = frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+    blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    # Validates the config file path before opening a camera connection.
+    path = Path(config_file)
+    if not path.exists():
+        return f"Error: File not found at {config_file}"
+
     try:
-        camera.connect()
-
-        # Validates the config file path before attempting deserialization.
-        path = Path(config_file)
-        if not path.exists():
-            return f"Error: File not found at {config_file}"
-
-        # Deserializes the YAML configuration and applies each writable node value to the connected camera. When
-        # strict_identity is True, the camera model and serial number must match the values stored in the YAML
-        # file; otherwise, a mismatch produces a warning but proceeds with the write.
-        config = GenicamConfiguration.from_yaml(file_path=path)
-        camera.apply_configuration(config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
+        with _harvester_connection(camera_index=camera_index) as camera:
+            # Deserializes the YAML configuration and applies each writable node value to the connected camera. When
+            # strict_identity is True, the camera model and serial number must match the values stored in the YAML
+            # file; otherwise, a mismatch produces a warning but proceeds with the write.
+            config = GenicamConfiguration.from_yaml(file_path=path)
+            camera.apply_configuration(config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
     except Exception as e:
         return f"Error: {e}"
     else:
         return "Configuration applied successfully"
-    finally:
-        camera.disconnect()
 
 
 @mcp.tool()  # pragma: no cover
@@ -1038,22 +1011,23 @@ def write_camera_manifest_tool(  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Discovers camera data by searching for camera_manifest.yaml files under a root directory.
+def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Discovers confirmed camera recordings under a root directory.
 
-    Recursively searches the root directory for camera_manifest.yaml files. Each manifest identifies a
-    DataLogger output directory containing axvs-produced log archives. For each manifest source, locates
-    the corresponding log archive, video file, and processed feather output. Video files are matched by
-    camera name first (searching for ``*{name}*.mp4`` under the recording root), then by source ID
-    (``*{id:03d}*.mp4``) as a fallback. Recording roots are resolved using unique path component detection.
+    Recursively searches for camera_manifest.yaml files to identify camera sources. Only sources whose log
+    archives (``{source_id}_log.npz``) exist on disk are included. For each confirmed source, resolves the
+    paired video file and processed timestamp feather file from pre-collected file indices. Video files are
+    matched by camera name first, then by source ID pattern, preferring the closest match by path proximity
+    to the log directory. Returns a flat list of resolved source entries.
 
     Args:
-        root_directory: The absolute path to the root directory to search for camera manifests. Searched recursively.
+        root_directory: The absolute path to the root directory to search. Searched recursively.
 
     Returns:
-        A dictionary containing hierarchical 'recordings' mapping recording roots to their log directories
-        and per-source data (log archives, video files, feather outputs), a flat 'log_directories' list for
-        batch processing, and aggregate counts.
+        A dictionary containing a 'sources' list where each entry has 'recording_root', 'source_id', 'name',
+        'log_archive', 'video_file', 'timestamps_file', and 'log_directory' keys, a flat 'log_directories'
+        list for batch processing, and aggregate counts. Video and timestamp paths are None when the
+        corresponding file cannot be found.
     """
     root_path = Path(root_directory)
 
@@ -1063,10 +1037,9 @@ def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    # Discovers all camera manifests and reads their source entries.
-    log_dir_data: dict[Path, dict[str, Any]] = {}
-    all_source_ids: set[str] = set()
-    total_archives = 0
+    # Discovers all camera manifests and collects only sources whose log archives exist on disk.
+    confirmed_sources: list[tuple[Path, int, str, Path]] = []
+    log_dirs_with_archives: set[Path] = set()
 
     try:
         for manifest_path in sorted(root_path.rglob(CAMERA_MANIFEST_FILENAME)):
@@ -1080,171 +1053,88 @@ def discover_recording_log_archives_tool(root_directory: str) -> dict[str, Any]:
             if not manifest.sources:
                 continue
 
-            # Uses the manifest source entries to identify expected archives.
-            source_ids: list[str] = []
-            archive_count = 0
-            sources_data: list[dict[str, Any]] = []
             for source in manifest.sources:
-                source_id = str(source.id)
                 archive_path = log_dir / f"{source.id}{LOG_ARCHIVE_SUFFIX}"
-                has_archive = archive_path.exists()
-                if has_archive:
-                    archive_count += 1
-                source_ids.append(source_id)
-                all_source_ids.add(source_id)
+                if not archive_path.exists():
+                    continue
 
-                sources_data.append(
-                    {
-                        "id": source.id,
-                        "name": source.name,
-                        "log_archive": str(archive_path) if has_archive else None,
-                    }
-                )
-
-            log_dir_data[log_dir] = {
-                "source_ids": source_ids,
-                "archive_count": archive_count,
-                "sources": sources_data,
-            }
-            total_archives += archive_count
+                confirmed_sources.append((log_dir, source.id, source.name, archive_path))
+                log_dirs_with_archives.add(log_dir)
     except PermissionError as error:
         return {"error": f"Permission denied during search: {error}"}
 
-    if not log_dir_data:
+    if not confirmed_sources:
         return {
-            "recordings": {},
+            "sources": [],
             "log_directories": [],
-            "all_source_ids": [],
-            "total_recordings": 0,
+            "total_sources": 0,
             "total_log_directories": 0,
-            "total_archives": 0,
         }
 
-    # Resolves recording roots from log directory paths using unique path component detection.
-    log_dir_paths = list(log_dir_data.keys())
-    try:
-        recording_roots = resolve_recording_roots(paths=log_dir_paths)
-    except RuntimeError:
-        # Falls back to using each log directory's parent as the recording root if unique component detection fails
-        # (e.g., single log directory where all components are trivially unique).
-        recording_roots = tuple(dict.fromkeys(log_dir.parent for log_dir in log_dir_paths))
+    # Pre-collects all video files and camera_timestamps directories under the search root in two rglob passes.
+    # Avoids redundant filesystem walks when resolving multiple sources.
+    all_video_files = tuple(sorted(root_path.rglob("*.mp4")))
+    timestamps_dirs = tuple(
+        candidate for candidate in sorted(root_path.rglob(CAMERA_TIMESTAMPS_DIRECTORY)) if candidate.is_dir()
+    )
 
-    # Builds a mapping from each log directory to its recording root by finding the longest matching root prefix.
-    log_dir_to_root: dict[Path, Path] = {}
-    for log_dir in log_dir_paths:
-        for root in recording_roots:
-            if log_dir == root or root in log_dir.parents:
-                log_dir_to_root[log_dir] = root
-                break
-        else:
-            # Falls back to the log directory's parent if no root prefix matches.
-            log_dir_to_root[log_dir] = log_dir.parent
+    # Resolves recording roots and builds the log-directory-to-root mapping.
+    log_dir_paths = sorted(log_dirs_with_archives)
+    log_dir_to_root = _resolve_log_dir_roots(log_dir_paths=log_dir_paths)
 
-    # Groups log directories under their resolved recording roots. For each source, searches for the
-    # corresponding video file and processed feather output under the recording root.
-    recordings: dict[str, dict[str, Any]] = {}
-    for log_dir, data in log_dir_data.items():
-        recording_root = log_dir_to_root[log_dir]
-        recording_root_str = str(recording_root)
-        if recording_root_str not in recordings:
-            recordings[recording_root_str] = {"log_directories": {}}
+    # Builds the flat list of resolved source entries. Each entry pairs the confirmed log archive with its
+    # recording root, matched video file, and processed timestamp feather file.
+    sources_output: list[dict[str, Any]] = []
+    for log_dir, source_id, name, archive_path in confirmed_sources:
+        video_path = _match_video_file(
+            all_video_files=all_video_files, log_directory=log_dir, source_id=source_id, name=name
+        )
+        feather_path = _find_feather_file(timestamps_dirs=timestamps_dirs, source_id=source_id)
 
-        # Enriches each source entry with video file and feather output paths.
-        for source_entry in data["sources"]:
-            source_entry["video_file"] = _find_video_file(
-                recording_root=recording_root, name=source_entry["name"], source_id=source_entry["id"]
-            )
-            feather_path = _find_feather_file(log_directory=log_dir, source_id=source_entry["id"])
-            source_entry["feather_file"] = str(feather_path) if feather_path is not None else None
-
-        recordings[recording_root_str]["log_directories"][str(log_dir)] = {
-            "source_ids": data["source_ids"],
-            "sources": data["sources"],
-            "archive_count": data["archive_count"],
-        }
+        sources_output.append(
+            {
+                "recording_root": str(log_dir_to_root[log_dir]),
+                "source_id": str(source_id),
+                "name": name,
+                "log_archive": str(archive_path),
+                "video_file": video_path,
+                "timestamps_file": str(feather_path) if feather_path is not None else None,
+                "log_directory": str(log_dir),
+            }
+        )
 
     return {
-        "recordings": recordings,
+        "sources": sources_output,
         "log_directories": sorted(str(log_dir) for log_dir in log_dir_paths),
-        "all_source_ids": sorted(all_source_ids),
-        "total_recordings": len(recordings),
-        "total_log_directories": len(log_dir_data),
-        "total_archives": total_archives,
+        "total_sources": len(sources_output),
+        "total_log_directories": len(log_dir_paths),
     }
-
-
-def _find_video_file(recording_root: Path, name: str, source_id: int) -> str | None:  # pragma: no cover
-    """Searches for a video file matching a camera source under the recording root.
-
-    Matches by camera name first (``*{name}*.mp4``), falling back to source ID (``*{source_id:03d}*.mp4``).
-    Returns the path to the first match, or None if no video file is found.
-
-    Args:
-        recording_root: The recording root directory to search recursively.
-        name: The colloquial camera name from the manifest (e.g., 'body_camera').
-        source_id: The numeric source ID from the manifest.
-
-    Returns:
-        The string path to the matched video file, or None if no match is found.
-    """
-    # Searches by camera name first.
-    if name:
-        matches = sorted(recording_root.rglob(f"*{name}*.mp4"))
-        if matches:
-            return str(matches[0])
-
-    # Falls back to source ID pattern.
-    matches = sorted(recording_root.rglob(f"*{source_id:03d}*.mp4"))
-    return str(matches[0]) if matches else None
-
-
-def _find_feather_file(log_directory: Path, source_id: int) -> Path | None:  # pragma: no cover
-    """Searches for a processed feather file for the given source ID.
-
-    Checks the ``camera_data/`` subdirectory under the log directory's parent for a feather file matching the
-    ``camera_{source_id}_timestamps.feather`` naming convention.
-
-    Args:
-        log_directory: The DataLogger output directory containing the log archives.
-        source_id: The numeric source ID to search for.
-
-    Returns:
-        The path to the feather file, or None if not found.
-    """
-    # Checks the standard camera_data output location (sibling to or under the log directory's parent).
-    for candidate in log_directory.parent.rglob(f"{_FEATHER_PREFIX}{source_id}{_FEATHER_SUFFIX}"):
-        return candidate
-    return None
 
 
 @mcp.tool()  # pragma: no cover
 def prepare_log_processing_batch_tool(  # pragma: no cover
     log_directories: list[str],
-    source_ids: list[str] | None = None,
+    source_ids: list[str],
     output_directories: list[str] | None = None,
 ) -> dict[str, Any]:
     """Prepares an execution manifest for batch log processing without starting execution.
 
-    Accepts a list of DataLogger output directories (log directories), each containing .npz log archives.
-    Initializes a ProcessingTracker with one timestamp-extraction job per source ID for each log directory.
-    Idempotent: if a tracker already exists for a log directory, returns the existing manifest with current
-    job statuses instead of reinitializing.
-
-    Use discover_recording_log_archives_tool first to obtain log directory paths. The discovery tool returns
-    both a hierarchical 'recordings' view for understanding the session structure and a flat 'log_directories'
-    list that can be passed directly to this tool. Select all discovered log directories for full processing,
-    or pass a subset for targeted processing of specific sessions or DataLogger outputs.
+    Accepts log directories and source IDs from discover_camera_data_tool and initializes a ProcessingTracker
+    with one timestamp-extraction job per source ID for each log directory. Idempotent: if a tracker already
+    exists for a log directory, returns the existing manifest with current job statuses instead of
+    reinitializing. Requires prior discovery — the caller must provide confirmed source IDs rather than
+    relying on implicit archive or manifest discovery.
 
     Important:
-        The AI agent calling this tool MUST ask the user to provide recording or log directory paths before
-        calling this tool. Do not assume or guess directory paths.
+        The AI agent calling this tool MUST run discover_camera_data_tool first to obtain log directory paths
+        and confirmed source IDs. Do not assume or guess directory paths or source IDs.
 
     Args:
         log_directories: The list of absolute paths to DataLogger output directories containing log archives.
-            Accepts paths from the 'log_directories' list returned by discover_recording_log_archives_tool,
-            or any directory containing .npz log archives directly (non-recursive, immediate children only).
-        source_ids: An optional list of source IDs to process. If not provided, all discovered source IDs in
-            each log directory are included.
+            Accepts paths from the 'log_directories' list returned by discover_camera_data_tool.
+        source_ids: The list of confirmed source IDs to process. Accepts IDs from the 'source_id' field of
+            entries in the 'sources' list returned by discover_camera_data_tool. Applied uniformly: each log
+            directory creates jobs for every source ID in this list that has a matching archive on disk.
         output_directories: An optional list of absolute paths for per-log-directory output. Must match the
             length of log_directories. When not provided, output is written to each log directory itself.
 
@@ -1260,6 +1150,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
             ),
         }
 
+    source_id_set = set(source_ids)
     result_log_dirs: dict[str, Any] = {}
     invalid_paths: list[str] = []
     total_jobs = 0
@@ -1271,18 +1162,11 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
             invalid_paths.append(log_dir_str)
             continue
 
-        # Discovers archives in this log directory (non-recursive, immediate children only).
-        discovered_ids = sorted(
-            path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
-            for path in log_dir_path.glob(f"*{LOG_ARCHIVE_SUFFIX}")
-            if path.name.removesuffix(LOG_ARCHIVE_SUFFIX)
+        # Filters the requested source IDs to those that have a matching archive in this log directory.
+        # Discovery already confirmed these archives exist, but the check guards against stale data.
+        filtered_ids = sorted(
+            source_id for source_id in source_id_set if (log_dir_path / f"{source_id}{LOG_ARCHIVE_SUFFIX}").exists()
         )
-
-        # Filters by requested source IDs if specified.
-        if source_ids is not None:
-            filtered_ids = [source_id for source_id in discovered_ids if source_id in source_ids]
-        else:
-            filtered_ids = discovered_ids
 
         if not filtered_ids:
             result_log_dirs[log_dir_str] = {"source_ids": [], "jobs": [], "tracker_path": None, "summary": {}}
@@ -1291,10 +1175,10 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
         # Resolves the output directory for this log directory. Falls back to the log directory itself.
         output_path = Path(output_directories[entry_index]) if output_directories is not None else log_dir_path
 
-        # Creates the camera_data subdirectory under the output path for tracker and feather files.
-        camera_data_path = output_path / CAMERA_DATA_DIRECTORY
-        camera_data_path.mkdir(parents=True, exist_ok=True)
-        tracker_path = camera_data_path / TRACKER_FILENAME
+        # Creates the camera_timestamps subdirectory under the output path for tracker and feather files.
+        timestamps_path = output_path / CAMERA_TIMESTAMPS_DIRECTORY
+        timestamps_path.mkdir(parents=True, exist_ok=True)
+        tracker_path = timestamps_path / TRACKER_FILENAME
 
         if tracker_path.exists():
             # Idempotent path: returns existing tracker state.
@@ -1305,14 +1189,14 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
 
             result_log_dirs[log_dir_str] = {
                 "tracker_path": str(tracker_path),
-                "output_directory": str(camera_data_path),
+                "output_directory": str(timestamps_path),
                 "source_ids": filtered_ids,
                 **tracker_status,
             }
             total_jobs += len(tracker_status.get("jobs", []))
         else:
             # Initializes a new tracker with jobs for the filtered source IDs.
-            job_ids = initialize_processing_tracker(output_directory=camera_data_path, source_ids=filtered_ids)
+            job_ids = initialize_processing_tracker(output_directory=timestamps_path, source_ids=filtered_ids)
 
             jobs: list[dict[str, str]] = [
                 {
@@ -1320,7 +1204,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
                     "source_id": source_id,
                     "status": "SCHEDULED",
                     "log_directory": log_dir_str,
-                    "output_directory": str(camera_data_path),
+                    "output_directory": str(timestamps_path),
                     "tracker_path": str(tracker_path),
                 }
                 for source_id in filtered_ids
@@ -1328,7 +1212,7 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
 
             result_log_dirs[log_dir_str] = {
                 "tracker_path": str(tracker_path),
-                "output_directory": str(camera_data_path),
+                "output_directory": str(timestamps_path),
                 "source_ids": filtered_ids,
                 "jobs": jobs,
                 "summary": {
@@ -1479,12 +1363,7 @@ def get_log_processing_status_tool() -> dict[str, Any]:  # pragma: no cover
     running_count = 0
     scheduled_count = 0
 
-    # Groups jobs by tracker path to minimize file reads.
-    tracker_jobs: dict[Path, list[_PendingJob]] = {}
-    for job in state.all_jobs.values():
-        tracker_jobs.setdefault(job.tracker_path, []).append(job)
-
-    for tracker_path, path_jobs in tracker_jobs.items():
+    for tracker_path, path_jobs in _group_jobs_by_tracker(state=state).items():
         try:
             tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
         except Exception:
@@ -1551,12 +1430,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
     completed_count = 0
     failed_count = 0
 
-    # Groups jobs by tracker path to minimize file reads.
-    tracker_jobs: dict[Path, list[_PendingJob]] = {}
-    for job in state.all_jobs.values():
-        tracker_jobs.setdefault(job.tracker_path, []).append(job)
-
-    for tracker_path, path_jobs in tracker_jobs.items():
+    for tracker_path, path_jobs in _group_jobs_by_tracker(state=state).items():
         try:
             tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
         except Exception:  # noqa: S112
@@ -1576,14 +1450,24 @@ def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
                     earliest_start = started_at_us
 
             if job_info.status == ProcessingStatus.RUNNING and job_info.started_at is not None:
-                entry["elapsed_seconds"] = round((current_us - int(job_info.started_at)) / 1_000_000, 2)
+                elapsed_seconds = convert_time(
+                    time=current_us - int(job_info.started_at),
+                    from_units=TimeUnits.MICROSECOND,
+                    to_units=TimeUnits.SECOND,
+                    as_float=True,
+                )
+                entry["elapsed_seconds"] = round(elapsed_seconds, 2)
 
             if job_info.completed_at is not None:
                 entry["completed_at"] = int(job_info.completed_at)
                 if job_info.started_at is not None:
-                    entry["duration_seconds"] = round(
-                        (int(job_info.completed_at) - int(job_info.started_at)) / 1_000_000, 2
+                    duration_seconds = convert_time(
+                        time=int(job_info.completed_at) - int(job_info.started_at),
+                        from_units=TimeUnits.MICROSECOND,
+                        to_units=TimeUnits.SECOND,
+                        as_float=True,
                     )
+                    entry["duration_seconds"] = round(duration_seconds, 2)
 
             if job_info.status == ProcessingStatus.SUCCEEDED:
                 completed_count += 1
@@ -1593,8 +1477,20 @@ def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
             job_timing.append(entry)
 
     # Computes session-level statistics.
+    total_elapsed_seconds = 0.0
+    if earliest_start is not None:
+        total_elapsed_seconds = round(
+            convert_time(
+                time=current_us - earliest_start,
+                from_units=TimeUnits.MICROSECOND,
+                to_units=TimeUnits.SECOND,
+                as_float=True,
+            ),
+            2,
+        )
+
     session: dict[str, Any] = {
-        "total_elapsed_seconds": round((current_us - earliest_start) / 1_000_000, 2) if earliest_start else 0.0,
+        "total_elapsed_seconds": total_elapsed_seconds,
         "completed_count": completed_count,
         "failed_count": failed_count,
         "running_count": sum(1 for j in job_timing if "elapsed_seconds" in j),
@@ -1605,7 +1501,12 @@ def get_log_processing_timing_tool() -> dict[str, Any]:  # pragma: no cover
     }
 
     if completed_count > 0 and earliest_start is not None:
-        elapsed_hours = (current_us - earliest_start) / 1_000_000 / 3600
+        elapsed_hours = convert_time(
+            time=current_us - earliest_start,
+            from_units=TimeUnits.MICROSECOND,
+            to_units=TimeUnits.HOUR,
+            as_float=True,
+        )
         if elapsed_hours > 0:
             session["throughput_jobs_per_hour"] = round(completed_count / elapsed_hours, 2)
 
@@ -1759,18 +1660,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pr
             aggregate_running += summary.get("running", 0)
             aggregate_scheduled += summary.get("scheduled", 0)
 
-            # Derives a high-level status from job counts.
-            total = summary.get("total", 0)
-            if summary.get("failed", 0) > 0:
-                dir_status = "failed"
-            elif summary.get("succeeded", 0) == total and total > 0:
-                dir_status = "completed"
-            elif summary.get("running", 0) > 0:
-                dir_status = "processing"
-            elif summary.get("scheduled", 0) == total and total > 0:
-                dir_status = "not_started"
-            else:
-                dir_status = "in_progress"
+            dir_status = _derive_tracker_status(summary=summary)
 
             log_dir_statuses.append(
                 {
@@ -1804,45 +1694,358 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:  # pr
 
 @mcp.tool()  # pragma: no cover
 def analyze_camera_frame_statistics_tool(  # pragma: no cover
-    feather_file: str,
+    feather_files: list[str],
     drop_threshold_us: int = 0,
     max_drop_locations: int = 50,
 ) -> dict[str, Any]:  # pragma: no cover
-    """Reads a processed camera timestamp feather file and computes frame acquisition statistics.
+    """Reads one or more processed camera timestamp feather files and computes frame acquisition statistics.
 
-    Computes basic recording statistics (total frames, duration, estimated frame rate), inter-frame timing distribution
-    (mean, median, standard deviation, min, max), and frame drop analysis (gap detection, estimated drop count, drop
-    locations). Frame drops are identified as inter-frame intervals exceeding a threshold, which defaults to 2x the
-    median inter-frame interval when not specified.
+    For each file, computes basic recording statistics (total frames, duration, estimated frame rate), inter-frame
+    timing distribution (mean, median, standard deviation, min, max), and frame drop analysis (gap detection,
+    estimated drop count, drop locations). Frame drops are identified as inter-frame intervals exceeding a threshold,
+    which defaults to 2x the median inter-frame interval when not specified. Accepts the 'timestamps_file' paths
+    returned by discover_camera_data_tool.
 
     Args:
-        feather_file: The absolute path to a camera timestamp feather file produced by the log processing pipeline.
-            Expected filename pattern: ``camera_{source_id}_timestamps.feather``.
+        feather_files: The list of absolute paths to camera timestamp feather files produced by the log processing
+            pipeline. Expected filename pattern: ``camera_{source_id}_timestamps.feather``. Accepts paths from the
+            'timestamps_file' field returned by discover_camera_data_tool.
         drop_threshold_us: The inter-frame interval threshold in microseconds above which a gap is classified as a
             frame drop. When 0, the threshold is automatically computed as 2x the median inter-frame interval.
-        max_drop_locations: The maximum number of frame drop locations to include in the output. Caps the
+            Applied uniformly to all files.
+        max_drop_locations: The maximum number of frame drop locations to include per file. Caps the
             'drop_locations' list to prevent oversized responses.
 
     Returns:
-        A dictionary containing 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' sections with computed
-        statistics, or an error dictionary if the file cannot be read.
+        A dictionary containing a 'results' list with per-file statistics (each with 'file', 'basic_stats',
+        'inter_frame_timing', and 'frame_drop_analysis' keys) and a 'total_files' count. Files that cannot be
+        read produce an entry with 'file' and 'error' keys instead of statistics.
+    """
+    results = [
+        _analyze_single_feather(
+            feather_file=feather_file, drop_threshold_us=drop_threshold_us, max_drop_locations=max_drop_locations
+        )
+        for feather_file in feather_files
+    ]
+
+    return {"results": results, "total_files": len(results)}
+
+
+@mcp.tool()  # pragma: no cover
+def clean_log_processing_output_tool(output_directories: list[str]) -> dict[str, Any]:  # pragma: no cover
+    """Deletes the camera_timestamps subdirectory under one or more output directories.
+
+    Removes each ``camera_timestamps/`` subdirectory and all of its contents, including processed feather files
+    and the processing tracker. Uses ``delete_directory`` from ataraxis-data-structures for parallel file deletion
+    with platform-safe retry logic. After cleanup, the output directories can be passed to
+    prepare_log_processing_batch_tool to reinitialize from scratch. Accepts the 'log_directories' list returned
+    by discover_camera_data_tool.
+
+    Args:
+        output_directories: The list of absolute paths to output directories containing ``camera_timestamps/``
+            subdirectories to delete.
+
+    Returns:
+        A dictionary containing a 'results' list with per-directory outcomes (each with 'output_directory',
+        'cleaned' flag, and either 'timestamps_path' or 'error') and a 'total_cleaned' count.
+    """
+    results = [_clean_single_output(output_directory=directory) for directory in output_directories]
+    total_cleaned = sum(1 for result in results if result.get("cleaned", False))
+
+    return {"results": results, "total_cleaned": total_cleaned, "total_directories": len(results)}
+
+
+# Placed after all @mcp.tool() definitions so that all tools are registered with the FastMCP instance before the
+# server run loop is callable.
+def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:  # pragma: no cover
+    """Starts the MCP server with the specified transport.
+
+    Args:
+        transport: The transport protocol to use. Supported values are 'stdio' for standard input/output communication
+            and 'streamable-http' for HTTP-based communication.
+    """
+    # Delegates to the FastMCP run loop, which blocks until the transport connection is closed. For 'stdio' this
+    # means the server runs until the parent process closes stdin; for 'streamable-http' it runs an HTTP server
+    # that accepts connections until explicitly terminated.
+    mcp.run(transport=transport)
+
+
+def _resolve_blacklist(blacklisted_nodes: list[str] | None) -> frozenset[str]:  # pragma: no cover
+    """Resolves an optional blacklist parameter to a frozenset suitable for GenICam configuration functions.
+
+    Converts a list of node names to a frozenset when provided, or returns the library default blacklist when None.
+
+    Args:
+        blacklisted_nodes: A list of GenICam node names to exclude, or None to use the default blacklist.
+
+    Returns:
+        A frozenset of blacklisted node names.
+    """
+    return frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
+
+
+@contextlib.contextmanager  # pragma: no cover
+def _harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None, None]:  # pragma: no cover
+    """Opens a temporary connection to a Harvesters camera and guarantees disconnection on exit.
+
+    Creates a HarvestersCamera with system_id=0 (placeholder, since only node map access is needed) and connects it.
+    The camera is always disconnected in the finally block, releasing the GenTL handle for other processes.
+
+    Args:
+        camera_index: The index of the Harvesters camera to connect to.
+
+    Yields:
+        The connected HarvestersCamera instance.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        yield camera
+    finally:
+        camera.disconnect()
+
+
+def _scan_archive_source_ids(directory: Path) -> list[str]:  # pragma: no cover
+    """Scans a directory for assembled log archives and extracts source IDs from their filenames.
+
+    Matches files ending with the log archive suffix and strips the suffix to recover the source ID string. Results
+    are returned in sorted order.
+
+    Args:
+        directory: The directory to scan for log archives.
+
+    Returns:
+        A sorted list of source ID strings extracted from archive filenames.
+    """
+    return sorted(
+        source_id
+        for archive_path in directory.glob(f"*{LOG_ARCHIVE_SUFFIX}")
+        if (source_id := archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX))
+    )
+
+
+def _resolve_log_dir_roots(log_dir_paths: list[Path]) -> dict[Path, Path]:  # pragma: no cover
+    """Resolves each log directory to its recording root.
+
+    Uses unique path component detection to identify recording session boundaries. Falls back to using each
+    log directory's parent when unique component detection fails (e.g., single log directory).
+
+    Args:
+        log_dir_paths: The sorted list of log directory paths to resolve.
+
+    Returns:
+        A mapping from each log directory to its recording root path.
+    """
+    try:
+        recording_roots = resolve_recording_roots(paths=log_dir_paths)
+    except RuntimeError:
+        recording_roots = tuple(dict.fromkeys(log_dir.parent for log_dir in log_dir_paths))
+
+    log_dir_to_root: dict[Path, Path] = {}
+    for log_dir in log_dir_paths:
+        for root in recording_roots:
+            if log_dir == root or root in log_dir.parents:
+                log_dir_to_root[log_dir] = root
+                break
+        else:
+            log_dir_to_root[log_dir] = log_dir.parent
+
+    return log_dir_to_root
+
+
+def _match_video_file(  # pragma: no cover
+    all_video_files: tuple[Path, ...],
+    log_directory: Path,
+    source_id: int,
+    name: str,
+) -> str | None:  # pragma: no cover
+    """Matches a confirmed source to a pre-collected video file by name or source ID.
+
+    Searches the pre-collected video file list for a match, preferring the closest file by path proximity
+    to the log directory. Tries the camera name pattern first (``{name}`` in filename stem), then falls back
+    to the source ID pattern (``{source_id:03d}`` in filename stem). When multiple candidates match, selects
+    the one sharing the most leading path components with the log directory.
+
+    Args:
+        all_video_files: Pre-collected ``.mp4`` file paths from the search root.
+        log_directory: The directory containing the camera manifest. Used as the proximity reference.
+        source_id: The numeric source ID from the manifest.
+        name: The colloquial camera name from the manifest (e.g., ``'body_camera'``). Tried first before
+            falling back to the source ID.
+
+    Returns:
+        The string path to the matched video file, or None if no match is found.
+    """
+    log_parts = log_directory.parts
+
+    # Counts leading path components shared between a candidate video and the log directory. Higher values
+    # indicate closer proximity in the directory tree.
+    def proximity(video_path: Path) -> int:
+        shared = 0
+        for log_part, video_part in zip(log_parts, video_path.parts, strict=False):
+            if log_part != video_part:
+                break
+            shared += 1
+        return shared
+
+    # Tries name-based matching first, since users may rename video files to meaningful names.
+    if name:
+        name_matches = [video for video in all_video_files if name in video.stem]
+        if name_matches:
+            return str(max(name_matches, key=proximity))
+
+    # Falls back to source ID pattern using the zero-padded VideoSystem naming convention.
+    id_pattern = f"{source_id:03d}"
+    id_matches = [video for video in all_video_files if id_pattern in video.stem]
+    if id_matches:
+        return str(max(id_matches, key=proximity))
+
+    return None
+
+
+def _find_feather_file(timestamps_dirs: tuple[Path, ...], source_id: int) -> Path | None:  # pragma: no cover
+    """Searches pre-discovered ``camera_timestamps/`` directories for a processed feather file matching a source ID.
+
+    Performs a flat (non-recursive) glob inside each ``camera_timestamps/`` directory for a feather file matching the
+    ``camera_{source_id}_timestamps.feather`` naming convention. The caller is responsible for pre-discovering
+    ``camera_timestamps/`` directories via a single ``rglob`` pass over the search root.
+
+    Args:
+        timestamps_dirs: Pre-discovered ``camera_timestamps/`` directory paths collected from the search root.
+        source_id: The numeric source ID to search for.
+
+    Returns:
+        The path to the feather file, or None if not found.
+    """
+    pattern = f"{_FEATHER_PREFIX}{source_id}{_FEATHER_SUFFIX}"
+    for timestamps_dir in timestamps_dirs:
+        matches = list(timestamps_dir.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
+def _derive_tracker_status(summary: dict[str, Any]) -> str:  # pragma: no cover
+    """Derives a high-level processing status label from a tracker summary's job counts.
+
+    Applies a fixed priority: ``failed`` if any job failed, ``completed`` if all succeeded, ``processing`` if any
+    are running, ``not_started`` if all are scheduled, and ``in_progress`` otherwise.
+
+    Args:
+        summary: A dictionary containing 'total', 'succeeded', 'failed', 'running', and 'scheduled' counts.
+
+    Returns:
+        A status string: one of 'failed', 'completed', 'processing', 'not_started', or 'in_progress'.
+    """
+    total = summary.get("total", 0)
+    if summary.get("failed", 0) > 0:
+        return "failed"
+    if summary.get("succeeded", 0) == total and total > 0:
+        return "completed"
+    if summary.get("running", 0) > 0:
+        return "processing"
+    if summary.get("scheduled", 0) == total and total > 0:
+        return "not_started"
+    return "in_progress"
+
+
+def _group_jobs_by_tracker(state: _JobExecutionState) -> dict[Path, list[_PendingJob]]:  # pragma: no cover
+    """Groups all jobs in an execution state by their tracker file path.
+
+    Minimizes redundant file reads by batching jobs that share the same tracker, so each tracker YAML file is
+    deserialized only once when iterating over the groups.
+
+    Args:
+        state: The active job execution state containing the job registry.
+
+    Returns:
+        A dictionary mapping each tracker path to its list of pending job descriptors.
+    """
+    tracker_jobs: dict[Path, list[_PendingJob]] = {}
+    for job in state.all_jobs.values():
+        tracker_jobs.setdefault(job.tracker_path, []).append(job)
+    return tracker_jobs
+
+
+def _read_tracker_status(tracker_path: Path) -> dict[str, Any]:  # pragma: no cover
+    """Reads a log processing tracker file and returns structured per-job status information.
+
+    Args:
+        tracker_path: The path to the ProcessingTracker YAML file.
+
+    Returns:
+        A dictionary containing per-job status details and summary counts.
+    """
+    tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
+
+    job_details: list[dict[str, Any]] = []
+    succeeded_count = 0
+    failed_count = 0
+    running_count = 0
+    scheduled_count = 0
+
+    for job_id, job_state in tracker.jobs.items():
+        source_id = job_state.specifier or job_id[:8]
+        status = job_state.status
+
+        if status == ProcessingStatus.SUCCEEDED:
+            succeeded_count += 1
+        elif status == ProcessingStatus.FAILED:
+            failed_count += 1
+        elif status == ProcessingStatus.RUNNING:
+            running_count += 1
+        else:
+            scheduled_count += 1
+
+        entry: dict[str, Any] = {"job_id": job_id, "source_id": source_id, "status": status.name}
+        if job_state.error_message is not None:
+            entry["error_message"] = job_state.error_message
+        job_details.append(entry)
+
+    return {
+        "jobs": job_details,
+        "summary": {
+            "total": len(tracker.jobs),
+            "succeeded": succeeded_count,
+            "failed": failed_count,
+            "running": running_count,
+            "scheduled": scheduled_count,
+        },
+    }
+
+
+def _analyze_single_feather(  # pragma: no cover
+    feather_file: str,
+    drop_threshold_us: int,
+    max_drop_locations: int,
+) -> dict[str, Any]:  # pragma: no cover
+    """Reads a single camera timestamp feather file and computes frame acquisition statistics.
+
+    Args:
+        feather_file: The absolute path to the feather file.
+        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, auto-detected as 2x median.
+        max_drop_locations: The maximum number of frame drop locations to include.
+
+    Returns:
+        A dictionary containing 'file', 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' keys,
+        or 'file' and 'error' keys if the file cannot be read.
     """
     file_path = Path(feather_file)
 
     if not file_path.exists():
-        return {"error": f"File does not exist: {feather_file}"}
+        return {"file": feather_file, "error": f"File does not exist: {feather_file}"}
 
     if not file_path.is_file():
-        return {"error": f"Path is not a file: {feather_file}"}
+        return {"file": feather_file, "error": f"Path is not a file: {feather_file}"}
 
     # Reads the feather file and validates the expected schema.
     try:
         dataframe = pl.read_ipc(source=file_path)
     except Exception as error:
-        return {"error": f"Unable to read feather file: {error}"}
+        return {"file": feather_file, "error": f"Unable to read feather file: {error}"}
 
     if "frame_time_us" not in dataframe.columns:
-        return {"error": f"Missing required 'frame_time_us' column. Found columns: {dataframe.columns}"}
+        return {"file": feather_file, "error": f"Missing required 'frame_time_us' column. Found: {dataframe.columns}"}
 
     timestamps = dataframe["frame_time_us"].to_numpy()
     total_frames = len(timestamps)
@@ -1875,8 +2078,10 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
     first_timestamp_us = int(timestamps[0])
     last_timestamp_us = int(timestamps[-1])
     duration_us = last_timestamp_us - first_timestamp_us
-    duration_seconds = round(duration_us / 1_000_000, 6)
-    estimated_fps = round((total_frames - 1) / (duration_us / 1_000_000), 3) if duration_us > 0 else 0.0
+    duration_seconds = round(
+        convert_time(time=duration_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.SECOND, as_float=True), 6
+    )
+    estimated_fps = round((total_frames - 1) / duration_seconds, 3) if duration_seconds > 0 else 0.0
 
     # Computes inter-frame interval statistics. Casts to int64 to handle potential uint64 underflow.
     intervals_us = np.diff(timestamps).astype(np.int64)
@@ -1908,18 +2113,29 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
         drop_rate_percent = round(total_estimated_dropped_frames / total_expected_frames * 100, 4)
 
         longest_gap_us = int(np.max(intervals_us[drop_mask]))
-        longest_gap_ms = round(longest_gap_us / 1000, 4)
+        longest_gap_ms = round(
+            convert_time(
+                time=longest_gap_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True
+            ),
+            4,
+        )
 
         # Builds the capped drop locations list.
         drop_locations: list[dict[str, Any]] = []
         for index in drop_indices[:max_drop_locations]:
             gap_us = int(intervals_us[index])
+            gap_ms = round(
+                convert_time(
+                    time=gap_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True
+                ),
+                4,
+            )
             estimated_lost = max(round(gap_us / expected_interval) - 1, 0)
             drop_locations.append(
                 {
                     "frame_index": int(index),
                     "gap_us": gap_us,
-                    "gap_ms": round(gap_us / 1000, 4),
+                    "gap_ms": gap_ms,
                     "estimated_frames_lost": estimated_lost,
                 }
             )
@@ -1948,6 +2164,15 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
             "drop_locations_truncated": False,
         }
 
+    # Converts inter-frame interval statistics from microseconds to milliseconds.
+    mean_ms, median_ms, std_ms, min_ms, max_ms = (
+        round(
+            convert_time(time=value, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True),
+            4,
+        )
+        for value in (mean_us, median_us, std_us, min_us, max_us)
+    )
+
     return {
         "file": feather_file,
         "basic_stats": {
@@ -1964,135 +2189,49 @@ def analyze_camera_frame_statistics_tool(  # pragma: no cover
             "std_us": std_us,
             "min_us": min_us,
             "max_us": max_us,
-            "mean_ms": round(mean_us / 1000, 4),
-            "median_ms": round(median_us / 1000, 4),
-            "std_ms": round(std_us / 1000, 4),
-            "min_ms": round(min_us / 1000, 4),
-            "max_ms": round(max_us / 1000, 4),
+            "mean_ms": mean_ms,
+            "median_ms": median_ms,
+            "std_ms": std_ms,
+            "min_ms": min_ms,
+            "max_ms": max_ms,
         },
         "frame_drop_analysis": frame_drop_analysis,
     }
 
 
-@mcp.tool()  # pragma: no cover
-def get_log_directory_status_tool(output_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Returns the processing status for a specific output directory without scanning a root directory tree.
-
-    Checks for a ProcessingTracker file in the ``camera_data/`` subdirectory under the given path and returns
-    per-job status information. Use this tool for targeted status queries on individual log directories instead of
-    get_batch_status_overview_tool, which scans an entire directory tree recursively.
+def _clean_single_output(output_directory: str) -> dict[str, Any]:  # pragma: no cover
+    """Deletes the camera_timestamps subdirectory under a single output directory.
 
     Args:
-        output_directory: The absolute path to the output directory that contains (or should contain) a
-            ``camera_data/`` subdirectory with processing results and a tracker file.
+        output_directory: The absolute path to the output directory.
 
     Returns:
-        A dictionary containing a 'status' field with the high-level processing state ('not_started', 'processing',
-        'completed', 'failed', or 'in_progress'), per-job details in 'jobs', a 'summary' with counts, and the
-        'tracker_path' when a tracker file exists.
+        A dictionary containing 'output_directory', 'cleaned' flag, and either 'timestamps_path' or 'error'.
     """
     output_path = Path(output_directory)
 
     if not output_path.exists():
-        return {"error": f"Directory does not exist: {output_directory}"}
+        return {"output_directory": output_directory, "cleaned": False, "error": "Directory does not exist."}
 
     if not output_path.is_dir():
-        return {"error": f"Path is not a directory: {output_directory}"}
+        return {"output_directory": output_directory, "cleaned": False, "error": "Path is not a directory."}
 
-    camera_data_path = output_path / CAMERA_DATA_DIRECTORY
-    tracker_path = camera_data_path / TRACKER_FILENAME
+    timestamps_path = output_path / CAMERA_TIMESTAMPS_DIRECTORY
 
-    if not tracker_path.exists():
-        return {
-            "success": True,
-            "output_directory": output_directory,
-            "status": "not_started",
-            "message": "No processing tracker found.",
-        }
+    if not timestamps_path.exists():
+        return {"output_directory": output_directory, "cleaned": True, "message": "Nothing to clean."}
 
     try:
-        tracker_status = _read_tracker_status(tracker_path=tracker_path)
+        delete_directory(directory_path=timestamps_path)
     except Exception as error:
         return {
-            "success": False,
             "output_directory": output_directory,
-            "tracker_path": str(tracker_path),
-            "error": f"Unable to read tracker: {error}",
-        }
-
-    summary = tracker_status.get("summary", {})
-    total = summary.get("total", 0)
-
-    if summary.get("failed", 0) > 0:
-        status = "failed"
-    elif summary.get("succeeded", 0) == total and total > 0:
-        status = "completed"
-    elif summary.get("running", 0) > 0:
-        status = "processing"
-    elif summary.get("scheduled", 0) == total and total > 0:
-        status = "not_started"
-    else:
-        status = "in_progress"
-
-    return {
-        "success": True,
-        "output_directory": output_directory,
-        "tracker_path": str(tracker_path),
-        "status": status,
-        **tracker_status,
-    }
-
-
-@mcp.tool()  # pragma: no cover
-def clean_log_processing_output_tool(output_directory: str) -> dict[str, Any]:  # pragma: no cover
-    """Deletes the entire camera_data subdirectory under the given output directory.
-
-    Removes the ``camera_data/`` subdirectory and all of its contents, including processed feather files and the
-    processing tracker. Uses ``delete_directory`` from ataraxis-data-structures for parallel file deletion with
-    platform-safe retry logic. After cleanup, the output directory can be passed to prepare_log_processing_batch_tool
-    to reinitialize from scratch.
-
-    Args:
-        output_directory: The absolute path to the output directory containing the ``camera_data/`` subdirectory
-            to delete.
-
-    Returns:
-        A dictionary containing a 'cleaned' flag, the 'camera_data_path' that was deleted, and a 'message'
-        describing the outcome.
-    """
-    output_path = Path(output_directory)
-
-    if not output_path.exists():
-        return {"error": f"Directory does not exist: {output_directory}"}
-
-    if not output_path.is_dir():
-        return {"error": f"Path is not a directory: {output_directory}"}
-
-    camera_data_path = output_path / CAMERA_DATA_DIRECTORY
-
-    if not camera_data_path.exists():
-        return {
-            "cleaned": True,
-            "output_directory": output_directory,
-            "message": "No camera_data subdirectory found. Nothing to clean.",
-        }
-
-    try:
-        delete_directory(directory_path=camera_data_path)
-    except Exception as error:
-        return {
             "cleaned": False,
-            "output_directory": output_directory,
-            "camera_data_path": str(camera_data_path),
-            "error": f"Unable to delete camera_data directory: {error}",
+            "timestamps_path": str(timestamps_path),
+            "error": f"Unable to delete: {error}",
         }
 
-    return {
-        "cleaned": True,
-        "output_directory": output_directory,
-        "camera_data_path": str(camera_data_path),
-        "message": "Deleted camera_data directory and all contents.",
-    }
+    return {"output_directory": output_directory, "cleaned": True, "timestamps_path": str(timestamps_path)}
 
 
 def _probe_archive_message_count(job: _PendingJob) -> int:  # pragma: no cover
@@ -2298,65 +2437,3 @@ def _job_execution_manager() -> None:  # pragma: no cover
 
         # Polls at 1-second intervals outside the lock to avoid blocking other threads.
         poll_timer.delay(delay=1, allow_sleep=True)
-
-
-def _read_tracker_status(tracker_path: Path) -> dict[str, Any]:  # pragma: no cover
-    """Reads a log processing tracker file and returns structured per-job status information.
-
-    Args:
-        tracker_path: The path to the ProcessingTracker YAML file.
-
-    Returns:
-        A dictionary containing per-job status details and summary counts.
-    """
-    tracker = ProcessingTracker.from_yaml(file_path=tracker_path)
-
-    job_details: list[dict[str, Any]] = []
-    succeeded_count = 0
-    failed_count = 0
-    running_count = 0
-    scheduled_count = 0
-
-    for job_id, job_state in tracker.jobs.items():
-        source_id = job_state.specifier or job_id[:8]
-        status = job_state.status
-
-        if status == ProcessingStatus.SUCCEEDED:
-            succeeded_count += 1
-        elif status == ProcessingStatus.FAILED:
-            failed_count += 1
-        elif status == ProcessingStatus.RUNNING:
-            running_count += 1
-        else:
-            scheduled_count += 1
-
-        entry: dict[str, Any] = {"job_id": job_id, "source_id": source_id, "status": status.name}
-        if job_state.error_message is not None:
-            entry["error_message"] = job_state.error_message
-        job_details.append(entry)
-
-    return {
-        "jobs": job_details,
-        "summary": {
-            "total": len(tracker.jobs),
-            "succeeded": succeeded_count,
-            "failed": failed_count,
-            "running": running_count,
-            "scheduled": scheduled_count,
-        },
-    }
-
-
-# Placed after all @mcp.tool() definitions so that all tools are registered with the FastMCP instance before the
-# server run loop is callable.
-def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:  # pragma: no cover
-    """Starts the MCP server with the specified transport.
-
-    Args:
-        transport: The transport protocol to use. Supported values are 'stdio' for standard input/output communication
-            and 'streamable-http' for HTTP-based communication.
-    """
-    # Delegates to the FastMCP run loop, which blocks until the transport connection is closed. For 'stdio' this
-    # means the server runs until the parent process closes stdin; for 'streamable-http' it runs an HTTP server
-    # that accepts connections until explicitly terminated.
-    mcp.run(transport=transport)

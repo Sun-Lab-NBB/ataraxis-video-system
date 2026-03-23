@@ -31,7 +31,7 @@ def test_init_repr(tmp_path, data_logger) -> None:
         system_id=np.uint8(1),
         data_logger=data_logger,
         name="test_camera",
-        output_directory=tmp_path.joinpath("test_output_directory"),
+        output_directory=tmp_path / "test_output_directory",
         camera_interface=CameraInterfaces.MOCK,
         camera_index=0,
     )
@@ -96,7 +96,7 @@ def test_init_errors(data_logger) -> None:
 
 def test_camera_configuration_errors(data_logger, tmp_path) -> None:
     """Verifies the error handling behavior of camera configuration during VideoSystem initialization."""
-    output_directory = tmp_path.joinpath("test_output_directory")
+    output_directory = tmp_path / "test_output_directory"
 
     # Invalid camera index
     invalid_index = "str"
@@ -181,7 +181,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
 
 def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
     """Verifies the functioning of video saver configuration during VideoSystem initialization."""
-    output_directory = tmp_path.joinpath("test_output_directory")
+    output_directory = tmp_path / "test_output_directory"
 
     # Tests GPU encoding if NVIDIA GPU is available, otherwise tests CPU encoding
     if has_nvidia and check_ffmpeg_availability():
@@ -216,7 +216,7 @@ def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
 
 def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
     """Verifies the error handling behavior of video saver configuration during VideoSystem initialization."""
-    output_directory = tmp_path.joinpath("test_output_directory")
+    output_directory = tmp_path / "test_output_directory"
 
     # Invalid gpu index
     invalid_gpu = "str"
@@ -298,7 +298,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     Also verifies internal DataLogger bindings and logged timestamp extraction methods.
     """
     # Creates two VideoSystem instances with different configurations
-    output_directory = tmp_path.joinpath("test_output_directory")
+    output_directory = tmp_path / "test_output_directory"
 
     video_system_1 = VideoSystem(
         system_id=np.uint8(101),
@@ -356,9 +356,9 @@ def test_start_stop(data_logger, tmp_path) -> None:
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts frame timestamps for system 1 (which saved frames)
-    log_path_1 = data_logger.output_directory.joinpath(f"{data_logger._name}_101.npz")
+    log_path_1 = data_logger.output_directory / f"{data_logger._name}_101.npz"
     if log_path_1.exists():
-        frame_timestamps_1 = extract_logged_camera_timestamps(log_path_1, n_workers=1)
+        frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, n_workers=1)
         # With fps of 10 and running for ~4 seconds total, should have acquired around 40 frames
         assert 35 <= len(frame_timestamps_1) <= 45
 
@@ -378,7 +378,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
 
 def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
     """Verifies the validation of the display_frame_rate parameter."""
-    output_directory = tmp_path.joinpath("test_output_directory")
+    output_directory = tmp_path / "test_output_directory"
 
     # Tests that display functionality is disabled on macOS
     if "darwin" in sys.platform:
@@ -440,7 +440,7 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
-    output_directory = tmp_path.joinpath("opencv_test")
+    output_directory = tmp_path / "opencv_test"
     vs = VideoSystem(
         system_id=np.uint8(50),
         data_logger=data_logger,
@@ -460,7 +460,7 @@ def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> Non
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
-    output_directory = tmp_path.joinpath("harvesters_test")
+    output_directory = tmp_path / "harvesters_test"
     vs = VideoSystem(
         system_id=np.uint8(51),
         data_logger=data_logger,
@@ -475,23 +475,23 @@ def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> Non
 def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
     """Verifies the error handling of the extract_logged_camera_timestamps() function."""
     # Tests with a non-existent file
-    non_existent_path = tmp_path.joinpath("non_existent.npz")
+    non_existent_path = tmp_path / "non_existent.npz"
     message = (
         f"Unable to extract camera frame timestamp data from the log file {non_existent_path}, as it does not exist "
         f"or does not point to a valid .npz archive."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        extract_logged_camera_timestamps(non_existent_path)
+        extract_logged_camera_timestamps(log_path=non_existent_path)
 
     # Tests with invalid file extension
-    invalid_path = tmp_path.joinpath("invalid.txt")
+    invalid_path = tmp_path / "invalid.txt"
     invalid_path.touch()
     message = (
         f"Unable to extract camera frame timestamp data from the log file {invalid_path}, as it does not exist "
         f"or does not point to a valid .npz archive."
     )
     with pytest.raises(ValueError, match=error_format(message)):
-        extract_logged_camera_timestamps(invalid_path)
+        extract_logged_camera_timestamps(log_path=invalid_path)
 
 
 def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
@@ -503,7 +503,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     system_id = np.uint8(99)
     frame_rate = 10  # Lower frame rate for easier validation
 
-    output_directory = tmp_path.joinpath("test_segmented_timestamps")
+    output_directory = tmp_path / "test_segmented_timestamps"
     output_directory.mkdir(parents=True, exist_ok=True)
 
     video_system = VideoSystem(
@@ -553,8 +553,8 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts timestamps
-    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
-    timestamps = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+    log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
+    timestamps = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=1)
 
     # Total recording time: 1 + 2 + 1 = 4 seconds
     # Expected frames: approximately 40 (4 * 10 fps)
@@ -568,11 +568,11 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     if len(timestamps) > 10:
         intervals = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
         max_interval = max(intervals)
-        avg_interval = np.mean(intervals)
+        average_interval = np.mean(intervals)
 
         # The maximum interval might be larger due to pauses, but shouldn't be
         # excessive (e.g., not more than 10x the average for this controlled test)
-        assert max_interval < avg_interval * 10, "Detected unexpectedly large gap in timestamps"
+        assert max_interval < average_interval * 10, "Detected unexpectedly large gap in timestamps"
 
 
 def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
@@ -588,7 +588,7 @@ def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
     # Finds the generated .npz archive.
     npz_files = list(logger.output_directory.glob("*.npz"))
     if npz_files:
-        timestamps = extract_logged_camera_timestamps(npz_files[0], n_workers=1)
+        timestamps = extract_logged_camera_timestamps(log_path=npz_files[0], n_workers=1)
         assert timestamps == ()
 
 
@@ -597,7 +597,7 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     system_id = np.uint8(77)
     frame_rate = 30
 
-    output_directory = tmp_path.joinpath("parallel_timestamps")
+    output_directory = tmp_path / "parallel_timestamps"
     output_directory.mkdir(parents=True, exist_ok=True)
 
     video_system = VideoSystem(
@@ -628,10 +628,10 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts timestamps using parallel workers.
-    log_file_path = data_logger.output_directory.joinpath(f"{system_id}_log.npz")
+    log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
     if log_file_path.exists():
-        timestamps_parallel = extract_logged_camera_timestamps(log_file_path, n_workers=-1)
-        timestamps_sequential = extract_logged_camera_timestamps(log_file_path, n_workers=1)
+        timestamps_parallel = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=-1)
+        timestamps_sequential = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=1)
 
         # Both methods should return the same timestamps.
         assert len(timestamps_parallel) == len(timestamps_sequential)

@@ -53,13 +53,13 @@ def test_mock_camera_grab_frame() -> None:
     frame_pool = camera.frame_pool
 
     # Acquires 11 frames. Note, the code below will STOP working unless the tested number of frames is below 20.
-    for num in range(11):
+    for frame_number in range(11):
         frame = camera.grab_frame()  # Grabs the frame from the pre-created frame-pool
 
         # Currently, the frame pool consists of 10 images. To optimize grabbed image verification, ensures that the
         # index is always within the range of the frame pool and follows the behavior of the grabber that treats the
         # pool as a circular buffer. So, when it reaches '10' (maximum index is 9), it wraps to 0.
-        pool_index = num % 10
+        pool_index = frame_number % 10
 
         # Verifies that the grabbed frame matches expectation
         assert np.array_equal(frame_pool[pool_index], frame)

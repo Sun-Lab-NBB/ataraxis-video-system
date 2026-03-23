@@ -343,7 +343,7 @@ axvs mcp
 | `write_genicam_node`                   | Writes a value to a GenICam node on a connected camera                           |
 | `dump_genicam_config`                  | Dumps GenICam configuration from a camera to a YAML file                         |
 | `load_genicam_config`                  | Loads GenICam configuration from a YAML file to a camera                         |
-| `discover_recording_log_archives_tool` | Discovers log archives under a root directory, grouped by recording              |
+| `discover_camera_data_tool`            | Discovers confirmed camera data (log, video, timestamps) under a root directory  |
 | `prepare_log_processing_batch_tool`    | Prepares a batch of log processing jobs across multiple directories              |
 | `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs with concurrent worker threads             |
 | `get_log_processing_status_tool`       | Returns the current status of the active log processing session                  |

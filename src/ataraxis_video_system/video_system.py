@@ -199,9 +199,7 @@ class VideoSystem:
 
         # If the output directory is provided, resolves the path to the output .mp4 video file to be created during
         # runtime.
-        self._output_file: Path | None = (
-            None if output_directory is None else output_directory.joinpath(f"{system_id:03d}.mp4")
-        )
+        self._output_file: Path | None = None if output_directory is None else output_directory / f"{system_id:03d}.mp4"
 
         # Initializes the camera interface.
 

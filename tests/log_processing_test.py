@@ -10,18 +10,18 @@ from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
 from ataraxis_video_system.manifest import write_camera_manifest
 from ataraxis_video_system.log_processing import (
-    CAMERA_DATA_DIRECTORY,
-    LOG_ARCHIVE_SUFFIX,
     TRACKER_FILENAME,
+    LOG_ARCHIVE_SUFFIX,
     _TIMESTAMP_JOB_NAME,
-    _extract_unique_components,
-    _generate_job_ids,
+    CAMERA_TIMESTAMPS_DIRECTORY,
     execute_job,
-    extract_logged_camera_timestamps,
     find_log_archive,
-    initialize_processing_tracker,
+    _generate_job_ids,
     resolve_recording_roots,
+    _extract_unique_components,
     run_log_processing_pipeline,
+    initialize_processing_tracker,
+    extract_logged_camera_timestamps,
 )
 
 
@@ -55,15 +55,7 @@ def _create_test_archive(
     frame_timestamps_us: list[int],
     data_timestamps_us: list[int] | None = None,
 ) -> None:
-    """Creates a .npz log archive with the specified frame and data messages.
-
-    Args:
-        archive_path: The path where the archive is saved.
-        source_id: The source identifier for all messages.
-        onset_us: The UTC epoch onset timestamp in microseconds.
-        frame_timestamps_us: Elapsed microsecond timestamps for frame messages (no payload).
-        data_timestamps_us: Elapsed microsecond timestamps for data messages (with payload).
-    """
+    """Creates a .npz log archive with the specified frame and data messages."""
     arrays: dict[str, np.ndarray] = {}
 
     # Creates the onset message.
@@ -358,7 +350,8 @@ def test_run_log_processing_pipeline_directory_not_found(tmp_path: Path) -> None
 
 def test_run_log_processing_pipeline_no_manifest(tmp_path: Path) -> None:
     """Verifies that run_log_processing_pipeline raises FileNotFoundError when no manifest exists and no log IDs
-    are provided."""
+    are provided.
+    """
     message = (
         f"Unable to process logs in '{tmp_path}'. No camera_manifest.yaml was found. A camera manifest is "
         f"required to identify which log archives were produced by ataraxis-video-system."
@@ -373,7 +366,8 @@ def test_run_log_processing_pipeline_no_manifest(tmp_path: Path) -> None:
 
 def test_run_log_processing_pipeline_no_manifest_empty_ids(tmp_path: Path) -> None:
     """Verifies that run_log_processing_pipeline raises FileNotFoundError when no manifest exists and an empty log
-    IDs list is provided."""
+    IDs list is provided.
+    """
     message = (
         f"Unable to process logs in '{tmp_path}'. No camera_manifest.yaml was found. A camera manifest is "
         f"required to identify which log archives were produced by ataraxis-video-system."
@@ -414,12 +408,12 @@ def test_run_log_processing_pipeline_local_mode(tmp_path: Path) -> None:
         display_progress=False,
     )
 
-    # Verifies that output files were created in the camera_data subdirectory for both sources.
-    camera_data_dir = output_dir / CAMERA_DATA_DIRECTORY
-    assert camera_data_dir.is_dir()
-    assert (camera_data_dir / "camera_cam1_timestamps.feather").exists()
-    assert (camera_data_dir / "camera_cam2_timestamps.feather").exists()
-    assert (camera_data_dir / TRACKER_FILENAME).exists()
+    # Verifies that output files were created in the camera_timestamps subdirectory for both sources.
+    timestamps_dir = output_dir / CAMERA_TIMESTAMPS_DIRECTORY
+    assert timestamps_dir.is_dir()
+    assert (timestamps_dir / "camera_cam1_timestamps.feather").exists()
+    assert (timestamps_dir / "camera_cam2_timestamps.feather").exists()
+    assert (timestamps_dir / TRACKER_FILENAME).exists()
 
 
 def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
@@ -439,11 +433,11 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
     write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
 
     output_dir = tmp_path / "output"
-    camera_data_dir = output_dir / CAMERA_DATA_DIRECTORY
-    camera_data_dir.mkdir(parents=True)
+    timestamps_dir = output_dir / CAMERA_TIMESTAMPS_DIRECTORY
+    timestamps_dir.mkdir(parents=True)
 
-    # Pre-creates the tracker in the camera_data subdirectory (simulates remote orchestration).
-    tracker = ProcessingTracker(file_path=camera_data_dir / TRACKER_FILENAME)
+    # Pre-creates the tracker in the camera_timestamps subdirectory (simulates remote orchestration).
+    tracker = ProcessingTracker(file_path=timestamps_dir / TRACKER_FILENAME)
     job_id = ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier="cam1")
     tracker.initialize_jobs(jobs=[(_TIMESTAMP_JOB_NAME, "cam1")])
 
@@ -456,7 +450,7 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
         display_progress=False,
     )
 
-    assert (camera_data_dir / "camera_cam1_timestamps.feather").exists()
+    assert (timestamps_dir / "camera_cam1_timestamps.feather").exists()
 
 
 def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:

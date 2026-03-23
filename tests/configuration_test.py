@@ -27,7 +27,7 @@ def test_genicam_node_info_types() -> None:
     """Verifies that GenicamNodeInfo correctly stores all supported value types."""
     assert GenicamNodeInfo(name="IntNode", value=42).value == 42
     assert GenicamNodeInfo(name="FloatNode", value=3.14).value == 3.14
-    assert GenicamNodeInfo(name="BoolNode", value=True).value is True
+    assert GenicamNodeInfo(name="BoolNode", value=True).value
     assert GenicamNodeInfo(name="StrNode", value="Mono8").value == "Mono8"
 
 
@@ -58,7 +58,7 @@ def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     assert loaded.nodes[1].name == "Height"
     assert loaded.nodes[1].value == 200
     assert loaded.nodes[2].value == 2.5
-    assert loaded.nodes[3].value is False
+    assert not loaded.nodes[3].value
     assert loaded.nodes[4].value == "Mono8"
 
 

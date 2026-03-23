@@ -23,9 +23,9 @@ LOG_ARCHIVE_SUFFIX: str = "_log.npz"
 TRACKER_FILENAME: str = "camera_processing_tracker.yaml"
 """Filename for the processing tracker file placed in the output directory."""
 
-CAMERA_DATA_DIRECTORY: str = "camera_data"
-"""Name of the subdirectory created under the output path for camera processing results. All tracker files and
-processed feather outputs are written into this subdirectory."""
+CAMERA_TIMESTAMPS_DIRECTORY: str = "camera_timestamps"
+"""Name of the subdirectory created under the output path for camera timestamp processing results. All tracker files
+and processed feather outputs are written into this subdirectory."""
 
 PARALLEL_PROCESSING_THRESHOLD: int = 2000
 """The minimum number of messages in a log archive required to enable parallel processing. Archives with fewer messages
@@ -135,7 +135,7 @@ def run_log_processing_pipeline(
     Args:
         log_directory: The path to the root directory to search for .npz log archives. The directory is searched
             recursively, so archives may be nested at any depth below this path.
-        output_directory: The path to the root output directory. A ``camera_data/`` subdirectory is created
+        output_directory: The path to the root output directory. A ``camera_timestamps/`` subdirectory is created
             automatically under this path, and all tracker and feather output files are written there.
         job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
             matching this ID is executed (remote mode). If not provided, all requested jobs are run sequentially
@@ -211,11 +211,11 @@ def run_log_processing_pipeline(
         )
         console.error(message=message, error=ValueError)
 
-    # Creates the camera_data subdirectory under the output path. All tracker and feather files are written here.
-    camera_data_path = output_directory / CAMERA_DATA_DIRECTORY
-    camera_data_path.mkdir(parents=True, exist_ok=True)
+    # Creates the camera_timestamps subdirectory under the output path. All tracker and feather files are written here.
+    timestamps_path = output_directory / CAMERA_TIMESTAMPS_DIRECTORY
+    timestamps_path.mkdir(parents=True, exist_ok=True)
 
-    tracker = ProcessingTracker(file_path=camera_data_path / TRACKER_FILENAME)
+    tracker = ProcessingTracker(file_path=timestamps_path / TRACKER_FILENAME)
 
     if job_id is not None:
         # Generates all possible job IDs and executes only the one matching the provided job_id (remote mode).
@@ -233,7 +233,7 @@ def run_log_processing_pipeline(
         source_id = id_to_source[job_id]
         execute_job(
             log_path=archive_paths[source_id],
-            output_directory=camera_data_path,
+            output_directory=timestamps_path,
             source_id=source_id,
             job_id=job_id,
             workers=workers,
@@ -244,7 +244,7 @@ def run_log_processing_pipeline(
         # Initializes the tracker and runs all requested jobs sequentially (local mode). Resolves workers once and
         # creates a shared ProcessPoolExecutor to reuse across all jobs, avoiding repeated process pool creation.
         console.echo(message=f"Initializing processing tracker for {len(source_ids)} job(s)...")
-        job_ids = initialize_processing_tracker(output_directory=camera_data_path, source_ids=source_ids)
+        job_ids = initialize_processing_tracker(output_directory=timestamps_path, source_ids=source_ids)
 
         resolved_workers = resolve_worker_count(requested_workers=workers)
         shared_executor = ProcessPoolExecutor(max_workers=resolved_workers) if resolved_workers > 1 else None
@@ -253,7 +253,7 @@ def run_log_processing_pipeline(
             for source_id in source_ids:
                 execute_job(
                     log_path=archive_paths[source_id],
-                    output_directory=camera_data_path,
+                    output_directory=timestamps_path,
                     source_id=source_id,
                     job_id=job_ids[source_id],
                     workers=resolved_workers,
