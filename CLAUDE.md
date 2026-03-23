@@ -58,19 +58,37 @@ same parent directory as this project (`/home/cyberaxolotl/Desktop/GitHubRepos/`
 **Why this matters**: Skills and documentation may reference outdated APIs. Always verify against the actual library
 state to prevent integration errors.
 
+## Distribution Model
+
+This project follows a dual distribution model. The library source code, tests, CLI, and MCP server implementation live
+in this repository (`ataraxis-video-system`) and are distributed via PyPI. Claude Code skills and MCP server
+registration are distributed separately through the [ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) marketplace as
+plugins:
+
+- **video** plugin (`ataraxis/plugins/video/`): Registers the `axvs mcp` server with compatible MCP clients and
+  provides video-specific skills for camera setup, pipeline orchestration, log processing, and post-recording
+  verification.
+- **automation** plugin (`ataraxis/plugins/automation/`): Provides shared development skills that enforce Sun Lab
+  coding conventions (Python style, README style, commit messages, pyproject.toml, tox configuration) and
+  general-purpose codebase exploration tools.
+
+When modifying skills, edit the SKILL.md files in the ataraxis marketplace repository, not in this repository.
+When modifying the MCP server implementation or library code, edit the source files in this repository.
+
 ## MCP Server Integration
 
-This library provides an MCP server (`axvs mcp`) that exposes camera discovery, configuration, and video recording
-tools. When working with this project or its dependencies, prefer using available MCP tools over direct code execution
-when appropriate.
+This library provides an MCP server (`axvs mcp`) that exposes camera discovery, configuration, video recording,
+manifest management, and log data processing tools. When working with this project or its dependencies, prefer using
+available MCP tools over direct code execution when appropriate.
 
 **Guidelines for MCP usage:**
 
 1. **Discover available tools**: At the start of a session, check which MCP servers are connected and what tools
    they provide. Use these tools when they offer functionality relevant to the current task.
 
-2. **Prefer MCP for runtime operations**: For operations like camera discovery, CTI file management, and GenICam
-   configuration, use MCP tools rather than writing and executing Python code directly. MCP tools provide:
+2. **Prefer MCP for runtime operations**: For operations like camera discovery, CTI file management, GenICam
+   configuration, and log processing batch workflows, use MCP tools rather than writing and executing Python code
+   directly. MCP tools provide:
    - Consistent, tested interfaces
    - Proper resource management and cleanup
    - Formatted output designed for user display
@@ -85,14 +103,13 @@ when appropriate.
 
 ## Available Skills
 
+Skills are distributed through the ataraxis marketplace and are loaded into Claude Code via the plugin system. They are
+**not** stored in this repository.
+
+### Video Plugin Skills (ataraxis/plugins/video/)
+
 | Skill                     | Description                                                          |
 |---------------------------|----------------------------------------------------------------------|
-| `/explore-codebase`       | Perform in-depth codebase exploration at session start               |
-| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes)  |
-| `/readme-style`           | Apply Sun Lab README conventions                                     |
-| `/commit`                 | Draft Sun Lab style-compliant git commit messages                    |
-| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                             |
-| `/tox-config`             | Apply Sun Lab tox.ini conventions                                    |
 | `/camera-setup`           | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
 | `/camera-interface`       | VideoSystem API usage, constructor parameters, and encoding guidance |
 | `/mcp-environment-setup`  | MCP server connectivity diagnostics and environment verification     |
@@ -101,6 +118,20 @@ when appropriate.
 | `/log-input-format`       | Reference for NPZ archive format, source IDs, and DataLogger output  |
 | `/log-processing`         | Orchestrate log archive processing workflow via MCP tools            |
 | `/log-processing-results` | Reference for output data formats and frame statistics analysis      |
+
+### Automation Plugin Skills (ataraxis/plugins/automation/)
+
+| Skill                     | Description                                                          |
+|---------------------------|----------------------------------------------------------------------|
+| `/explore-codebase`       | Perform in-depth codebase exploration at session start               |
+| `/explore-dependencies`   | Explore installed ataraxis dependency APIs for reuse opportunities   |
+| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes)  |
+| `/readme-style`           | Apply Sun Lab README conventions                                     |
+| `/commit`                 | Draft Sun Lab style-compliant git commit messages                    |
+| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                             |
+| `/tox-config`             | Apply Sun Lab tox.ini conventions                                    |
+| `/skill-design`           | Generate and verify Claude Code skill files                          |
+| `/project-layout`         | Apply Sun Lab project directory structure conventions                |
 
 ## Project Context
 
@@ -117,17 +148,20 @@ video encoding using CPU or GPU.
 | `src/.../camera.py`          | Camera interfaces (OpenCV, Harvesters, Mock) and CTI management          |
 | `src/.../saver.py`           | VideoSaver with FFMPEG subprocess encoding                               |
 | `src/.../configuration.py`   | GenICam node inspection, read/write, dump/load via YAML                  |
+| `src/.../manifest.py`        | Camera log manifest data classes and writer for source-to-name mappings  |
 | `src/.../log_processing.py`  | Log data processing pipeline for extracting frame timestamps             |
 | `src/.../cli.py`             | Click-based `axvs` CLI with subcommand groups                            |
-| `src/.../mcp_server.py`      | FastMCP server with camera, session, and log processing management tools |
+| `src/.../mcp_server.py`      | FastMCP server with 27 tools for camera, session, and log management     |
 | `tests/`                     | Test suite (camera, saver, video_system, configuration, log_processing)  |
 | `docs/`                      | Sphinx API documentation source                                          |
 
 ### Architecture
 
-- **VideoSystem**: Producer-consumer multiprocessing pattern. A producer process acquires frames from the camera
-  interface and pushes them to a queue. A consumer process pops frames and streams raw bytes to FFMPEG via stdin.
-  A 4-element SharedMemoryArray controls termination and frame-saving toggles via IPC.
+- **VideoSystem**: Producer-consumer multiprocessing pattern. Constructor requires `system_id`, `data_logger`,
+  `name`, and `output_directory` as positional arguments; `__init__` writes a camera manifest entry associating
+  the system_id with the human-readable name. A producer process acquires frames from the camera interface and
+  pushes them to a queue. A consumer process pops frames and streams raw bytes to FFMPEG via stdin. A 4-element
+  SharedMemoryArray controls termination and frame-saving toggles via IPC.
 - **Camera Interfaces**: Three implementations behind a unified API: OpenCVCamera (cv2.VideoCapture),
   HarvestersCamera (GenICam/Harvesters with NodeMap access), and MockCamera (synthetic frames for testing).
   `discover_camera_ids()` returns CameraInformation objects from all available interfaces.
@@ -135,21 +169,27 @@ video encoding using CPU or GPU.
   to prevent pipe buffer deadlocks. Supports CPU (libx264/libx265) and GPU (h264_nvenc/hevc_nvenc) encoders.
 - **GenICam Configuration**: Iterative stack-based NodeMap traversal collects ReadWrite leaf nodes. Configurations
   serialize to YAML via GenicamConfiguration dataclass with camera identity metadata for validation on load.
+- **Camera Manifest**: `CameraManifest` (YamlConfig subclass) associates source IDs with human-readable camera
+  names in a `camera_manifest.yaml` file alongside DataLogger archives. `CameraSourceData` stores per-camera
+  entries. `write_camera_manifest()` creates or updates the manifest. Used by log processing discovery to identify
+  which archives were produced by ataraxis-video-system and to route processing by source ID.
 - **Log Processing**: Pipeline for extracting frame acquisition timestamps from DataLogger `.npz` archives.
-  Supports sequential and parallel (ProcessPoolExecutor) processing with contiguous numpy array output to
-  minimize memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job
-  lifecycle management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job
-  by ID) execution modes. Outputs Polars DataFrames as Feather files.
-- **MCP Server**: FastMCP instance with global state (`_active_session`, `_active_logger`, `_session_info`)
-  enforcing a single active VideoSystem session at a time. Session tools expose configurable encoding
-  parameters (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log
-  archives and returns output paths. `get_session_status` returns detailed session configuration.
-  `assemble_log_archives_tool` provides standalone archive assembly. `validate_video_file_tool` runs ffprobe
-  for video metadata inspection. Exposes batch log processing tools with budget-based worker allocation:
-  the execution manager divides the CPU budget evenly among concurrent parallel jobs (snapped to multiples of
-  5) with a sqrt-derived saturation floor that reduces concurrency when per-job allocation would be too thin.
-  Includes post-processing tools for discovering output feather files and analyzing camera frame statistics
-  (inter-frame timing distribution, frame drop detection and estimation).
+  Requires a `camera_manifest.yaml` in the log directory for source ID resolution and validation. Supports
+  sequential and parallel (ProcessPoolExecutor) processing with contiguous numpy array output to minimize
+  memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job lifecycle
+  management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job by ID)
+  execution modes. Outputs Polars DataFrames as Feather files in a `camera_timestamps/` subdirectory.
+- **MCP Server**: FastMCP instance (`name="ataraxis-video-system"`, `json_response=True`) with 27 tools and
+  global state (`_active_session`, `_active_logger`, `_session_info`) enforcing a single active VideoSystem
+  session at a time. Tool categories: camera discovery and CTI management (3), system checks (1), video session
+  lifecycle (5), GenICam configuration (4), camera manifest management (2), log archive and video validation (2),
+  recording discovery via manifests (1), batch log processing execution (3), processing status and management (4),
+  and post-processing analysis and cleanup (2). Session tools expose configurable encoding parameters (encoder,
+  speed preset, pixel format, quantization). `stop_video_session` auto-assembles log archives and returns output
+  paths. Batch log processing uses `_JobExecutionState` with budget-based worker allocation: the execution manager
+  divides the CPU budget evenly among concurrent parallel jobs (snapped to multiples of 5) with a sqrt-derived
+  saturation floor. The MCP server is registered with MCP clients via the **video** plugin in the ataraxis
+  marketplace, not directly from this repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
@@ -165,6 +205,9 @@ video encoding using CPU or GPU.
   index 1 = frame saving toggle, indices 2-3 = process initialization handshake signals.
 - **CTI File Persistence**: The GenTL Producer path is stored in `platformdirs.user_data_dir` as `cti_path.txt`,
   persisting across runtimes.
+- **Manifest-Based Log Discovery**: `camera_manifest.yaml` files tag DataLogger output directories with
+  source-to-name mappings. Log processing discovery and batch preparation use manifests to identify which
+  archives were produced by ataraxis-video-system and to route jobs by source ID.
 - **Frame Display**: Runs on a separate thread with its own Queue (decoupled from saver). Automatically disabled
   on macOS due to main-thread GUI restrictions.
 
@@ -213,6 +256,13 @@ video encoding using CPU or GPU.
 2. Follow existing patterns for option decorators and error handling
 3. Use `console.echo()` for output and `console.error()` for error handling
 
+**Modifying camera manifests:**
+
+1. Review `src/ataraxis_video_system/manifest.py` for data classes and writer
+2. `CameraManifest` extends `YamlConfig` from `ataraxis-data-structures` for YAML serialization
+3. `CameraSourceData` is a frozen dataclass storing `id` (int) and `name` (str)
+4. Manifests are consumed by `discover_camera_data_tool` in the MCP server for log processing discovery
+
 **Modifying log processing:**
 
 1. Review `src/ataraxis_video_system/log_processing.py` for the processing pipeline
@@ -221,6 +271,7 @@ video encoding using CPU or GPU.
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
 5. `extract_logged_camera_timestamps()` returns `NDArray[np.uint64]` for minimal memory footprint
 6. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
+7. Log discovery uses manifest-based routing via `camera_manifest.yaml` files
 
 **Adding or modifying MCP tools:**
 
@@ -229,3 +280,4 @@ video encoding using CPU or GPU.
 3. Log processing execution uses `_JobExecutionState` with budget-based worker allocation
 4. The execution manager divides budget among parallel jobs via `_resolve_parallel_allocation()`
 5. Return formatted strings (not raw data) for user-facing output
+6. MCP server registration happens in the ataraxis marketplace video plugin, not in this repository
