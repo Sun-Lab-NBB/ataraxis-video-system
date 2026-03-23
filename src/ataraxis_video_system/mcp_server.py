@@ -1115,19 +1115,20 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:  # pragma:
 def prepare_log_processing_batch_tool(  # pragma: no cover
     log_directories: list[str],
     source_ids: list[str],
-    output_directories: list[str] | None = None,
+    output_directories: list[str],
 ) -> dict[str, Any]:
     """Prepares an execution manifest for batch log processing without starting execution.
 
-    Accepts log directories and source IDs from discover_camera_data_tool and initializes a ProcessingTracker
-    with one timestamp-extraction job per source ID for each log directory. Idempotent: if a tracker already
-    exists for a log directory, returns the existing manifest with current job statuses instead of
-    reinitializing. Requires prior discovery — the caller must provide confirmed source IDs rather than
+    Accepts log directories, source IDs, and output directories from the caller and initializes a
+    ProcessingTracker with one timestamp-extraction job per source ID for each log directory. Idempotent: if a
+    tracker already exists for a log directory, returns the existing manifest with current job statuses instead
+    of reinitializing. Requires prior discovery — the caller must provide confirmed source IDs rather than
     relying on implicit archive or manifest discovery.
 
     Important:
         The AI agent calling this tool MUST run discover_camera_data_tool first to obtain log directory paths
-        and confirmed source IDs. Do not assume or guess directory paths or source IDs.
+        and confirmed source IDs. The agent MUST ask the user for the output directory paths before calling
+        this tool. Do not assume or guess directory paths or source IDs.
 
     Args:
         log_directories: The list of absolute paths to DataLogger output directories containing log archives.
@@ -1135,14 +1136,15 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
         source_ids: The list of confirmed source IDs to process. Accepts IDs from the 'source_id' field of
             entries in the 'sources' list returned by discover_camera_data_tool. Applied uniformly: each log
             directory creates jobs for every source ID in this list that has a matching archive on disk.
-        output_directories: An optional list of absolute paths for per-log-directory output. Must match the
-            length of log_directories. When not provided, output is written to each log directory itself.
+        output_directories: The list of absolute paths for per-log-directory output. Must match the length of
+            log_directories. Each output directory receives a ``camera_timestamps/`` subdirectory containing
+            the processing tracker and feather output files.
 
     Returns:
         A dictionary containing per-log-directory manifests in 'log_directories' with tracker paths and job
         lists, total counts, and any invalid paths.
     """
-    if output_directories is not None and len(output_directories) != len(log_directories):
+    if len(output_directories) != len(log_directories):
         return {
             "error": (
                 f"Length mismatch: {len(log_directories)} log directories but "
@@ -1172,8 +1174,8 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
             result_log_dirs[log_dir_str] = {"source_ids": [], "jobs": [], "tracker_path": None, "summary": {}}
             continue
 
-        # Resolves the output directory for this log directory. Falls back to the log directory itself.
-        output_path = Path(output_directories[entry_index]) if output_directories is not None else log_dir_path
+        # Resolves the output directory for this log directory.
+        output_path = Path(output_directories[entry_index])
 
         # Creates the camera_timestamps subdirectory under the output path for tracker and feather files.
         timestamps_path = output_path / CAMERA_TIMESTAMPS_DIRECTORY
