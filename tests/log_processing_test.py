@@ -178,7 +178,12 @@ def test_find_log_archive_multiple_matches(tmp_path: Path) -> None:
             frame_timestamps_us=[1000],
         )
 
-    with pytest.raises(ValueError, match=error_format("Found 2 matching archives")):
+    expected_paths = sorted(tmp_path.rglob(f"cam1{LOG_ARCHIVE_SUFFIX}"))
+    message = (
+        f"Unable to find log archive for source 'cam1' in '{tmp_path}'. Found 2 "
+        f"matching archives, but expected exactly one: {[str(p) for p in expected_paths]}."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
         find_log_archive(log_directory=tmp_path, source_id="cam1")
 
 
