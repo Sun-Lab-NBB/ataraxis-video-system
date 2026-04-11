@@ -66,12 +66,14 @@ from .configuration import (
 from .log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
+    TIMESTAMP_JOB_NAME,
     CAMERA_TIMESTAMPS_DIRECTORY,
     PARALLEL_PROCESSING_THRESHOLD,
     execute_job,
+    prepare_tracker,
     find_log_archive,
+    generate_job_ids,
     resolve_recording_roots,
-    initialize_processing_tracker,
 )  # pragma: no cover
 
 mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)  # pragma: no cover
@@ -1197,8 +1199,14 @@ def prepare_log_processing_batch_tool(  # pragma: no cover
             }
             total_jobs += len(tracker_status.get("jobs", []))
         else:
-            # Initializes a new tracker with jobs for the filtered source IDs.
-            job_ids = initialize_processing_tracker(output_directory=timestamps_path, source_ids=filtered_ids)
+            # Initializes a new tracker with jobs for the filtered source IDs. Uses prepare_tracker so the MCP
+            # batch-preparation path inherits the same regeneration logic as run_log_processing_pipeline.
+            tracker = ProcessingTracker(file_path=tracker_path)
+            tracker_jobs: list[tuple[str, str]] = [
+                (TIMESTAMP_JOB_NAME, source_id) for source_id in filtered_ids
+            ]
+            prepare_tracker(tracker=tracker, jobs=tracker_jobs)
+            job_ids = generate_job_ids(source_ids=filtered_ids)
 
             jobs: list[dict[str, str]] = [
                 {

@@ -12,15 +12,14 @@ from ataraxis_video_system.manifest import write_camera_manifest
 from ataraxis_video_system.log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
-    _TIMESTAMP_JOB_NAME,
+    TIMESTAMP_JOB_NAME,
     CAMERA_TIMESTAMPS_DIRECTORY,
     execute_job,
     find_log_archive,
-    _generate_job_ids,
+    generate_job_ids,
     resolve_recording_roots,
     _extract_unique_components,
     run_log_processing_pipeline,
-    initialize_processing_tracker,
     extract_logged_camera_timestamps,
 )
 
@@ -252,27 +251,6 @@ def test_extract_logged_camera_timestamps_mixed_messages(tmp_path: Path) -> None
     np.testing.assert_array_equal(timestamps, expected)
 
 
-def test_initialize_processing_tracker_creates_tracker(tmp_path: Path) -> None:
-    """Verifies that initialize_processing_tracker creates a tracker file and returns correct job IDs."""
-    source_ids = ["cam1", "cam2", "cam3"]
-    job_ids = initialize_processing_tracker(output_directory=tmp_path, source_ids=source_ids)
-
-    # Verifies that a job ID is returned for each source ID.
-    assert len(job_ids) == 3
-    assert set(job_ids.keys()) == {"cam1", "cam2", "cam3"}
-
-    # Verifies that the tracker file was created.
-    tracker_path = tmp_path / TRACKER_FILENAME
-    assert tracker_path.exists()
-
-    # Verifies that job IDs are deterministic.
-    expected_ids = {
-        source_id: ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier=source_id)
-        for source_id in source_ids
-    }
-    assert job_ids == expected_ids
-
-
 def test_execute_job_success(tmp_path: Path) -> None:
     """Verifies that execute_job extracts timestamps and writes a Feather output file."""
     # Creates a test archive with frame messages.
@@ -290,8 +268,8 @@ def test_execute_job_success(tmp_path: Path) -> None:
     output_dir = tmp_path / "output"
     output_dir.mkdir()
     tracker = ProcessingTracker(file_path=output_dir / TRACKER_FILENAME)
-    job_id = ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier="cam1")
-    tracker.initialize_jobs(jobs=[(_TIMESTAMP_JOB_NAME, "cam1")])
+    job_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="cam1")
+    tracker.initialize_jobs(jobs=[(TIMESTAMP_JOB_NAME, "cam1")])
 
     execute_job(
         log_path=archive_path,
@@ -321,8 +299,8 @@ def test_execute_job_failure_updates_tracker(tmp_path: Path) -> None:
     output_dir = tmp_path / "output"
     output_dir.mkdir()
     tracker = ProcessingTracker(file_path=output_dir / TRACKER_FILENAME)
-    job_id = ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier="cam1")
-    tracker.initialize_jobs(jobs=[(_TIMESTAMP_JOB_NAME, "cam1")])
+    job_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="cam1")
+    tracker.initialize_jobs(jobs=[(TIMESTAMP_JOB_NAME, "cam1")])
 
     bad_archive = tmp_path / "nonexistent.npz"
 
@@ -443,8 +421,8 @@ def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
 
     # Pre-creates the tracker in the camera_timestamps subdirectory (simulates remote orchestration).
     tracker = ProcessingTracker(file_path=timestamps_dir / TRACKER_FILENAME)
-    job_id = ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier="cam1")
-    tracker.initialize_jobs(jobs=[(_TIMESTAMP_JOB_NAME, "cam1")])
+    job_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="cam1")
+    tracker.initialize_jobs(jobs=[(TIMESTAMP_JOB_NAME, "cam1")])
 
     run_log_processing_pipeline(
         log_directory=log_dir,
@@ -553,10 +531,10 @@ def test_extract_unique_components_no_unique_raises() -> None:
         _extract_unique_components(paths=paths)
 
 
-def test_generate_job_ids_basic() -> None:
-    """Verifies that _generate_job_ids returns a mapping for each source ID."""
+def testgenerate_job_ids_basic() -> None:
+    """Verifies that generate_job_ids returns a mapping for each source ID."""
     source_ids = ["cam1", "cam2"]
-    result = _generate_job_ids(source_ids=source_ids)
+    result = generate_job_ids(source_ids=source_ids)
     assert len(result) == 2
     assert "cam1" in result
     assert "cam2" in result
@@ -567,15 +545,15 @@ def test_generate_job_ids_basic() -> None:
         assert len(job_id) > 0
 
 
-def test_generate_job_ids_deterministic() -> None:
-    """Verifies that _generate_job_ids produces consistent results across calls."""
+def testgenerate_job_ids_deterministic() -> None:
+    """Verifies that generate_job_ids produces consistent results across calls."""
     source_ids = ["cam1", "cam2"]
-    first = _generate_job_ids(source_ids=source_ids)
-    second = _generate_job_ids(source_ids=source_ids)
+    first = generate_job_ids(source_ids=source_ids)
+    second = generate_job_ids(source_ids=source_ids)
     assert first == second
 
 
-def test_generate_job_ids_different_inputs() -> None:
+def testgenerate_job_ids_different_inputs() -> None:
     """Verifies that different source IDs produce different job IDs."""
-    result = _generate_job_ids(source_ids=["cam1", "cam2"])
+    result = generate_job_ids(source_ids=["cam1", "cam2"])
     assert result["cam1"] != result["cam2"]
