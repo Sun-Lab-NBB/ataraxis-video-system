@@ -1,7 +1,8 @@
 """Provides a Model Context Protocol (MCP) server for agentic interaction with the library.
 
-Exposes camera discovery, CTI file management, runtime requirements checking, and video session
-management functionality through the MCP protocol, enabling AI agents to programmatically interact with the
+Exposes camera discovery, CTI file management, runtime requirements checking, video session management, GenICam
+configuration, camera manifest management, log archive assembly, video and log validation, recording discovery, and
+batch log processing functionality through the MCP protocol, enabling AI agents to programmatically interact with the
 library's core features.
 """
 
@@ -86,7 +87,7 @@ push it lower. With a factor of 1,000, a 648,000-message archive (120 fps x 1.5 
 workers."""  # pragma: no cover
 
 _WORKER_MULTIPLE: int = 5  # pragma: no cover
-"""Worker counts above 1 are rounded down to the nearest multiple of this value for clean allocation."""
+"""Worker counts above 1 are rounded to the nearest multiple of this value for clean allocation."""
 
 _RESERVED_CORES: int = 2  # pragma: no cover
 """The number of CPU cores reserved for system operations. The worker budget is computed as available cores minus this
@@ -137,7 +138,7 @@ class _ActiveGroup:  # pragma: no cover
     """Tracks a group of jobs executing sequentially with a shared ProcessPoolExecutor."""
 
     source_id: str
-    """The shared source ID for all jobs in this group, or a unique identifier for single-job groups."""
+    """The source ID of the first job in this group; groups are formed by worker tier, not by source ID."""
     jobs: list[_PendingJob]
     """The jobs in this group, processed sequentially by the group worker thread."""
     workers: int
@@ -150,10 +151,10 @@ class _ActiveGroup:  # pragma: no cover
 class _JobExecutionState:  # pragma: no cover
     """Tracks runtime state for batch job execution with budget-based worker allocation.
 
-    The execution manager groups pending jobs by source ID so that archives with similar sizes share a single
-    ProcessPoolExecutor. Each group is dispatched as one thread that processes its jobs sequentially, reusing the
-    pool across all archives in the group. This avoids the overhead of repeatedly spawning and tearing down worker
-    processes for archives of the same size.
+    The execution manager groups pending jobs by worker tier (computed from archive size) so that similarly sized
+    archives share a single ProcessPoolExecutor. Each group is dispatched as one thread that processes its jobs
+    sequentially, reusing the pool across all archives in the group. This avoids the overhead of repeatedly spawning
+    and tearing down worker processes for archives in the same tier. Single-worker tiers use no shared executor.
     """
 
     all_jobs: dict[tuple[str, str], _PendingJob] = field(default_factory=dict)
@@ -1774,8 +1775,9 @@ def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") 
     """Starts the MCP server with the specified transport.
 
     Args:
-        transport: The transport protocol to use. Supported values are 'stdio' for standard input/output communication
-            and 'streamable-http' for HTTP-based communication.
+        transport: The transport protocol to use. Supported values are 'stdio' for standard input/output
+            communication, 'sse' for server-sent-events HTTP communication, and 'streamable-http' for HTTP-based
+            communication.
     """
     # Delegates to the FastMCP run loop, which blocks until the transport connection is closed. For 'stdio' this
     # means the server runs until the parent process closes stdin; for 'streamable-http' it runs an HTTP server

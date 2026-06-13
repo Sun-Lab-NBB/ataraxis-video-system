@@ -130,6 +130,11 @@ interferes with the library, as it displays the acquired frames from the same pr
 to minimize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
 be fixed any time soon.
 
+***Note,*** on macOS, this library requires Python 3.13 or earlier. The `genicam` package, a dependency of the 
+Harvesters camera interface, does not publish a macOS Python 3.14 wheel to PyPI, so installation under Python 3.14 
+fails on macOS. Linux and Windows support Python 3.14 as usual. This restriction is lifted automatically once 
+`genicam` publishes a macOS Python 3.14 wheel to the main PyPI index; no library update is required.
+
 ### Quickstart
 This is a minimal example of how to use this library. This example is intentionally kept minimal, consult the
 [API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for all available VideoSystem configuration 
