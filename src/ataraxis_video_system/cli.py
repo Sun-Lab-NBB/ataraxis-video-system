@@ -391,7 +391,7 @@ def live_run(
     type=int,
     default=-1,
     show_default=True,
-    help="The number of worker processes to use. Set to -1 (default) to use all available CPU cores.",
+    help="The number of worker processes to use. Set to a value below 1 (default -1) to use all available CPU cores.",
 )
 @click.option(
     "-p",
@@ -437,8 +437,9 @@ def process(
 def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # pragma: no cover
     """Starts the Model Context Protocol (MCP) server for agentic interaction with the library.
 
-    The MCP server exposes camera discovery and CTI file management functionality through the MCP protocol, enabling
-    AI agents to programmatically interact with the library.
+    The MCP server exposes camera discovery, CTI file management, video session control, GenICam configuration,
+    camera manifest management, and log processing functionality through the MCP protocol, enabling AI agents to
+    programmatically interact with the library.
     """
     console.echo(message=f"Starting AXVS MCP server with {transport} transport...", level=LogLevel.INFO)
     run_mcp(transport=transport)
@@ -487,14 +488,14 @@ def configure_group(
     "--node-name",
     type=str,
     default="",
-    help="The name of a specific GenICam node to read. If not provided, the interface lists all available nodes.",
+    help="The name of a specific GenICam node to read. If omitted, lists all writable (ReadWrite) nodes.",
 )
 @click.pass_context
 def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:  # pragma: no cover
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists all
-    available nodes with their current values.
+    writable (ReadWrite) nodes with their current values.
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
@@ -580,8 +581,8 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
 def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:  # pragma: no cover
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
-    The output YAML includes all readable nodes with their current values, valid ranges, and enumeration entries,
-    as well as the camera model and serial number for identity validation.
+    The output YAML includes all writable (ReadWrite) nodes with their current values, as well as the camera model
+    and serial number for identity validation.
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 

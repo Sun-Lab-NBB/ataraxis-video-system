@@ -86,8 +86,8 @@ class VideoSystem:
             for the first available camera, 1 for the second, etc. This specifies the camera hardware the instance
             should interface with at runtime.
         display_frame_rate: The frame rate at which to display the acquired frames to the user. Setting this
-            argument to None (default) disables frame display functionality. Note, frame displaying is not supported
-            on some macOS versions.
+            argument to None (default) disables frame display functionality. Note, frame display is not supported on
+            macOS and is automatically disabled there.
         frame_rate: The desired rate, in frames per second, at which to capture the frames. Note; whether the requested
             rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
             this argument is not explicitly provided, the instance uses the default frame rate of the managed camera.
@@ -111,8 +111,9 @@ class VideoSystem:
             OutputPixelFormats enumeration members.
         quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. This
             determines how much information to discard from each encoded frame. Lower values produce better video
-            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Note, the
-            default value is calibrated for the H265 encoder and is likely too low for the H264 encoder.
+            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Setting
+            this to -1 defers the choice to the encoder's default. Note, the default value is calibrated for the H265
+            encoder and is likely too low for the H264 encoder.
 
     Attributes:
         _started: Tracks whether the system is currently running (has active subprocesses).
@@ -638,7 +639,7 @@ class VideoSystem:
         function.
 
         Notes:
-            This method runs in a thread as part of the _produce_images_loop() runtime in the producer Process.
+            This method runs in a thread as part of the _frame_production_loop() runtime in the producer Process.
 
         Args:
             display_queue: The multithreading Queue that buffers the grabbed camera frames until they are displayed.
@@ -793,7 +794,7 @@ class VideoSystem:
         logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
     ) -> None:  # pragma: no cover
-        """Continuously grabs the frames from the image_queue and saves them as an .mp4 video file.
+        """Continuously grabs the frames from the saver_queue and saves them as an .mp4 video file.
 
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
 
@@ -801,7 +802,7 @@ class VideoSystem:
             This method should be executed by the consumer Process. It is not intended to be executed by the main
             process where the VideoSystem is instantiated.
 
-            This method's main loop is kept alive until the image_queue is empty. This is an intentional security
+            This method's main loop is kept alive until the saver_queue is empty. This is an intentional security
             feature that ensures all buffered images are processed before the saver is terminated. To override this
             behavior, you will need to use the process kill command, but it is strongly advised not to tamper
             with this feature.
@@ -830,7 +831,7 @@ class VideoSystem:
 
         try:
             # Runs until the global shutdown command is issued (via the variable under index 0) and until the
-            # image_queue is empty.
+            # saver_queue is empty.
             while not terminator_array[0] or not saver_queue.empty():
                 # Grabs the frame data and its acquisition timestamp from the queue.
                 try:

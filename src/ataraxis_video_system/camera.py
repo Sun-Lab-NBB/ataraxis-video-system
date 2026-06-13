@@ -206,8 +206,8 @@ class OpenCVCamera:
     """Interfaces with the specified OpenCV-compatible camera hardware to acquire frame data.
 
     Notes:
-        This class should not be initialized manually! Use the VideoSystem's add_camera() method to create all camera
-        interface instances.
+        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
+        instances based on the selected camera_interface.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -432,8 +432,8 @@ class HarvestersCamera:
     """Interfaces with the specified GeniCam-compatible camera hardware to acquire frame data.
 
     Notes:
-        This class should not be initialized manually! Use the VideoSystem's add_camera() method to create all camera
-        interface instances.
+        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
+        instances based on the selected camera_interface.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -473,8 +473,8 @@ class HarvestersCamera:
         frame_width: int | None = None,
         frame_height: int | None = None,
     ) -> None:
-        # No input checking here as it is assumed that the class is initialized via get_camera() function that performs
-        # the necessary input filtering.
+        # No input checking here as it is assumed that the class is initialized via the VideoSystem constructor, which
+        # performs the necessary input filtering.
 
         # Saves class parameters to class attributes.
         self._system_id: int = system_id
@@ -637,6 +637,7 @@ class HarvestersCamera:
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
             ValueError: If the node is not a readable value node.
+            AttributeError: If the named node does not exist on the camera's node map.
         """
         return read_genicam_node(node_map=self.node_map, name=name)
 
@@ -652,6 +653,7 @@ class HarvestersCamera:
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
             ValueError: If the node is not a readable value node.
+            AttributeError: If the named node does not exist on the camera's node map.
         """
         return format_genicam_node(node_map=self.node_map, name=name)
 
@@ -681,8 +683,7 @@ class HarvestersCamera:
                 but reject writes at the hardware level. Pass an empty frozenset to disable blacklisting.
 
         Returns:
-            A ``GenicamConfiguration`` instance containing the camera identity, timestamp, and all ReadWrite node
-            values.
+            A ``GenicamConfiguration`` instance containing the camera identity and all ReadWrite node values.
 
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
@@ -835,8 +836,8 @@ class MockCamera:
     other camera interface classes but does not establish a physical connection with any camera hardware.
 
     Notes:
-        This class should not be initialized manually! Use the VideoSystem's add_camera() method to create all camera
-        interface instances.
+        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
+        instances based on the selected camera_interface.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -848,7 +849,7 @@ class MockCamera:
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
-        _color: Determines whether to simulate monochrome or RGB frame images.
+        _color: Determines whether to simulate monochrome or BGR (colored) frame images.
         _camera: Tracks whether the camera is 'connected'.
         _frame_rate: Stores the camera's frame acquisition rate.
         _frame_width: Stores the width of the camera's frames.
@@ -986,9 +987,9 @@ class MockCamera:
         This method has to be called repeatedly (cyclically) to fetch the newly acquired frames from the camera.
 
         Returns:
-            A NumPy array that stores the frame data. Depending on whether the camera acquires colored or monochrome
-            images, the returned arrays have the shape (height, width, channels) or (height, width). Color data uses
-            the BGR channel order.
+            A NumPy array that stores the frame data. Colored frames have the shape (height, width, 3) using the BGR
+            channel order, while monochrome frames retain a singleton channel dimension with the shape
+            (height, width, 1).
 
         Raises:
             ConnectionError: If the method is called for a class not currently 'connected' to a camera.
@@ -1051,8 +1052,8 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         working_ids: list[CameraInformation] = []
 
         # Iterates over IDs until it discovers 5 non-working IDs. Evaluates 100 IDs at maximum to prevent infinite
-        # execution. Suppresses stderr to silence V4L2 ioctl warnings emitted by the kernel driver during device
-        # probing (e.g. 'ioctl(VIDIOC_QBUF): Bad file descriptor').
+        # execution. Suppresses stdout and stderr to silence V4L2 ioctl warnings emitted by the kernel driver
+        # during device probing (e.g. 'ioctl(VIDIOC_QBUF): Bad file descriptor').
         for evaluated_id in range(100):
             try:
                 # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension
@@ -1090,7 +1091,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                 )
                 non_working_count += 1
 
-            # Breaks the loop early if more than 5 non-working IDs are found consecutively.
+            # Breaks the loop early once 5 or more non-working IDs are found consecutively.
             if non_working_count >= _MAXIMUM_NON_WORKING_IDS:
                 break
 

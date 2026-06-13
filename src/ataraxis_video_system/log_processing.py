@@ -29,7 +29,8 @@ and processed feather outputs are written into this subdirectory."""
 
 PARALLEL_PROCESSING_THRESHOLD: int = 2000
 """The minimum number of messages in a log archive required to enable parallel processing. Archives with fewer messages
-are processed sequentially to avoid multiprocessing overhead. Matches LogArchiveReader.PARALLEL_PROCESSING_THRESHOLD.
+are processed sequentially to avoid multiprocessing overhead. Matches the threshold used internally by
+``LogArchiveReader`` (2000).
 """
 
 TIMESTAMP_JOB_NAME: str = "camera_timestamp_extraction"
@@ -328,7 +329,7 @@ def extract_logged_camera_timestamps(
         microseconds elapsed since the UTC epoch onset.
 
     Raises:
-        ValueError: If the target .npz archive does not exist.
+        ValueError: If the target path does not exist, does not have a .npz suffix, or does not point to a file.
     """
     # Validates the archive path. LogArchiveReader checks existence, but not the .npz suffix or file type.
     if not log_path.exists() or log_path.suffix != ".npz" or not log_path.is_file():

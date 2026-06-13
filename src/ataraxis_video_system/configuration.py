@@ -293,7 +293,7 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
 
     Returns:
         A multi-line formatted string containing the node's name, type, value, access mode, description, numeric
-        range, and enumeration entries.
+        range, step increment (for Integer nodes), enumeration entries, and measurement unit (when defined).
 
     Raises:
         AttributeError: If the named node does not exist on the node map.
