@@ -32,7 +32,7 @@ PARALLEL_PROCESSING_THRESHOLD: int = 2000
 are processed sequentially to avoid multiprocessing overhead. Matches LogArchiveReader.PARALLEL_PROCESSING_THRESHOLD.
 """
 
-_TIMESTAMP_JOB_NAME: str = "camera_timestamp_extraction"
+TIMESTAMP_JOB_NAME: str = "camera_timestamp_extraction"
 """The job name used by the processing pipeline for camera timestamp extraction."""
 
 
@@ -124,13 +124,15 @@ def run_log_processing_pipeline(
     """Processes the requested VideoSystem log archives from a single DataLogger output directory.
 
     Supports both local and remote processing modes. In local mode (job_id is None), resolves each requested log
-    archive by source ID, initializes a processing tracker in the output directory, and executes all requested jobs
-    sequentially. In remote mode (job_id is provided), generates all possible job IDs for the requested source IDs
-    and executes only the matching job.
+    archive by source ID, aligns a processing tracker in the output directory with the requested jobs, and executes
+    them sequentially. In remote mode (job_id is provided), aligns the tracker with the full job universe derived
+    from the camera manifest, then resolves and executes only the single archive matching the requested job ID. The
+    universe alignment lets independent remote jobs share one tracker without resetting each other's state, which
+    supports running every source in parallel under an external scheduler.
 
-    All resolved archives must reside in the same directory. If the log_directory contains archives from multiple
-    DataLogger instances (in separate subdirectories), each must be processed independently. Use the MCP batch
-    processing tools to orchestrate multi-directory workflows.
+    In local mode, all resolved archives must reside in the same directory. If the log_directory contains archives
+    from multiple DataLogger instances (in separate subdirectories), each must be processed independently. Use the
+    MCP batch processing tools to orchestrate multi-directory workflows.
 
     Args:
         log_directory: The path to the root directory to search for .npz log archives. The directory is searched
@@ -140,9 +142,10 @@ def run_log_processing_pipeline(
         job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
             matching this ID is executed (remote mode). If not provided, all requested jobs are run sequentially
             with automatic tracker management (local mode).
-        log_ids: A list of source log IDs to process. Each ID must correspond to exactly one archive under the
-            log directory, and all archives must reside in the same parent directory. If not provided, reads the
-            camera_manifest.yaml file from the log directory to resolve all registered source IDs.
+        log_ids: A list of source log IDs to process in local mode. Each ID must correspond to exactly one archive
+            under the log directory, and all archives must reside in the same parent directory. If not provided,
+            reads the camera_manifest.yaml file from the log directory to resolve all registered source IDs. This
+            argument is ignored in remote mode, where the executed job is selected solely by job_id.
         workers: The number of worker processes to use for parallel processing. Setting this to a value less than 1
             uses all available CPU cores. Setting this to 1 conducts processing sequentially.
         display_progress: Determines whether to display progress bars during timestamp extraction. Defaults to True
@@ -150,9 +153,10 @@ def run_log_processing_pipeline(
 
     Raises:
         FileNotFoundError: If the log_directory does not exist, a requested log ID has no matching archive, or no
-            camera manifest is found when log_ids is not provided.
-        ValueError: If the provided job_id does not match any discoverable job, if no source IDs can be resolved,
-            if a requested log ID matches multiple archives, or if resolved archives span multiple directories.
+            camera manifest is found.
+        ValueError: If the provided job_id does not match any job in the manifest universe, if no source IDs can be
+            resolved, if a requested log ID matches multiple archives, or if resolved archives span multiple
+            directories.
     """
     if not log_directory.exists() or not log_directory.is_dir():
         message = f"Unable to process logs in '{log_directory}'. The path does not exist or is not a directory."
@@ -172,7 +176,7 @@ def run_log_processing_pipeline(
 
     manifest_path = candidates[0]
     manifest = CameraManifest.from_yaml(file_path=manifest_path)
-    manifest_ids = {str(source.id) for source in manifest.sources} | {source.name for source in manifest.sources}
+    manifest_ids = {str(source.id) for source in manifest.sources}
 
     if not manifest_ids:
         message = (
@@ -181,35 +185,11 @@ def run_log_processing_pipeline(
         )
         console.error(message=message, error=ValueError)
 
-    # Resolves source IDs from the manifest when none are explicitly provided. When IDs are provided,
-    # validates them against the manifest to prevent processing non-video logs.
-    if log_ids is None or not log_ids:
-        log_ids = sorted(manifest_ids)
-        console.echo(message=f"Resolved {len(log_ids)} source ID(s) from manifest: {', '.join(log_ids)}")
-    else:
-        invalid_ids = [source_id for source_id in log_ids if source_id not in manifest_ids]
-        if invalid_ids:
-            message = (
-                f"Unable to process logs in '{log_directory}'. The following source IDs are not registered "
-                f"in the {CAMERA_MANIFEST_FILENAME}: {', '.join(invalid_ids)}. Registered source IDs: "
-                f"{', '.join(sorted(manifest_ids))}."
-            )
-            console.error(message=message, error=ValueError)
-
-    source_ids = sorted(log_ids)
-
-    # Resolves all archive paths upfront and validates they belong to the same DataLogger output directory.
-    archive_paths = {
-        source_id: find_log_archive(log_directory=log_directory, source_id=source_id) for source_id in source_ids
-    }
-    parent_directories = {path.parent for path in archive_paths.values()}
-    if len(parent_directories) > 1:
-        message = (
-            f"Unable to process logs in '{log_directory}'. The requested log archives span multiple directories: "
-            f"{sorted(str(parent) for parent in parent_directories)}. Each DataLogger output directory must be "
-            f"processed independently."
-        )
-        console.error(message=message, error=ValueError)
+    # Builds the universe of every job the manifest could produce: one timestamp-extraction job per registered
+    # camera source ID. The universe is a manifest fingerprint, not an invocation fingerprint, so every invocation
+    # (full, subset, or single remote job) aligns the tracker against the same set and never resets sibling jobs.
+    universe_ids = sorted(manifest_ids)
+    universe: list[tuple[str, str]] = [(TIMESTAMP_JOB_NAME, source_id) for source_id in universe_ids]
 
     # Creates the camera_timestamps subdirectory under the output path. All tracker and feather files are written here.
     timestamps_path = output_directory / CAMERA_TIMESTAMPS_DIRECTORY
@@ -218,21 +198,25 @@ def run_log_processing_pipeline(
     tracker = ProcessingTracker(file_path=timestamps_path / TRACKER_FILENAME)
 
     if job_id is not None:
-        # Generates all possible job IDs and executes only the one matching the provided job_id (remote mode).
-        all_job_ids = _generate_job_ids(source_ids=source_ids)
-        id_to_source: dict[str, str] = {v: k for k, v in all_job_ids.items()}
+        # Remote mode: selects the job to run solely by ID, validated against the manifest universe. Aligns the
+        # tracker with the full universe so start_job finds the requested ID and concurrent remote jobs do not
+        # treat each other's entries as foreign. Resolves only the matched archive so a missing or late sibling
+        # archive cannot fail this job.
+        all_job_ids = generate_job_ids(source_ids=universe_ids)
+        id_to_source: dict[str, str] = {generated_id: source for source, generated_id in all_job_ids.items()}
 
         if job_id not in id_to_source:
             message = (
                 f"Unable to execute the requested job with ID '{job_id}'. The input identifier does not match "
-                f"any jobs available for the provided log IDs. Valid job IDs: "
-                f"{list(all_job_ids.values())}."
+                f"any jobs available for the camera manifest. Valid job IDs: {list(all_job_ids.values())}."
             )
             console.error(message=message, error=ValueError)
 
+        prepare_tracker(tracker=tracker, jobs=universe, universe=universe)
+
         source_id = id_to_source[job_id]
         execute_job(
-            log_path=archive_paths[source_id],
+            log_path=find_log_archive(log_directory=log_directory, source_id=source_id),
             output_directory=timestamps_path,
             source_id=source_id,
             job_id=job_id,
@@ -241,11 +225,42 @@ def run_log_processing_pipeline(
             display_progress=display_progress,
         )
     else:
-        # Initializes the tracker and runs all requested jobs sequentially (local mode). Resolves workers once and
-        # creates a shared ProcessPoolExecutor to reuse across all jobs, avoiding repeated process pool creation.
-        console.echo(message=f"Initializing processing tracker for {len(source_ids)} job(s)...")
-        job_ids = initialize_processing_tracker(output_directory=timestamps_path, source_ids=source_ids)
+        # Local mode: resolves source IDs from the manifest when none are provided, otherwise validates the
+        # requested IDs against the manifest to prevent processing non-video logs.
+        if log_ids is None or not log_ids:
+            source_ids = universe_ids
+            console.echo(message=f"Resolved {len(source_ids)} source ID(s) from manifest: {', '.join(source_ids)}")
+        else:
+            invalid_ids = [source_id for source_id in log_ids if source_id not in manifest_ids]
+            if invalid_ids:
+                message = (
+                    f"Unable to process logs in '{log_directory}'. The following source IDs are not registered "
+                    f"in the {CAMERA_MANIFEST_FILENAME}: {', '.join(invalid_ids)}. Registered source IDs: "
+                    f"{', '.join(universe_ids)}."
+                )
+                console.error(message=message, error=ValueError)
+            source_ids = sorted(log_ids)
 
+        # Resolves all requested archive paths upfront and validates they belong to the same DataLogger directory.
+        archive_paths = {
+            source_id: find_log_archive(log_directory=log_directory, source_id=source_id) for source_id in source_ids
+        }
+        parent_directories = {path.parent for path in archive_paths.values()}
+        if len(parent_directories) > 1:
+            message = (
+                f"Unable to process logs in '{log_directory}'. The requested log archives span multiple "
+                f"directories: {sorted(str(parent) for parent in parent_directories)}. Each DataLogger output "
+                f"directory must be processed independently."
+            )
+            console.error(message=message, error=ValueError)
+
+        # Aligns the tracker with the requested subset while detecting foreign entries against the full universe.
+        jobs: list[tuple[str, str]] = [(TIMESTAMP_JOB_NAME, source_id) for source_id in source_ids]
+        prepare_tracker(tracker=tracker, jobs=jobs, universe=universe)
+
+        # Resolves workers once and creates a shared ProcessPoolExecutor to reuse across all jobs, avoiding
+        # repeated process pool creation.
+        job_ids = generate_job_ids(source_ids=source_ids)
         resolved_workers = resolve_worker_count(requested_workers=workers)
         shared_executor = ProcessPoolExecutor(max_workers=resolved_workers) if resolved_workers > 1 else None
 
@@ -392,30 +407,60 @@ def extract_logged_camera_timestamps(
     return np.concatenate(batch_arrays)
 
 
-def initialize_processing_tracker(
-    output_directory: Path,
-    source_ids: list[str],
-) -> dict[str, str]:
-    """Initializes the processing tracker file with timestamp extraction jobs for each source ID.
+def prepare_tracker(tracker: ProcessingTracker, jobs: list[tuple[str, str]], universe: list[tuple[str, str]]) -> None:
+    """Aligns the processing tracker's job registry with the jobs requested for the current pipeline invocation.
 
     Notes:
-        Used to process data in the 'local' processing mode. During remote data processing, the tracker file is
-        pre-generated before submitting the processing jobs to the remote compute server.
+        Foreign entries are detected by comparing the tracker's existing job IDs against the manifest-derived
+        universe of all possible jobs for the current camera manifest, not against the invocation's requested
+        subset. This lets a subset invocation or a single concurrent remote job align the tracker without
+        wiping previously-completed state for sibling jobs. Any existing entries that are not part of the
+        universe are treated as architectural drift (the manifest itself has changed since the tracker was last
+        written) and surfaced through a warning before the tracker is rebuilt.
+
+        If the tracker file does not yet exist on disk, the helper initializes it with the requested jobs. If
+        the file exists and contains job IDs that are not part of the universe, those entries are classified as
+        foreign and the helper emits a warning before resetting and reinitializing the tracker. If the file
+        exists with only universe-valid entries but is missing some requested jobs, the helper performs an
+        additive ``initialize_jobs`` call that registers the missing entries without clobbering any existing
+        state. If the file already contains every requested job, the helper is a no-op, which keeps
+        ``initialize_jobs`` from emitting duplicate-entry warnings for the fully-aligned case.
 
     Args:
-        output_directory: The path to the output directory where the tracker file is created.
-        source_ids: The source ID strings for the log archives to track.
-
-    Returns:
-        A dictionary mapping source IDs to their generated hexadecimal job identifiers.
+        tracker: The ProcessingTracker instance bound to the camera_timestamps output directory.
+        jobs: The list of (job_name, specifier) tuples the current pipeline invocation intends to execute.
+        universe: The list of (job_name, specifier) tuples enumerating every job the manifest could produce.
+            Used exclusively for foreign-entry detection.
     """
-    tracker = ProcessingTracker(file_path=output_directory / TRACKER_FILENAME)
+    universe_ids = {
+        ProcessingTracker.generate_job_id(job_name=job_name, specifier=specifier) for job_name, specifier in universe
+    }
+    requested_ids = {
+        ProcessingTracker.generate_job_id(job_name=job_name, specifier=specifier) for job_name, specifier in jobs
+    }
 
-    # Builds the (job_name, specifier) tuples required by the tracker's initialization interface.
-    jobs: list[tuple[str, str]] = [(_TIMESTAMP_JOB_NAME, source_id) for source_id in source_ids]
-    tracker.initialize_jobs(jobs=jobs)
+    if not tracker.file_path.exists():
+        tracker.initialize_jobs(jobs=jobs)
+        return
 
-    return _generate_job_ids(source_ids=source_ids)
+    existing_ids = set(tracker.find_jobs(job_name="").keys())
+    foreign_ids = existing_ids - universe_ids
+
+    if foreign_ids:
+        console.echo(
+            message=(
+                f"The processing tracker at '{tracker.file_path}' contains {len(foreign_ids)} job entries "
+                f"that are not part of the current camera manifest's job universe. Resetting and reinitializing "
+                f"the tracker to match the requested jobs. Foreign job IDs: {sorted(foreign_ids)}."
+            ),
+            level=LogLevel.WARNING,
+        )
+        tracker.reset()
+        tracker.initialize_jobs(jobs=jobs)
+        return
+
+    if not requested_ids.issubset(existing_ids):
+        tracker.initialize_jobs(jobs=jobs)
 
 
 def execute_job(
@@ -445,7 +490,7 @@ def execute_job(
         executor: An optional pre-created ProcessPoolExecutor to reuse for parallel processing. When provided,
             the executor is passed through to extract_logged_camera_timestamps to avoid creating a new process pool.
     """
-    console.echo(message=f"Running '{_TIMESTAMP_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
+    console.echo(message=f"Running '{TIMESTAMP_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
     tracker.start_job(job_id=job_id)
 
     try:
@@ -511,7 +556,7 @@ def _extract_unique_components(paths: list[Path] | tuple[Path, ...]) -> tuple[st
     return tuple(unique_components)
 
 
-def _generate_job_ids(source_ids: list[str]) -> dict[str, str]:
+def generate_job_ids(source_ids: list[str]) -> dict[str, str]:
     """Generates unique processing job identifiers for each source ID.
 
     Args:
@@ -521,7 +566,7 @@ def _generate_job_ids(source_ids: list[str]) -> dict[str, str]:
         A dictionary mapping source IDs to their generated hexadecimal job identifiers.
     """
     return {
-        source_id: ProcessingTracker.generate_job_id(job_name=_TIMESTAMP_JOB_NAME, specifier=source_id)
+        source_id: ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier=source_id)
         for source_id in source_ids
     }
 

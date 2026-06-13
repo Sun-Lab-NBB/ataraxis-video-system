@@ -369,6 +369,12 @@ class VideoSaver:
         if self._stderr_thread is not None:
             self._stderr_thread.join(timeout=10)
 
+        # Closes the stderr pipe now that the drain thread has consumed it. Reading to EOF does not close the
+        # underlying file object, so without this the pipe would be closed by the garbage collector when the Popen
+        # reference is dropped below, emitting a ResourceWarning for the unclosed file.
+        if self._ffmpeg_process.stderr is not None:
+            self._ffmpeg_process.stderr.close()
+
         # Logs captured stderr output only if the FFMPEG process exited with an error.
         if self._ffmpeg_process.returncode != 0 and self._stderr_output:
             console.echo(

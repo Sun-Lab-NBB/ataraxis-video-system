@@ -23,6 +23,12 @@ os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 if "WAYLAND_DISPLAY" in os.environ:
     os.environ["QT_QPA_PLATFORM"] = "xcb"  # pragma: no cover
 
+# Silences the benign Qt teardown warnings (e.g., "QObject::killTimer: Timers cannot be stopped from another thread")
+# that OpenCV's bundled Qt writes to stderr when the live frame-display window is destroyed from the producer process's
+# display thread. setdefault() preserves any value the operator has already exported, and setting the rule here ensures
+# every spawned subprocess inherits it.
+os.environ.setdefault("QT_LOGGING_RULES", "default.warning=false")
+
 
 from .saver import (
     VideoEncoders,

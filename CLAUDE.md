@@ -108,16 +108,16 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 
 ### Video Plugin Skills (ataraxis/plugins/video/)
 
-| Skill                     | Description                                                          |
-|---------------------------|----------------------------------------------------------------------|
-| `/camera-setup`           | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
-| `/camera-interface`       | VideoSystem API usage, constructor parameters, and encoding guidance |
-| `/mcp-environment-setup`  | MCP server connectivity diagnostics and environment verification     |
-| `/post-recording`         | Post-recording verification: log assembly, video validation, handoff |
-| `/pipeline`               | End-to-end pipeline orchestration and multi-camera planning          |
-| `/log-input-format`       | Reference for NPZ archive format, source IDs, and DataLogger output  |
-| `/log-processing`         | Orchestrate log archive processing workflow via MCP tools            |
-| `/log-processing-results` | Reference for output data formats and frame statistics analysis      |
+| Skill                          | Description                                                          |
+|--------------------------------|----------------------------------------------------------------------|
+| `/camera-setup`                | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
+| `/camera-interface`            | VideoSystem API usage, constructor parameters, and encoding guidance |
+| `/video-mcp-environment-setup` | MCP server connectivity diagnostics and environment verification     |
+| `/post-recording`              | Post-recording verification: log assembly, video validation, handoff |
+| `/pipeline`                    | End-to-end pipeline orchestration and multi-camera planning          |
+| `/log-input-format`            | Reference for NPZ archive format, source IDs, and DataLogger output  |
+| `/log-processing`              | Orchestrate log archive processing workflow via MCP tools            |
+| `/log-processing-results`      | Reference for output data formats and frame statistics analysis      |
 
 ### Automation Plugin Skills (ataraxis/plugins/automation/)
 
