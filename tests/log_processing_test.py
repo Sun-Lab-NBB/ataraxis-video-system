@@ -365,28 +365,28 @@ def test_run_log_processing_pipeline_no_manifest_empty_ids(tmp_path: Path) -> No
 
 def test_run_log_processing_pipeline_local_mode(tmp_path: Path) -> None:
     """Verifies that run_log_processing_pipeline processes all jobs in local mode (job_id=None)."""
-    # Creates two archives in the same directory.
+    # Creates two archives in the same directory, named by their numeric source IDs.
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     onset_us = 1700000000000000
 
-    for source_name in ("cam1", "cam2"):
+    for source_id in (1, 2):
         _create_test_archive(
-            archive_path=log_dir / f"{source_name}{LOG_ARCHIVE_SUFFIX}",
-            source_id=1,
+            archive_path=log_dir / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+            source_id=source_id,
             onset_us=onset_us,
             frame_timestamps_us=[1000, 2000],
         )
 
-    # Writes a camera manifest registering both sources.
-    write_camera_manifest(log_directory=log_dir, source_id=0, name="cam1")
-    write_camera_manifest(log_directory=log_dir, source_id=0, name="cam2")
+    # Writes a camera manifest registering both sources by their numeric IDs.
+    write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
+    write_camera_manifest(log_directory=log_dir, source_id=2, name="cam2")
 
     output_dir = tmp_path / "output"
     run_log_processing_pipeline(
         log_directory=log_dir,
         output_directory=output_dir,
-        log_ids=["cam1", "cam2"],
+        log_ids=["1", "2"],
         workers=1,
         display_progress=False,
     )
@@ -394,46 +394,44 @@ def test_run_log_processing_pipeline_local_mode(tmp_path: Path) -> None:
     # Verifies that output files were created in the camera_timestamps subdirectory for both sources.
     timestamps_dir = output_dir / CAMERA_TIMESTAMPS_DIRECTORY
     assert timestamps_dir.is_dir()
-    assert (timestamps_dir / "camera_cam1_timestamps.feather").exists()
-    assert (timestamps_dir / "camera_cam2_timestamps.feather").exists()
+    assert (timestamps_dir / "camera_1_timestamps.feather").exists()
+    assert (timestamps_dir / "camera_2_timestamps.feather").exists()
     assert (timestamps_dir / TRACKER_FILENAME).exists()
 
 
 def test_run_log_processing_pipeline_remote_mode(tmp_path: Path) -> None:
-    """Verifies that run_log_processing_pipeline executes a single job in remote mode (job_id provided)."""
+    """Verifies that remote mode creates the tracker on its own and runs only the job matching the requested ID."""
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     onset_us = 1700000000000000
 
     _create_test_archive(
-        archive_path=log_dir / f"cam1{LOG_ARCHIVE_SUFFIX}",
+        archive_path=log_dir / f"1{LOG_ARCHIVE_SUFFIX}",
         source_id=1,
         onset_us=onset_us,
         frame_timestamps_us=[1000, 2000, 3000],
     )
 
-    # Writes a camera manifest registering the source.
+    # Writes a camera manifest registering the source by its numeric ID.
     write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
 
     output_dir = tmp_path / "output"
-    timestamps_dir = output_dir / CAMERA_TIMESTAMPS_DIRECTORY
-    timestamps_dir.mkdir(parents=True)
 
-    # Pre-creates the tracker in the camera_timestamps subdirectory (simulates remote orchestration).
-    tracker = ProcessingTracker(file_path=timestamps_dir / TRACKER_FILENAME)
-    job_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="cam1")
-    tracker.initialize_jobs(jobs=[(TIMESTAMP_JOB_NAME, "cam1")])
-
+    # Resolves the job ID the same way an external orchestrator would, then dispatches it as a remote job. The
+    # pipeline creates the tracker on its own (server-owned), without any local pre-initialization.
+    job_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="1")
     run_log_processing_pipeline(
         log_directory=log_dir,
         output_directory=output_dir,
         job_id=job_id,
-        log_ids=["cam1"],
         workers=1,
         display_progress=False,
     )
 
-    assert (timestamps_dir / "camera_cam1_timestamps.feather").exists()
+    timestamps_dir = output_dir / CAMERA_TIMESTAMPS_DIRECTORY
+    assert (timestamps_dir / "camera_1_timestamps.feather").exists()
+    tracker = ProcessingTracker(file_path=timestamps_dir / TRACKER_FILENAME)
+    assert tracker.get_job_status(job_id=job_id) == ProcessingStatus.SUCCEEDED
 
 
 def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
@@ -441,7 +439,7 @@ def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     _create_test_archive(
-        archive_path=log_dir / f"cam1{LOG_ARCHIVE_SUFFIX}",
+        archive_path=log_dir / f"1{LOG_ARCHIVE_SUFFIX}",
         source_id=1,
         onset_us=1700000000000000,
         frame_timestamps_us=[1000],
@@ -454,7 +452,6 @@ def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
             log_directory=log_dir,
             output_directory=output_dir,
             job_id="invalid_job_id_value",
-            log_ids=["cam1"],
             workers=1,
             display_progress=False,
         )
@@ -469,13 +466,13 @@ def test_run_log_processing_pipeline_multiple_directories(tmp_path: Path) -> Non
     dir_b.mkdir(parents=True)
 
     _create_test_archive(
-        archive_path=dir_a / f"cam1{LOG_ARCHIVE_SUFFIX}",
+        archive_path=dir_a / f"1{LOG_ARCHIVE_SUFFIX}",
         source_id=1,
         onset_us=1700000000000000,
         frame_timestamps_us=[1000],
     )
     _create_test_archive(
-        archive_path=dir_b / f"cam2{LOG_ARCHIVE_SUFFIX}",
+        archive_path=dir_b / f"2{LOG_ARCHIVE_SUFFIX}",
         source_id=2,
         onset_us=1700000000000000,
         frame_timestamps_us=[1000],
@@ -491,10 +488,50 @@ def test_run_log_processing_pipeline_multiple_directories(tmp_path: Path) -> Non
         run_log_processing_pipeline(
             log_directory=log_root,
             output_directory=output_dir,
-            log_ids=["cam1", "cam2"],
+            log_ids=["1", "2"],
             workers=1,
             display_progress=False,
         )
+
+
+def test_run_log_processing_pipeline_remote_jobs_share_tracker(tmp_path: Path) -> None:
+    """Verifies that independent remote jobs sharing one tracker do not reset each other's state.
+
+    Simulates the server case where each source is dispatched as its own remote job against a single shared
+    tracker. Running the second job must align the tracker against the manifest universe and leave the first
+    job's completed state intact, rather than treating it as a foreign entry and resetting it.
+    """
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    onset_us = 1700000000000000
+
+    for source_id in (1, 2):
+        _create_test_archive(
+            archive_path=log_dir / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+            source_id=source_id,
+            onset_us=onset_us,
+            frame_timestamps_us=[1000, 2000],
+        )
+
+    write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
+    write_camera_manifest(log_directory=log_dir, source_id=2, name="cam2")
+
+    output_dir = tmp_path / "output"
+    job_id_one = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="1")
+    job_id_two = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier="2")
+
+    # Dispatches each source as a separate remote job against the same output directory (shared tracker).
+    run_log_processing_pipeline(
+        log_directory=log_dir, output_directory=output_dir, job_id=job_id_one, workers=1, display_progress=False
+    )
+    run_log_processing_pipeline(
+        log_directory=log_dir, output_directory=output_dir, job_id=job_id_two, workers=1, display_progress=False
+    )
+
+    # Both jobs must be recorded as succeeded; the second run must not have reset the first.
+    tracker = ProcessingTracker(file_path=output_dir / CAMERA_TIMESTAMPS_DIRECTORY / TRACKER_FILENAME)
+    assert tracker.get_job_status(job_id=job_id_one) == ProcessingStatus.SUCCEEDED
+    assert tracker.get_job_status(job_id=job_id_two) == ProcessingStatus.SUCCEEDED
 
 
 def test_extract_unique_components_two_paths() -> None:
