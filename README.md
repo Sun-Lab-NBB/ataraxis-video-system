@@ -355,21 +355,21 @@ axvs mcp
 
 | Tool                                   | Description                                                                      |
 |----------------------------------------|----------------------------------------------------------------------------------|
-| `list_cameras`                         | Discovers all cameras compatible with OpenCV and Harvesters interfaces           |
-| `get_cti_status`                       | Checks whether the library is configured with a valid GenTL Producer (.cti) file |
-| `set_cti_file`                         | Configures the library to use a specified CTI file for GeniCam camera support    |
-| `check_runtime_requirements`           | Checks FFMPEG and GPU availability for video encoding                            |
-| `start_video_session`                  | Starts a video capture session with specified camera and encoding parameters     |
-| `stop_video_session`                   | Stops the active video capture session and releases resources                    |
-| `start_frame_saving`                   | Begins saving captured frames to a video file                                    |
-| `stop_frame_saving`                    | Stops saving frames while keeping the session active                             |
-| `get_session_status`                   | Returns the current status of the video session                                  |
+| `list_cameras_tool`                    | Discovers all cameras compatible with OpenCV and Harvesters interfaces           |
+| `get_cti_status_tool`                  | Checks whether the library is configured with a valid GenTL Producer (.cti) file |
+| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GeniCam camera support    |
+| `check_runtime_requirements_tool`      | Checks FFMPEG and GPU availability for video encoding                            |
+| `start_video_session_tool`             | Starts a video capture session with specified camera and encoding parameters     |
+| `stop_video_session_tool`              | Stops the active video capture session and releases resources                    |
+| `start_frame_saving_tool`              | Begins saving captured frames to a video file                                    |
+| `stop_frame_saving_tool`               | Stops saving frames while keeping the session active                             |
+| `get_session_status_tool`              | Returns the current status of the video session                                  |
 | `assemble_log_archives_tool`           | Consolidates raw .npy log entries into .npz archives by source ID                |
 | `validate_video_file_tool`             | Validates a video file and extracts metadata using ffprobe                       |
-| `read_genicam_node`                    | Reads a GenICam node value from a connected camera                               |
-| `write_genicam_node`                   | Writes a value to a GenICam node on a connected camera                           |
-| `dump_genicam_config`                  | Dumps GenICam configuration from a camera to a YAML file                         |
-| `load_genicam_config`                  | Loads GenICam configuration from a YAML file to a camera                         |
+| `read_genicam_node_tool`               | Reads a GenICam node value from a connected camera                               |
+| `write_genicam_node_tool`              | Writes a value to a GenICam node on a connected camera                           |
+| `dump_genicam_config_tool`             | Dumps GenICam configuration from a camera to a YAML file                         |
+| `load_genicam_config_tool`             | Loads GenICam configuration from a YAML file to a camera                         |
 | `read_camera_manifest_tool`            | Reads a camera manifest file and returns its contents                            |
 | `write_camera_manifest_tool`           | Writes or updates a camera manifest file in a log directory                      |
 | `discover_camera_data_tool`            | Discovers confirmed camera recordings under a root directory via manifests       |

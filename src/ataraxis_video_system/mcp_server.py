@@ -180,7 +180,7 @@ _job_execution_state: _JobExecutionState | None = None  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def list_cameras() -> str:  # pragma: no cover
+def list_cameras_tool() -> str:  # pragma: no cover
     """Discovers all cameras compatible with the OpenCV and Harvesters interfaces.
 
     Returns:
@@ -215,7 +215,7 @@ def list_cameras() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def get_cti_status() -> str:  # pragma: no cover
+def get_cti_status_tool() -> str:  # pragma: no cover
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     The Harvesters camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -235,7 +235,7 @@ def get_cti_status() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def set_cti_file(file_path: str) -> str:  # pragma: no cover
+def set_cti_file_tool(file_path: str) -> str:  # pragma: no cover
     """Configures the library to use the specified CTI file for all future runtimes involving GeniCam cameras.
 
     The Harvesters library requires the GenTL Producer interface (.cti) file to discover and interface with compatible
@@ -270,7 +270,7 @@ def set_cti_file(file_path: str) -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def check_runtime_requirements() -> str:  # pragma: no cover
+def check_runtime_requirements_tool() -> str:  # pragma: no cover
     """Checks whether the host system meets the requirements for video encoding and camera interfaces.
 
     Verifies that FFMPEG is installed and accessible, checks for Nvidia GPU availability for hardware-accelerated
@@ -296,7 +296,7 @@ def check_runtime_requirements() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def start_video_session(
+def start_video_session_tool(
     output_directory: str,
     interface: str = "opencv",
     camera_index: int = 0,
@@ -457,7 +457,7 @@ def start_video_session(
 
 
 @mcp.tool()  # pragma: no cover
-def stop_video_session() -> dict[str, Any]:  # pragma: no cover
+def stop_video_session_tool() -> dict[str, Any]:  # pragma: no cover
     """Stops the active video capture session, releases all resources, and assembles log archives.
 
     Stops the VideoSystem and DataLogger, freeing the camera and saving any remaining buffered frames. After
@@ -581,7 +581,7 @@ def assemble_log_archives_tool(  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def start_frame_saving() -> str:  # pragma: no cover
+def start_frame_saving_tool() -> str:  # pragma: no cover
     """Starts saving captured frames to the video file.
 
     Begins writing acquired frames to an MP4 video file in the output directory. A video session must be active.
@@ -603,7 +603,7 @@ def start_frame_saving() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def stop_frame_saving() -> str:  # pragma: no cover
+def stop_frame_saving_tool() -> str:  # pragma: no cover
     """Stops saving frames to the video file.
 
     Stops writing frames to the video file while keeping the session active. Frame acquisition continues.
@@ -625,7 +625,7 @@ def stop_frame_saving() -> str:  # pragma: no cover
 
 
 @mcp.tool()  # pragma: no cover
-def get_session_status() -> dict[str, Any]:  # pragma: no cover
+def get_session_status_tool() -> dict[str, Any]:  # pragma: no cover
     """Returns detailed status information about the current video session.
 
     Reports whether a session is active, and when active, includes camera interface, resolution, frame rate,
@@ -776,7 +776,7 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:  # pragma: no c
 
 
 @mcp.tool()  # pragma: no cover
-def read_genicam_node(
+def read_genicam_node_tool(
     camera_index: int = 0,
     node_name: str = "",
     blacklisted_nodes: list[str] | None = None,
@@ -825,7 +825,7 @@ def read_genicam_node(
 
 
 @mcp.tool()  # pragma: no cover
-def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  # pragma: no cover
+def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> str:  # pragma: no cover
     """Sets a GenICam node value on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type based on the node's type.
@@ -850,7 +850,7 @@ def write_genicam_node(camera_index: int, node_name: str, value: str) -> str:  #
 
 
 @mcp.tool()  # pragma: no cover
-def dump_genicam_config(
+def dump_genicam_config_tool(
     camera_index: int,
     output_file: str,
     blacklisted_nodes: list[str] | None = None,
@@ -890,7 +890,7 @@ def dump_genicam_config(
 
 
 @mcp.tool()  # pragma: no cover
-def load_genicam_config(
+def load_genicam_config_tool(
     camera_index: int,
     config_file: str,
     *,
