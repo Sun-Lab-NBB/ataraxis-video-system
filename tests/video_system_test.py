@@ -102,7 +102,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
     invalid_index = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
-        f"zero or positive integer as the 'camera_id' argument value, but got {invalid_index} of type "
+        f"zero or positive integer as the 'camera_index' argument value, but got {invalid_index} of type "
         f"{type(invalid_index).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
