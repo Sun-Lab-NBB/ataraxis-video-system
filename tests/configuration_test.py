@@ -4,8 +4,8 @@ import pytest
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
-from ataraxis_video_system.camera import HarvestersCamera
-from ataraxis_video_system.configuration import (
+from ataraxis_video_system.video.camera import HarvestersCamera
+from ataraxis_video_system.video.configuration import (
     format_genicam_node,
     read_genicam_node,
     write_genicam_node,

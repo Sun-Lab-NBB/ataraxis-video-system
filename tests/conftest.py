@@ -16,7 +16,7 @@ from ataraxis_video_system import (
     discover_camera_ids,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.camera import HarvestersCamera
+from ataraxis_video_system.video.camera import HarvestersCamera
 
 
 def _restore_camera_state(saved_state: dict[str, int]) -> None:

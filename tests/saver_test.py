@@ -15,8 +15,8 @@ from ataraxis_video_system import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.saver import VideoSaver
-from ataraxis_video_system.camera import MockCamera
+from ataraxis_video_system.video.saver import VideoSaver
+from ataraxis_video_system.video.camera import MockCamera
 
 
 def test_check_gpu_availability() -> None:

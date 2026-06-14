@@ -75,7 +75,7 @@ Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
 # Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
 [project.scripts]
-axvs = "ataraxis_video_system.cli:axvs_cli"
+axvs = "ataraxis_video_system.interfaces.cli:axvs_cli"
 
 # Development dependencies (PEP 735). Not published to PyPI.
 [dependency-groups]
@@ -218,10 +218,7 @@ directory = "reports/coverage_html"
 # Optimizes coverage generation for parallel testing
 [tool.coverage.run]
 parallel = true
-omit = [
-    "*/cli.py",
-    "*/mcp_server.py",
-]
+omit = ["*/interfaces/*"]
 
 # Specifies additional ignore directives
 [tool.coverage.report]

@@ -5,7 +5,7 @@ import pytest
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import InputPixelFormats
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
+from ataraxis_video_system.video.camera import MockCamera, OpenCVCamera, HarvestersCamera
 
 
 @pytest.mark.parametrize(

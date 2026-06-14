@@ -1,7 +1,7 @@
 """Contains tests for classes and functions provided by the manifest.py module."""
 
 from ataraxis_video_system import CAMERA_MANIFEST_FILENAME, CameraManifest, CameraSourceData
-from ataraxis_video_system.manifest import write_camera_manifest
+from ataraxis_video_system.video.manifest import write_camera_manifest
 
 
 def test_camera_source_data_creation() -> None:

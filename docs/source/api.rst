@@ -4,7 +4,7 @@
 Video System
 ============
 
-.. automodule:: ataraxis_video_system.video_system
+.. automodule:: ataraxis_video_system.video.video_system
    :members:
    :undoc-members:
    :show-inheritance:
@@ -12,7 +12,7 @@ Video System
 Camera
 ======
 
-.. automodule:: ataraxis_video_system.camera
+.. automodule:: ataraxis_video_system.video.camera
    :members:
    :undoc-members:
    :show-inheritance:
@@ -20,7 +20,7 @@ Camera
 Saver
 =====
 
-.. automodule:: ataraxis_video_system.saver
+.. automodule:: ataraxis_video_system.video.saver
    :members:
    :undoc-members:
    :show-inheritance:
@@ -28,7 +28,7 @@ Saver
 GeniCam Configuration
 =====================
 
-.. automodule:: ataraxis_video_system.configuration
+.. automodule:: ataraxis_video_system.video.configuration
    :members:
    :undoc-members:
    :show-inheritance:
@@ -36,7 +36,7 @@ GeniCam Configuration
 Log Processing
 ==============
 
-.. automodule:: ataraxis_video_system.log_processing
+.. automodule:: ataraxis_video_system.video.log_processing
    :members:
    :undoc-members:
    :show-inheritance:
@@ -44,6 +44,6 @@ Log Processing
 Command Line Interfaces (CLIs)
 ==============================
 
-.. click:: ataraxis_video_system.cli:axvs_cli
+.. click:: ataraxis_video_system.interfaces.cli:axvs_cli
    :prog: axvs
    :nested: full

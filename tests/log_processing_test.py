@@ -8,8 +8,8 @@ import pytest
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
-from ataraxis_video_system.manifest import write_camera_manifest
-from ataraxis_video_system.log_processing import (
+from ataraxis_video_system.video.manifest import write_camera_manifest
+from ataraxis_video_system.video.log_processing import (
     TRACKER_FILENAME,
     LOG_ARCHIVE_SUFFIX,
     TIMESTAMP_JOB_NAME,
