@@ -1,6 +1,6 @@
 # Claude Code Instructions
 
-## Session Start Behavior
+## Session start behavior
 
 At the beginning of each coding session, before making any code changes, you should build a comprehensive
 understanding of the codebase by invoking the `/explore-codebase` skill.
@@ -10,7 +10,7 @@ This ensures you:
 - Follow existing patterns and conventions
 - Don't introduce inconsistencies or break integrations
 
-## Style Guide Compliance
+## Style guide compliance
 
 Before writing, modifying, or reviewing any code or documentation, you MUST invoke the appropriate skill to load
 Ataraxis framework conventions. This applies to ALL file types:
@@ -31,7 +31,7 @@ All contributions must strictly follow these conventions. Key conventions includ
 - Proper error handling with `console.error()`
 - 120 character line limit
 
-## Cross-Referenced Library Verification
+## Cross-referenced library verification
 
 Ataraxis framework projects often depend on other `ataraxis-*` or `sl-*` libraries. These libraries may be stored
 locally in the same parent directory as this project (`/home/cyberaxolotl/Desktop/GitHubRepos/`).
@@ -58,24 +58,44 @@ locally in the same parent directory as this project (`/home/cyberaxolotl/Deskto
 **Why this matters**: Skills and documentation may reference outdated APIs. Always verify against the actual library
 state to prevent integration errors.
 
-## Distribution Model
+## Available skills
 
-This project follows a dual distribution model. The library source code, tests, CLI, and MCP server implementation live
-in this repository (`ataraxis-video-system`) and are distributed via PyPI. Claude Code skills and MCP server
-registration are distributed separately through the [ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) marketplace as
-plugins:
+Skills are distributed through the ataraxis marketplace and are loaded into Claude Code via the plugin system. They are
+**not** stored in this repository.
 
-- **video** plugin (`ataraxis/plugins/video/`): Registers the `axvs mcp` server with compatible MCP clients and
-  provides video-specific skills for camera setup, pipeline orchestration, log processing, and post-recording
-  verification.
-- **automation** plugin (`ataraxis/plugins/automation/`): Provides shared development skills that enforce
-  Ataraxis framework coding conventions (Python style, README style, commit messages, pyproject.toml, tox
-  configuration) and general-purpose codebase exploration tools.
+### Video plugin skills (ataraxis/plugins/video/)
 
-When modifying skills, edit the SKILL.md files in the ataraxis marketplace repository, not in this repository.
-When modifying the MCP server implementation or library code, edit the source files in this repository.
+| Skill                          | Description                                                          |
+|--------------------------------|----------------------------------------------------------------------|
+| `/camera-setup`                | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
+| `/camera-interface`            | VideoSystem API usage, constructor parameters, and encoding guidance |
+| `/video-mcp-environment-setup` | MCP server connectivity diagnostics and environment verification     |
+| `/post-recording`              | Post-recording verification: log assembly, video validation, handoff |
+| `/pipeline`                    | End-to-end pipeline orchestration and multi-camera planning          |
+| `/log-input-format`            | Reference for NPZ archive format, source IDs, and DataLogger output  |
+| `/log-processing`              | Orchestrate log archive processing workflow via MCP tools            |
+| `/log-processing-results`      | Reference for output data formats and frame statistics analysis      |
 
-## MCP Server Integration
+### Automation plugin skills (ataraxis/plugins/automation/)
+
+| Skill                   | Description                                                                    |
+|-------------------------|--------------------------------------------------------------------------------|
+| `/explore-codebase`     | Perform in-depth codebase exploration at session start                         |
+| `/explore-dependencies` | Explore installed ataraxis dependency APIs for reuse opportunities             |
+| `/audit-facts`          | Audit documentation for factual accuracy against source code                   |
+| `/audit-style`          | Audit files for style and convention compliance                                |
+| `/python-style`         | Apply Ataraxis framework Python coding conventions (REQUIRED for code changes) |
+| `/readme-style`         | Apply Ataraxis framework README conventions                                    |
+| `/pyproject-style`      | Apply Ataraxis framework pyproject.toml conventions                            |
+| `/tox-config`           | Apply Ataraxis framework tox.ini conventions                                   |
+| `/api-docs`             | Apply Ataraxis framework Sphinx API documentation conventions                  |
+| `/skill-design`         | Generate and verify Claude Code skill files                                    |
+| `/project-layout`       | Apply Ataraxis framework project directory structure conventions               |
+| `/commit`               | Draft Ataraxis framework style-compliant git commit messages                   |
+| `/pr`                   | Draft Ataraxis framework style-compliant pull request summaries                |
+| `/release`              | Draft Ataraxis framework style-compliant release notes                         |
+
+## MCP server integration
 
 This library provides an MCP server (`axvs mcp`) that exposes camera discovery, configuration, video recording,
 manifest management, and log data processing tools. When working with this project or its dependencies, prefer using
@@ -101,50 +121,30 @@ available MCP tools over direct code execution when appropriate.
    - The task requires custom logic not covered by available tools
    - Writing or modifying library source code
 
-## Available Skills
+## Distribution model
 
-Skills are distributed through the ataraxis marketplace and are loaded into Claude Code via the plugin system. They are
-**not** stored in this repository.
+This project follows a dual distribution model. The library source code, tests, CLI, and MCP server implementation live
+in this repository (`ataraxis-video-system`) and are distributed via PyPI. Claude Code skills and MCP server
+registration are distributed separately through the [ataraxis](https://github.com/Sun-Lab-NBB/ataraxis) marketplace as
+plugins:
 
-### Video Plugin Skills (ataraxis/plugins/video/)
+- **video** plugin (`ataraxis/plugins/video/`): Registers the `axvs mcp` server with compatible MCP clients and
+  provides video-specific skills for camera setup, pipeline orchestration, log processing, and post-recording
+  verification.
+- **automation** plugin (`ataraxis/plugins/automation/`): Provides shared development skills that enforce
+  Ataraxis framework coding conventions (Python style, README style, commit messages, pyproject.toml, tox
+  configuration) and general-purpose codebase exploration tools.
 
-| Skill                          | Description                                                          |
-|--------------------------------|----------------------------------------------------------------------|
-| `/camera-setup`                | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
-| `/camera-interface`            | VideoSystem API usage, constructor parameters, and encoding guidance |
-| `/video-mcp-environment-setup` | MCP server connectivity diagnostics and environment verification     |
-| `/post-recording`              | Post-recording verification: log assembly, video validation, handoff |
-| `/pipeline`                    | End-to-end pipeline orchestration and multi-camera planning          |
-| `/log-input-format`            | Reference for NPZ archive format, source IDs, and DataLogger output  |
-| `/log-processing`              | Orchestrate log archive processing workflow via MCP tools            |
-| `/log-processing-results`      | Reference for output data formats and frame statistics analysis      |
+When modifying skills, edit the SKILL.md files in the ataraxis marketplace repository, not in this repository.
+When modifying the MCP server implementation or library code, edit the source files in this repository.
 
-### Automation Plugin Skills (ataraxis/plugins/automation/)
-
-| Skill                   | Description                                                                    |
-|-------------------------|--------------------------------------------------------------------------------|
-| `/explore-codebase`     | Perform in-depth codebase exploration at session start                         |
-| `/explore-dependencies` | Explore installed ataraxis dependency APIs for reuse opportunities             |
-| `/audit-facts`          | Audit documentation for factual accuracy against source code                   |
-| `/audit-style`          | Audit files for style and convention compliance                                |
-| `/python-style`         | Apply Ataraxis framework Python coding conventions (REQUIRED for code changes) |
-| `/readme-style`         | Apply Ataraxis framework README conventions                                    |
-| `/pyproject-style`      | Apply Ataraxis framework pyproject.toml conventions                            |
-| `/tox-config`           | Apply Ataraxis framework tox.ini conventions                                   |
-| `/api-docs`             | Apply Ataraxis framework Sphinx API documentation conventions                  |
-| `/skill-design`         | Generate and verify Claude Code skill files                                    |
-| `/project-layout`       | Apply Ataraxis framework project directory structure conventions               |
-| `/commit`               | Draft Ataraxis framework style-compliant git commit messages                   |
-| `/pr`                   | Draft Ataraxis framework style-compliant pull request summaries                |
-| `/release`              | Draft Ataraxis framework style-compliant release notes                         |
-
-## Project Context
+## Project context
 
 This is **ataraxis-video-system**, a Python library that interfaces with a wide range of cameras to flexibly record
 visual stream data as video files. It supports OpenCV and GenICam (Harvesters) camera interfaces with FFMPEG-based
 video encoding using CPU or GPU.
 
-### Key Areas
+### Key areas
 
 | Directory                             | Purpose                                                                           |
 |---------------------------------------|-----------------------------------------------------------------------------------|
@@ -205,7 +205,7 @@ video encoding using CPU or GPU.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
-### Key Patterns
+### Key patterns
 
 - **Multiprocessing Spawn**: `mp.set_start_method("spawn")` is set globally in `__init__.py` for cross-platform
   consistency. All spawned processes are daemon processes requiring explicit `stop()` calls.
@@ -223,7 +223,7 @@ video encoding using CPU or GPU.
 - **Frame Display**: Runs on a separate thread with its own Queue (decoupled from saver). Automatically disabled
   on macOS due to main-thread GUI restrictions.
 
-### Code Standards
+### Code standards
 
 - MyPy strict mode with full type annotations
 - Google-style docstrings
@@ -232,7 +232,7 @@ video encoding using CPU or GPU.
 - Python 3.12, 3.13, 3.14 support
 - See style skills for complete conventions
 
-### Workflow Guidance
+### Workflow guidance
 
 **Modifying VideoSystem:**
 

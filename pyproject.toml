@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # Project metadata section. Provides the general ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "4.0.0rc1"
+version = "4.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = "Apache-2.0"
@@ -215,11 +215,6 @@ source = ["src/", ".tox/*/lib/python*/site-packages/"]
 [tool.coverage.html]
 directory = "reports/coverage_html"
 
-# Optimizes coverage generation for parallel testing
-[tool.coverage.run]
-parallel = true
-omit = ["*/interfaces/*"]
-
 # Specifies additional ignore directives
 [tool.coverage.report]
 exclude_lines = [
@@ -231,3 +226,9 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "pass",
 ]
+
+# Optimizes coverage generation for parallel testing
+[tool.coverage.run]
+parallel = true
+concurrency = ["multiprocessing", "thread"]
+omit = ["*/interfaces/*"]
