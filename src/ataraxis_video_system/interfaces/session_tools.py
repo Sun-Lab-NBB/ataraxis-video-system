@@ -46,7 +46,7 @@ def start_video_session_tool(
     """Starts a video capture session with the specified parameters.
 
     Creates a VideoSystem instance and begins acquiring frames from the camera. Frames are not saved until
-    start_frame_saving is called. Only one session can be active at a time.
+    start_frame_saving_tool is called. Only one session can be active at a time.
 
     Important:
         The AI agent calling this tool MUST ask the user to provide the output_directory path before calling this
@@ -149,7 +149,7 @@ def start_video_session_tool(
         )
 
         # Spawns camera acquisition and encoding child processes. After this call, frames are being acquired but
-        # not yet saved to disk (saving requires an explicit start_frame_saving call).
+        # not yet saved to disk (saving requires an explicit start_frame_saving_tool call).
         _active_session.start()
 
         # Captures session configuration for status reporting. VideoSystem does not expose constructor parameters
@@ -283,7 +283,7 @@ def stop_frame_saving_tool() -> str:
         return "Error: No active session"
 
     # Signals the saver process to stop accepting new frames and finalize the current video file. The camera
-    # continues acquiring frames, so a subsequent start_frame_saving call will create a new video file.
+    # continues acquiring frames, so a subsequent start_frame_saving_tool call will create a new video file.
     try:
         _active_session.stop_frame_saving()
     except Exception as e:
@@ -296,8 +296,9 @@ def stop_frame_saving_tool() -> str:
 def get_session_status_tool() -> dict[str, Any]:
     """Returns detailed status information about the current video session.
 
-    Reports whether a session is active, and when active, includes camera interface, resolution, frame rate,
-    encoding parameters, video file path, and log directory.
+    Reports whether a session is active. When active, the response includes the session configuration captured at
+    creation time (camera name, interface, resolution, frame rate, encoding parameters, output directory, and
+    display frame rate) together with the runtime video file path and log directory.
 
     Returns:
         A dictionary containing session status and configuration details. Returns ``{"status": "inactive"}``

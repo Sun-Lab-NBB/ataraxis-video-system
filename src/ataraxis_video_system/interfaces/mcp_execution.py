@@ -115,9 +115,10 @@ def job_execution_manager() -> None:
     """Dispatches queued jobs as worker-tier groups with shared process pools.
 
     Runs as a daemon thread, polling at 1-second intervals. Each dispatch cycle classifies pending jobs into
-    small (< 2000 messages, 1 worker each) and parallel (>= 2000 messages). Parallel jobs are grouped by their
-    precomputed worker tier from ``_compute_sqrt_minimum``, which snaps archive sizes to discrete worker counts
-    (multiples of 5). Jobs in the same tier share a single ProcessPoolExecutor sized exactly to that tier.
+    small (< 2000 messages, 1 worker each) and parallel (>= 2000 messages). Parallel jobs are grouped by a worker
+    tier computed at dispatch from precomputed message counts via ``_compute_sqrt_minimum``, which snaps archive
+    sizes to discrete worker counts (multiples of 5). Jobs in the same tier share a single ProcessPoolExecutor sized
+    exactly to that tier.
     Each tier is split into as many concurrent groups as the budget allows. Small jobs are dispatched individually.
     Exits when the queue is empty and no active groups remain.
     """
@@ -158,7 +159,7 @@ def job_execution_manager() -> None:
 
                 dispatch_groups: list[tuple[list[PendingJob], int]] = []
 
-                # Phase 1: Groups parallel jobs by worker tier. Each job's optimal worker count is precomputed
+                # Phase 1: Groups parallel jobs by worker tier. Each job's worker count is computed at dispatch
                 # via _compute_sqrt_minimum, which snaps archive sizes to discrete tiers (multiples of 5). Jobs
                 # in the same tier share a ProcessPoolExecutor sized exactly to that tier. Each tier is split
                 # into as many concurrent groups as the available budget allows.

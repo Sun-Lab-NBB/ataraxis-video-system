@@ -24,7 +24,7 @@ def read_genicam_node_tool(
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, returns detailed information about that specific node. If no node name is provided,
-    lists all available nodes with their current values.
+    lists all writable (ReadWrite) value nodes with their current values.
 
     Args:
         camera_index: The index of the Harvesters camera to read from.
@@ -80,8 +80,8 @@ def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> st
     """
     try:
         with _harvester_connection(camera_index=camera_index) as camera:
-            # Delegates value conversion and writing to the camera's set_node_value method, which inspects the node's
-            # type and casts the string value to int, float, bool, or enum as needed.
+            # Delegates value conversion and writing to the camera's set_node_value method. That method casts the
+            # string value to int, float, or bool by node type, keeping enumeration and string nodes as raw strings.
             camera.set_node_value(name=node_name, value=value)
     except Exception as e:
         return f"Error: {e}"
@@ -117,8 +117,8 @@ def dump_genicam_config_tool(
     try:
         with _harvester_connection(camera_index=camera_index) as camera:
             # Reads every accessible node from the camera's GenICam node map and packages them into a
-            # GenicamConfiguration object that includes the camera's model, serial number, and per-node metadata
-            # (value, range, enum entries).
+            # GenicamConfiguration object that stores the camera's model and serial number along with the name and
+            # current value of each node.
             config = camera.get_configuration(blacklisted_nodes=blacklist)
 
             # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
