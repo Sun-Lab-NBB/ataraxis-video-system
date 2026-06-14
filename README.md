@@ -27,7 +27,7 @@ ___
 ## Features
 
 - Supports Windows, Linux, and macOS.
-- Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
+- Uses OpenCV or GenICam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
 - Supports inspecting, modifying, saving, and loading GenICam camera configurations for reproducible setups.
@@ -52,7 +52,7 @@ ___
   - [Log Processing](#log-processing)
   - [CLI](#cli)
   - [MCP Server](#mcp-server)
-  - [Using GeniCam Compatible Cameras](#using-genicam-compatible-cameras)
+  - [Using GenICam Compatible Cameras](#using-genicam-compatible-cameras)
   - [GenICam Configuration](#genicam-configuration)
 - [API Documentation](#api-documentation)
 - [Developers](#developers)
@@ -357,7 +357,7 @@ axvs mcp
 |----------------------------------------|----------------------------------------------------------------------------------|
 | `list_cameras_tool`                    | Discovers all cameras compatible with OpenCV and Harvesters interfaces           |
 | `get_cti_status_tool`                  | Checks whether the library is configured with a valid GenTL Producer (.cti) file |
-| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GeniCam camera support    |
+| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GenICam camera support    |
 | `check_runtime_requirements_tool`      | Checks FFMPEG and GPU availability for video encoding                            |
 | `start_video_session_tool`             | Starts a video capture session with specified camera and encoding parameters     |
 | `stop_video_session_tool`              | Stops the active video capture session and releases resources                    |
@@ -390,12 +390,12 @@ MCP server registration and Claude Code skill assets for this library are distri
 from the marketplace to automatically register the MCP server with compatible clients and make all associated skills
 available.
 
-### Using GeniCam Compatible Cameras
-This library supports all cameras compatible with the [GeniCam](https://www.emva.org/standards-technology/genicam/) 
+### Using GenICam Compatible Cameras
+This library supports all cameras compatible with the [GenICam](https://www.emva.org/standards-technology/genicam/) 
 standard, which includes most GigE+ scientific and machine vision cameras. 
 
-***Note,*** before using the library with a GeniCam camera, it must be provided with the path to the .cti GenTL Producer
-Interface file. Without an interface, the library is not able to interface with the GeniCam cameras. Use the
+***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
+Interface file. Without an interface, the library is not able to interface with the GenICam cameras. Use the
 `axvs cti set` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a
 general .cti file, such as [mvImpactAcquire](#dependencies). This command only needs to be called once, as the library
 remembers and reuses the provided .cti file for all future runtimes.

@@ -71,12 +71,12 @@ class CameraInterfaces(StrEnum):
     """Defines the supported camera interface backends compatible with the VideoSystem class."""
 
     HARVESTERS = "harvesters"
-    """The preferred backend for all cameras that support the GeniCam standard, which includes most scientific
+    """The preferred backend for all cameras that support the GenICam standard, which includes most scientific
     and industrial machine-vision cameras, based on the 'Harvesters' library and compatible with USB, Ethernet, and
     PCIE interfaces.
     """
     OPENCV = "opencv"
-    """The backend for all cameras that do not support the GeniCam standard, based on the 'OpenCV' library
+    """The backend for all cameras that do not support the GenICam standard, based on the 'OpenCV' library
     and primarily compatible with consumer-grade cameras that use the USB interface.
     """
     MOCK = "mock"
@@ -427,7 +427,7 @@ class OpenCVCamera:
 
 
 class HarvestersCamera:
-    """Interfaces with the specified GeniCam-compatible camera hardware to acquire frame data.
+    """Interfaces with the specified GenICam-compatible camera hardware to acquire frame data.
 
     Notes:
         This class should not be initialized manually. The VideoSystem constructor creates all camera interface

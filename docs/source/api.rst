@@ -25,7 +25,7 @@ Saver
    :undoc-members:
    :show-inheritance:
 
-GeniCam Configuration
+GenICam Configuration
 =====================
 
 .. automodule:: ataraxis_video_system.video.configuration

@@ -59,9 +59,9 @@ def cti_group() -> None:  # pragma: no cover
     ),
 )
 def set_cti_file(file_path: Path) -> None:  # pragma: no cover
-    """Configures the library to use the input CTI file for all future runtimes involving GeniCam cameras.
+    """Configures the library to use the input CTI file for all future runtimes involving GenICam cameras.
 
-    This library relies on the Harvesters library to interface with GeniCam-compatible cameras. In turn, the Harvesters
+    This library relies on the Harvesters library to interface with GenICam-compatible cameras. In turn, the Harvesters
     library requires the GenTL Producer interface (.cti) file to discover and interface with compatible cameras. This
     command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library.
     """
@@ -76,7 +76,7 @@ def check_cti_status() -> None:  # pragma: no cover
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     This command verifies if a .cti file has been configured and whether it is still valid. The Harvesters camera
-    interface requires the GenTL Producer interface (.cti) file to discover and interface with GeniCam-compatible
+    interface requires the GenTL Producer interface (.cti) file to discover and interface with GenICam-compatible
     cameras. Use this command to verify the configuration status before attempting to use the Harvesters interface.
     """
     cti_path = check_cti_file()
@@ -192,7 +192,7 @@ def check_compatibility() -> None:  # pragma: no cover
     default="mock",
     show_default=True,
     help="The camera interface to use for interacting with the camera hardware. It is recommended to use the "
-    "'harvesters' interface for all GeniCam-compatible cameras and the 'opencv' interface for all other cameras.",
+    "'harvesters' interface for all GenICam-compatible cameras and the 'opencv' interface for all other cameras.",
 )
 @click.option(
     "-c",

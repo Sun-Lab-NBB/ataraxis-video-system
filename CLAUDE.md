@@ -136,7 +136,7 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 ## Project Context
 
 This is **ataraxis-video-system**, a Python library that interfaces with a wide range of cameras to flexibly record
-visual stream data as video files. It supports OpenCV and GeniCam (Harvesters) camera interfaces with FFMPEG-based
+visual stream data as video files. It supports OpenCV and GenICam (Harvesters) camera interfaces with FFMPEG-based
 video encoding using CPU or GPU.
 
 ### Key Areas

@@ -122,7 +122,6 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
 
     # Verifies the FFMPEG command was constructed properly
     assert "libx264" in saver._ffmpeg_command or "libx265" in saver._ffmpeg_command
-    # noinspection PyTypeChecker
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "veryfast" in saver._ffmpeg_command  # FASTEST maps to veryfast for CPU
 
@@ -160,7 +159,6 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
 
     # Verifies the FFMPEG command was constructed properly for GPU encoding
     assert "h264_nvenc" in saver._ffmpeg_command or "hevc_nvenc" in saver._ffmpeg_command
-    # noinspection PyTypeChecker
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
     gpu_index = saver._ffmpeg_command.index("-gpu")

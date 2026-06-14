@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+from numpy.typing import NDArray
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
 
@@ -24,7 +25,7 @@ from ataraxis_video_system.video.log_processing import (
 )
 
 
-def _create_onset_message(source_id: int, onset_us: int) -> np.ndarray:
+def _create_onset_message(source_id: int, onset_us: int) -> NDArray[np.uint8]:
     """Creates an onset message with timestamp=0 and the onset UTC epoch as payload."""
     source_bytes = np.array([source_id], dtype=np.uint8)
     timestamp_bytes = np.array([0], dtype=np.uint64).view(np.uint8)
@@ -32,14 +33,14 @@ def _create_onset_message(source_id: int, onset_us: int) -> np.ndarray:
     return np.concatenate([source_bytes, timestamp_bytes, onset_bytes])
 
 
-def _create_frame_message(source_id: int, elapsed_us: int) -> np.ndarray:
+def _create_frame_message(source_id: int, elapsed_us: int) -> NDArray[np.uint8]:
     """Creates a frame message with no payload (payload.size == 0)."""
     source_bytes = np.array([source_id], dtype=np.uint8)
     timestamp_bytes = np.array([elapsed_us], dtype=np.uint64).view(np.uint8)
     return np.concatenate([source_bytes, timestamp_bytes])
 
 
-def _create_data_message(source_id: int, elapsed_us: int, payload_size: int = 4) -> np.ndarray:
+def _create_data_message(source_id: int, elapsed_us: int, payload_size: int = 4) -> NDArray[np.uint8]:
     """Creates a data message with a non-empty payload."""
     source_bytes = np.array([source_id], dtype=np.uint8)
     timestamp_bytes = np.array([elapsed_us], dtype=np.uint64).view(np.uint8)
@@ -55,7 +56,7 @@ def _create_test_archive(
     data_timestamps_us: list[int] | None = None,
 ) -> None:
     """Creates a .npz log archive with the specified frame and data messages."""
-    arrays: dict[str, np.ndarray] = {}
+    arrays: dict[str, NDArray[np.uint8]] = {}
 
     # Creates the onset message.
     onset_key = f"{source_id:03d}_{0:020d}"
@@ -84,7 +85,7 @@ def test_resolve_recording_roots_basic(tmp_path: Path) -> None:
     root_b.mkdir(parents=True)
 
     roots = resolve_recording_roots(paths=[root_a, root_b])
-    root_names = {r.name for r in roots}
+    root_names = {root.name for root in roots}
     assert root_names == {"day1", "day2"}
     assert len(roots) == 2
 
@@ -180,7 +181,7 @@ def test_find_log_archive_multiple_matches(tmp_path: Path) -> None:
     expected_paths = sorted(tmp_path.rglob(f"cam1{LOG_ARCHIVE_SUFFIX}"))
     message = (
         f"Unable to find log archive for source 'cam1' in '{tmp_path}'. Found 2 "
-        f"matching archives, but expected exactly one: {[str(p) for p in expected_paths]}."
+        f"matching archives, but expected exactly one: {[str(path) for path in expected_paths]}."
     )
     with pytest.raises(ValueError, match=error_format(message)):
         find_log_archive(log_directory=tmp_path, source_id="cam1")
@@ -225,7 +226,7 @@ def test_extract_logged_camera_timestamps_frames_only(tmp_path: Path) -> None:
     assert len(timestamps) == 5
 
     # Verifies that all timestamps are absolute (onset + elapsed).
-    expected = np.array([np.uint64(onset_us + e) for e in frame_elapsed], dtype=np.uint64)
+    expected = np.array([np.uint64(onset_us + elapsed) for elapsed in frame_elapsed], dtype=np.uint64)
     np.testing.assert_array_equal(timestamps, expected)
 
 
@@ -247,7 +248,7 @@ def test_extract_logged_camera_timestamps_mixed_messages(tmp_path: Path) -> None
 
     # Only frame messages should be extracted.
     assert len(timestamps) == 3
-    expected = np.array([np.uint64(onset_us + e) for e in frame_elapsed], dtype=np.uint64)
+    expected = np.array([np.uint64(onset_us + elapsed) for elapsed in frame_elapsed], dtype=np.uint64)
     np.testing.assert_array_equal(timestamps, expected)
 
 
@@ -304,7 +305,11 @@ def test_execute_job_failure_updates_tracker(tmp_path: Path) -> None:
 
     bad_archive = tmp_path / "nonexistent.npz"
 
-    with pytest.raises(ValueError):
+    message = (
+        f"Unable to extract camera frame timestamp data from the log file {bad_archive}, as it does not exist or does "
+        f"not point to a valid .npz archive."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
         execute_job(
             log_path=bad_archive,
             output_directory=output_dir,
@@ -568,7 +573,7 @@ def test_extract_unique_components_no_unique_raises() -> None:
         _extract_unique_components(paths=paths)
 
 
-def testgenerate_job_ids_basic() -> None:
+def test_generate_job_ids_basic() -> None:
     """Verifies that generate_job_ids returns a mapping for each source ID."""
     source_ids = ["cam1", "cam2"]
     result = generate_job_ids(source_ids=source_ids)
@@ -582,7 +587,7 @@ def testgenerate_job_ids_basic() -> None:
         assert len(job_id) > 0
 
 
-def testgenerate_job_ids_deterministic() -> None:
+def test_generate_job_ids_deterministic() -> None:
     """Verifies that generate_job_ids produces consistent results across calls."""
     source_ids = ["cam1", "cam2"]
     first = generate_job_ids(source_ids=source_ids)
@@ -590,7 +595,7 @@ def testgenerate_job_ids_deterministic() -> None:
     assert first == second
 
 
-def testgenerate_job_ids_different_inputs() -> None:
+def test_generate_job_ids_different_inputs() -> None:
     """Verifies that different source IDs produce different job IDs."""
     result = generate_job_ids(source_ids=["cam1", "cam2"])
     assert result["cam1"] != result["cam2"]

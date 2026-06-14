@@ -53,7 +53,7 @@ def get_cti_status_tool() -> str:
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     The Harvesters camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
-    GeniCam-compatible cameras.
+    GenICam-compatible cameras.
 
     Returns:
         The configuration status and the path to the configured CTI file, or a "Not configured" message if no valid
@@ -70,7 +70,7 @@ def get_cti_status_tool() -> str:
 
 @mcp.tool()
 def set_cti_file_tool(file_path: str) -> str:
-    """Configures the library to use the specified CTI file for all future runtimes involving GeniCam cameras.
+    """Configures the library to use the specified CTI file for all future runtimes involving GenICam cameras.
 
     The Harvesters library requires the GenTL Producer interface (.cti) file to discover and interface with compatible
     cameras. This tool must be called at least once before using the Harvesters interface.

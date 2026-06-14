@@ -6,9 +6,9 @@ from ataraxis_base_utilities import error_format
 from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
 from ataraxis_video_system.video.camera import HarvestersCamera
 from ataraxis_video_system.video.configuration import (
-    format_genicam_node,
     read_genicam_node,
     write_genicam_node,
+    format_genicam_node,
 )
 
 
@@ -101,7 +101,7 @@ def test_model_serial_not_connected() -> None:
 def test_harvesters_model_serial_connected(has_harvesters) -> None:
     """Verifies that model and serial_number return non-empty strings after connecting."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -118,12 +118,12 @@ def test_harvesters_model_serial_connected(has_harvesters) -> None:
 def test_harvesters_get_node_info(has_harvesters) -> None:
     """Verifies that get_node_info returns a GenicamNodeInfo for a standard GenICam node."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
     try:
-        info = camera.get_node_info("Width")
+        info = camera.get_node_info(name="Width")
         assert isinstance(info, GenicamNodeInfo)
         assert info.name == "Width"
         assert isinstance(info.value, (int, float))
@@ -135,12 +135,12 @@ def test_harvesters_get_node_info(has_harvesters) -> None:
 def test_harvesters_get_node_description(has_harvesters) -> None:
     """Verifies that get_node_description returns a formatted multi-line string."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
     try:
-        description = camera.get_node_description("Width")
+        description = camera.get_node_description(name="Width")
         assert isinstance(description, str)
         assert "Node: Width" in description
         assert "Type:" in description
@@ -154,15 +154,15 @@ def test_harvesters_get_node_description(has_harvesters) -> None:
 def test_harvesters_set_node_value(has_harvesters) -> None:
     """Verifies that set_node_value can write a value to a writable GenICam node."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
     try:
         # Reads the current Width value and writes it back unchanged to avoid disrupting camera state.
-        original = camera.get_node_info("Width")
-        camera.set_node_value("Width", str(original.value))
-        restored = camera.get_node_info("Width")
+        original = camera.get_node_info(name="Width")
+        camera.set_node_value(name="Width", value=str(original.value))
+        restored = camera.get_node_info(name="Width")
         assert restored.value == original.value
     finally:
         camera.disconnect()
@@ -172,7 +172,7 @@ def test_harvesters_set_node_value(has_harvesters) -> None:
 def test_harvesters_get_configuration(has_harvesters) -> None:
     """Verifies that get_configuration returns a GenicamConfiguration with populated nodes."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -191,7 +191,7 @@ def test_harvesters_get_configuration(has_harvesters) -> None:
 def test_harvesters_apply_configuration(has_harvesters) -> None:
     """Verifies that apply_configuration can re-apply a camera's own configuration."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -207,7 +207,7 @@ def test_harvesters_apply_configuration(has_harvesters) -> None:
 def test_harvesters_apply_configuration_strict_mismatch(has_harvesters) -> None:
     """Verifies that apply_configuration raises ValueError on identity mismatch in strict mode."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -225,7 +225,7 @@ def test_harvesters_apply_configuration_strict_mismatch(has_harvesters) -> None:
 def test_harvesters_apply_configuration_missing_node(has_harvesters) -> None:
     """Verifies that apply_configuration raises ValueError when a node does not exist on the camera."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -246,7 +246,7 @@ def test_harvesters_apply_configuration_missing_node(has_harvesters) -> None:
 def test_harvesters_configuration_yaml_roundtrip(has_harvesters, tmp_path) -> None:
     """Verifies that a live camera configuration can be serialized to YAML and deserialized back."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -267,7 +267,7 @@ def test_harvesters_configuration_yaml_roundtrip(has_harvesters, tmp_path) -> No
 def test_format_genicam_node_enumeration(has_harvesters) -> None:
     """Verifies that format_genicam_node includes entry names for Enumeration nodes."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -284,7 +284,7 @@ def test_format_genicam_node_enumeration(has_harvesters) -> None:
 def test_format_genicam_node_with_unit(has_harvesters) -> None:
     """Verifies that format_genicam_node includes the measurement unit when the node defines one."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -302,7 +302,7 @@ def test_format_genicam_node_with_unit(has_harvesters) -> None:
 def test_write_genicam_node_float(has_harvesters) -> None:
     """Verifies that write_genicam_node correctly coerces string values to float for Float nodes."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -320,7 +320,7 @@ def test_write_genicam_node_float(has_harvesters) -> None:
 def test_write_genicam_node_boolean(has_harvesters) -> None:
     """Verifies that write_genicam_node correctly coerces string values to bool for Boolean nodes."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -338,7 +338,7 @@ def test_write_genicam_node_boolean(has_harvesters) -> None:
 def test_write_genicam_node_enum_string(has_harvesters) -> None:
     """Verifies that write_genicam_node correctly handles string values for Enumeration nodes."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -356,7 +356,7 @@ def test_write_genicam_node_enum_string(has_harvesters) -> None:
 def test_apply_configuration_non_strict_mismatch(has_harvesters) -> None:
     """Verifies that apply_configuration warns but proceeds when identity mismatches in non-strict mode."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -375,7 +375,7 @@ def test_apply_configuration_non_strict_mismatch(has_harvesters) -> None:
 def test_apply_configuration_blacklisted_nodes(has_harvesters) -> None:
     """Verifies that apply_configuration skips blacklisted nodes during application."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
