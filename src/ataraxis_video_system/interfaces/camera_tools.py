@@ -97,8 +97,8 @@ def set_cti_file_tool(file_path: str) -> str:
     # runtimes without needing to be re-specified.
     try:
         add_cti_file(cti_path=path)
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
     else:
         return f"CTI configured: {path}"
 

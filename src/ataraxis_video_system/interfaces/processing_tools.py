@@ -429,11 +429,11 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
         "total_elapsed_seconds": total_elapsed_seconds,
         "completed_count": completed_count,
         "failed_count": failed_count,
-        "running_count": sum(1 for j in job_timing if "elapsed_seconds" in j),
+        "running_count": sum(1 for entry in job_timing if "elapsed_seconds" in entry),
         "pending_count": len(state.all_jobs)
         - completed_count
         - failed_count
-        - sum(1 for j in job_timing if "elapsed_seconds" in j),
+        - sum(1 for entry in job_timing if "elapsed_seconds" in entry),
     }
 
     if completed_count > 0 and earliest_start is not None:
@@ -578,14 +578,14 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    log_dir_statuses: list[dict[str, Any]] = []
+    log_directory_statuses: list[dict[str, Any]] = []
     aggregate_succeeded = 0
     aggregate_failed = 0
     aggregate_running = 0
     aggregate_scheduled = 0
 
     for tracker_path in sorted(root_path.rglob(TRACKER_FILENAME)):
-        log_dir = str(tracker_path.parent)
+        log_directory = str(tracker_path.parent)
         try:
             status = _read_tracker_status(tracker_path=tracker_path)
             summary = status.get("summary", {})
@@ -595,20 +595,20 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             aggregate_running += summary.get("running", 0)
             aggregate_scheduled += summary.get("scheduled", 0)
 
-            dir_status = _derive_tracker_status(summary=summary)
+            directory_status = _derive_tracker_status(summary=summary)
 
-            log_dir_statuses.append(
+            log_directory_statuses.append(
                 {
-                    "log_directory": log_dir,
+                    "log_directory": log_directory,
                     "tracker_path": str(tracker_path),
-                    "status": dir_status,
+                    "status": directory_status,
                     **status,
                 }
             )
         except Exception:
-            log_dir_statuses.append(
+            log_directory_statuses.append(
                 {
-                    "log_directory": log_dir,
+                    "log_directory": log_directory,
                     "tracker_path": str(tracker_path),
                     "status": "error",
                     "error": "Unable to read tracker file.",
@@ -616,8 +616,8 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             )
 
     return {
-        "log_directories": log_dir_statuses,
-        "total_log_directories": len(log_dir_statuses),
+        "log_directories": log_directory_statuses,
+        "total_log_directories": len(log_directory_statuses),
         "summary": {
             "succeeded": aggregate_succeeded,
             "failed": aggregate_failed,

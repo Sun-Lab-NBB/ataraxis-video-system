@@ -78,23 +78,23 @@ def write_camera_manifest_tool(
     Returns:
         A dictionary confirming the write operation with the manifest path and registered source, or an error message.
     """
-    dir_path = Path(log_directory)
+    directory_path = Path(log_directory)
 
-    if not dir_path.exists():
+    if not directory_path.exists():
         return {"error": f"Directory does not exist: {log_directory}"}
 
-    if not dir_path.is_dir():
+    if not directory_path.is_dir():
         return {"error": f"Path is not a directory: {log_directory}"}
 
     if not name:
         return {"error": "The 'name' parameter must be a non-empty string."}
 
     try:
-        write_camera_manifest(log_directory=dir_path, source_id=source_id, name=name)
+        write_camera_manifest(log_directory=directory_path, source_id=source_id, name=name)
     except Exception as error:
         return {"error": f"Failed to write manifest: {error}"}
 
-    manifest_path = dir_path / CAMERA_MANIFEST_FILENAME
+    manifest_path = directory_path / CAMERA_MANIFEST_FILENAME
     return {
         "manifest_path": str(manifest_path),
         "registered_source": {"id": source_id, "name": name},
@@ -131,11 +131,11 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
 
     # Discovers all camera manifests and collects only sources whose log archives exist on disk.
     confirmed_sources: list[tuple[Path, int, str, Path]] = []
-    log_dirs_with_archives: set[Path] = set()
+    log_directories_with_archives: set[Path] = set()
 
     try:
         for manifest_path in sorted(root_path.rglob(CAMERA_MANIFEST_FILENAME)):
-            log_dir = manifest_path.parent
+            log_directory = manifest_path.parent
 
             try:
                 manifest = CameraManifest.from_yaml(file_path=manifest_path)
@@ -146,12 +146,12 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
                 continue
 
             for source in manifest.sources:
-                archive_path = log_dir / f"{source.id}{LOG_ARCHIVE_SUFFIX}"
+                archive_path = log_directory / f"{source.id}{LOG_ARCHIVE_SUFFIX}"
                 if not archive_path.exists():
                     continue
 
-                confirmed_sources.append((log_dir, source.id, source.name, archive_path))
-                log_dirs_with_archives.add(log_dir)
+                confirmed_sources.append((log_directory, source.id, source.name, archive_path))
+                log_directories_with_archives.add(log_directory)
     except PermissionError as error:
         return {"error": f"Permission denied during search: {error}"}
 
@@ -171,35 +171,35 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     )
 
     # Resolves recording roots and builds the log-directory-to-root mapping.
-    log_dir_paths = sorted(log_dirs_with_archives)
-    log_dir_to_root = _resolve_log_dir_roots(log_dir_paths=log_dir_paths)
+    log_directory_paths = sorted(log_directories_with_archives)
+    log_directory_to_root = _resolve_log_directory_roots(log_directory_paths=log_directory_paths)
 
     # Builds the flat list of resolved source entries. Each entry pairs the confirmed log archive with its
     # recording root, matched video file, and processed timestamp feather file.
     sources_output: list[dict[str, Any]] = []
-    for log_dir, source_id, name, archive_path in confirmed_sources:
+    for log_directory, source_id, name, archive_path in confirmed_sources:
         video_path = _match_video_file(
-            all_video_files=all_video_files, log_directory=log_dir, source_id=source_id, name=name
+            all_video_files=all_video_files, log_directory=log_directory, source_id=source_id, name=name
         )
         feather_path = _find_feather_file(timestamps_dirs=timestamps_dirs, source_id=source_id)
 
         sources_output.append(
             {
-                "recording_root": str(log_dir_to_root[log_dir]),
+                "recording_root": str(log_directory_to_root[log_directory]),
                 "source_id": str(source_id),
                 "name": name,
                 "log_archive": str(archive_path),
                 "video_file": video_path,
                 "timestamps_file": str(feather_path) if feather_path is not None else None,
-                "log_directory": str(log_dir),
+                "log_directory": str(log_directory),
             }
         )
 
     return {
         "sources": sources_output,
-        "log_directories": sorted(str(log_dir) for log_dir in log_dir_paths),
+        "log_directories": sorted(str(log_directory) for log_directory in log_directory_paths),
         "total_sources": len(sources_output),
-        "total_log_directories": len(log_dir_paths),
+        "total_log_directories": len(log_directory_paths),
     }
 
 
@@ -256,8 +256,8 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
         )
     except FileNotFoundError:
         return {"error": "ffprobe is not available on the system PATH. Install FFMPEG to use this tool."}
-    except subprocess.CalledProcessError as e:
-        return {"error": f"ffprobe failed: {e.stderr.strip() if e.stderr else 'unknown error'}"}
+    except subprocess.CalledProcessError as error:
+        return {"error": f"ffprobe failed: {error.stderr.strip() if error.stderr else 'unknown error'}"}
 
     # Parses the JSON output from ffprobe.
     try:
@@ -356,8 +356,8 @@ def assemble_log_archives_tool(
             verify_integrity=verify_integrity,
             verbose=False,
         )
-    except Exception as e:
-        return {"error": f"Archive assembly failed: {e}"}
+    except Exception as error:
+        return {"error": f"Archive assembly failed: {error}"}
 
     # Scans for created archives and extracts source IDs from filenames.
     source_ids = scan_archive_source_ids(directory=directory_path)
@@ -372,33 +372,33 @@ def assemble_log_archives_tool(
     }
 
 
-def _resolve_log_dir_roots(log_dir_paths: list[Path]) -> dict[Path, Path]:
+def _resolve_log_directory_roots(log_directory_paths: list[Path]) -> dict[Path, Path]:
     """Resolves each log directory to its recording root.
 
     Uses unique path component detection to identify recording session boundaries. Falls back to using each
     log directory's parent when unique component detection fails (e.g., single log directory).
 
     Args:
-        log_dir_paths: The sorted list of log directory paths to resolve.
+        log_directory_paths: The sorted list of log directory paths to resolve.
 
     Returns:
         A mapping from each log directory to its recording root path.
     """
     try:
-        recording_roots = resolve_recording_roots(paths=log_dir_paths)
+        recording_roots = resolve_recording_roots(paths=log_directory_paths)
     except RuntimeError:
-        recording_roots = tuple(dict.fromkeys(log_dir.parent for log_dir in log_dir_paths))
+        recording_roots = tuple(dict.fromkeys(log_directory.parent for log_directory in log_directory_paths))
 
-    log_dir_to_root: dict[Path, Path] = {}
-    for log_dir in log_dir_paths:
+    log_directory_to_root: dict[Path, Path] = {}
+    for log_directory in log_directory_paths:
         for root in recording_roots:
-            if log_dir == root or root in log_dir.parents:
-                log_dir_to_root[log_dir] = root
+            if log_directory == root or root in log_directory.parents:
+                log_directory_to_root[log_directory] = root
                 break
         else:
-            log_dir_to_root[log_dir] = log_dir.parent
+            log_directory_to_root[log_directory] = log_directory.parent
 
-    return log_dir_to_root
+    return log_directory_to_root
 
 
 def _match_video_file(

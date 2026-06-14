@@ -79,7 +79,7 @@ class VideoSystem:
         name: A colloquial human-readable name for this camera source (e.g., 'face_camera'). Written to the camera
             manifest file alongside the system_id to identify the camera this VideoSystem instance controls.
         output_directory: The path to the output directory where to store the acquired frames as the .mp4 video file.
-            Setting this argument to None disabled video saving functionality.
+            Setting this argument to None disables video saving functionality.
         camera_interface: The interface to use for working with the camera hardware. Must be one of the CameraInterfaces
             enumeration members.
         camera_index: The index of the camera in the list of all cameras discoverable by the chosen interface, e.g.: 0
@@ -208,7 +208,7 @@ class VideoSystem:
         if not isinstance(camera_index, int) or camera_index < 0:
             message = (
                 f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
-                f"zero or positive integer as the 'camera_id' argument value, but got {camera_index} of type "
+                f"zero or positive integer as the 'camera_index' argument value, but got {camera_index} of type "
                 f"{type(camera_index).__name__}."
             )
             console.error(message=message, error=TypeError)
@@ -240,7 +240,6 @@ class VideoSystem:
             )
             console.error(message=message, error=TypeError)
 
-        # Presets the variable type.
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera
 
         # OpenCVCamera
@@ -323,7 +322,6 @@ class VideoSystem:
             )
             display_frame_rate = None
 
-        # Ensures that the display frame rate is stored as an integer and saves it to an attribute.
         self._display_frame_rate: int = display_frame_rate if display_frame_rate is not None else 0
 
         # Only adds the video saver if the user intends to save the acquired frames (as indicated by providing a valid
@@ -635,7 +633,7 @@ class VideoSystem:
         display_queue: Queue,  # type: ignore[type-arg]
         system_id: np.uint8,
     ) -> None:  # pragma: no cover
-        """Continuously fetches frame images from the display_queue and displays them via the OpenCV's imshow()
+        """Continuously fetches frame images from the display_queue and displays them via OpenCV's imshow()
         function.
 
         Notes:
@@ -767,8 +765,8 @@ class VideoSystem:
 
         # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
         # before re-raising the exception to terminate the process.
-        except Exception as e:
-            sys.stderr.write(str(e))
+        except Exception as error:
+            sys.stderr.write(str(error))
             sys.stderr.flush()
             raise
 
@@ -803,9 +801,8 @@ class VideoSystem:
             process where the VideoSystem is instantiated.
 
             This method's main loop is kept alive until the saver_queue is empty. This is an intentional security
-            feature that ensures all buffered images are processed before the saver is terminated. To override this
-            behavior, you will need to use the process kill command, but it is strongly advised not to tamper
-            with this feature.
+            feature that ensures all buffered images are processed before the saver is terminated. Overriding this
+            behavior requires the process kill command, but tampering with this feature is strongly discouraged.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -856,8 +853,8 @@ class VideoSystem:
 
         # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
         # before re-raising the exception to terminate the process.
-        except Exception as e:
-            sys.stderr.write(str(e))
+        except Exception as error:
+            sys.stderr.write(str(error))
             sys.stderr.flush()
             raise
 

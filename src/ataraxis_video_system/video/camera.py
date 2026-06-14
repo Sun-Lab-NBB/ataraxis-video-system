@@ -191,7 +191,6 @@ def check_cti_file() -> Path | None:  # pragma: no cover
         cti_path = Path(file.read().strip())
 
     # Verifies the CTI file still exists and is valid.
-    # noinspection PyBroadException
     try:
         harvester = Harvester()
         harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
@@ -248,7 +247,6 @@ class OpenCVCamera:
         *,
         color: bool = True,
     ) -> None:
-        # Saves class parameters to class attributes.
         self._system_id: int = system_id
         self._color: bool = color
         self._camera_index: int = camera_index
@@ -476,7 +474,6 @@ class HarvestersCamera:
         # No input checking here as it is assumed that the class is initialized via the VideoSystem constructor, which
         # performs the necessary input filtering.
 
-        # Saves class parameters to class attributes.
         self._system_id: int = system_id
         self._camera_index: int = camera_index
         self._frame_rate: int = 0 if frame_rate is None else frame_rate
@@ -559,12 +556,12 @@ class HarvestersCamera:
             self._camera.stop()
 
         # Discards any unconsumed buffers to ensure proper memory release.
-        while self._camera.num_holding_filled_buffers != 0:
+        while self._camera.num_holding_filled_buffers:
             _ = self._camera.fetch()  # pragma: no cover
 
-        self._camera.destroy()  # Releases the camera object.
+        self._camera.destroy()
         self._camera = None
-        self._harvester.reset()  # Resets and removes the Harvester object.
+        self._harvester.reset()
         self._harvester = None
         self._model = ""
         self._serial_number = ""
@@ -689,7 +686,7 @@ class HarvestersCamera:
             ConnectionError: If the instance is not connected to the camera hardware.
         """
         camera_node_map = self.node_map
-        node_names = enumerate_genicam_nodes(camera_node_map, blacklisted_nodes=blacklisted_nodes)
+        node_names = enumerate_genicam_nodes(node_map=camera_node_map, blacklisted_nodes=blacklisted_nodes)
 
         nodes: list[GenicamNodeInfo] = []
         for name in node_names:
@@ -824,7 +821,6 @@ class HarvestersCamera:
             )  # pragma: no cover
             console.error(message=message, error=ValueError)  # pragma: no cover
             # Unreachable: console.error() is NoReturn, but ruff cannot trace NoReturn through method calls (RET503).
-            # noinspection PyUnreachableCode
             raise ValueError(message)  # pragma: no cover
 
 
@@ -873,7 +869,6 @@ class MockCamera:
         *,
         color: bool = True,
     ) -> None:
-        # Saves class parameters to class attributes.
         self._system_id: int = system_id
         self._color: bool = color
         self._frame_rate: int = 30 if frame_rate is None else frame_rate
@@ -1083,10 +1078,10 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                     with _suppress_output():
                         camera.release()  # Guarantees camera release even if an exception occurs.
 
-            except Exception as e:  # pragma: no cover
+            except Exception as error:  # pragma: no cover
                 # Marks any ID that raises a runtime error as non-working and notifies the user.
                 console.echo(
-                    message=f"OpenCV camera discovery: Failed to evaluate camera index {evaluated_id}. Error: {e}",
+                    message=f"OpenCV camera discovery: Failed to evaluate camera index {evaluated_id}. Error: {error}",
                     level=LogLevel.WARNING,
                 )
                 non_working_count += 1
@@ -1103,27 +1098,27 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         unique_cameras: list[CameraInformation] = []
         skip_next = False
 
-        for i, cam in enumerate(working_ids):
+        for index, candidate in enumerate(working_ids):
             if skip_next:
                 skip_next = False
                 continue
 
-            unique_cameras.append(cam)
+            unique_cameras.append(candidate)
 
             # Checks the next candidate only if it has identical properties (consecutive duplicate pattern).
-            if i + 1 < len(working_ids):
-                cam_next = working_ids[i + 1]
+            if index + 1 < len(working_ids):
+                next_candidate = working_ids[index + 1]
                 if (
-                    cam.frame_width == cam_next.frame_width
-                    and cam.frame_height == cam_next.frame_height
-                    and cam.acquisition_frame_rate == cam_next.acquisition_frame_rate
+                    candidate.frame_width == next_candidate.frame_width
+                    and candidate.frame_height == next_candidate.frame_height
+                    and candidate.acquisition_frame_rate == next_candidate.acquisition_frame_rate
                 ):
                     with _suppress_output():
-                        holder = cv2.VideoCapture(index=cam.camera_index)
+                        holder = cv2.VideoCapture(index=candidate.camera_index)
                     try:
                         with _suppress_output():
                             _ = holder.read()
-                            challenger = cv2.VideoCapture(index=cam_next.camera_index)
+                            challenger = cv2.VideoCapture(index=next_candidate.camera_index)
                         try:
                             with _suppress_output():
                                 can_read = challenger.isOpened() and challenger.read()[0]
@@ -1193,10 +1188,10 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
             finally:
                 camera.destroy()  # Guarantees camera resource release.
 
-        except Exception as e:  # pragma: no cover
+        except Exception as error:  # pragma: no cover
             # Skips any device that cannot be connected or queried for any reason and notifies the user.
             console.echo(
-                message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {e}",
+                message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {error}",
                 level=LogLevel.WARNING,
             )
             continue

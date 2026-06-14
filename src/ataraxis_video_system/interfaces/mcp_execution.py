@@ -20,8 +20,7 @@ if TYPE_CHECKING:
 _WORKER_SCALING_FACTOR: int = 1000
 """Controls the saturation floor via the formula ``ceil(sqrt(messages / factor))``. The square root models diminishing
 returns from process parallelism. This value sets the minimum workers a job receives before the budget division can
-push it lower. With a factor of 1,000, a 648,000-message archive (120 fps x 1.5 h) has a saturation floor of 25
-workers."""
+push it lower."""
 
 _WORKER_MULTIPLE: int = 5
 """Worker counts above 1 are rounded to the nearest multiple of this value for clean allocation."""
@@ -44,9 +43,7 @@ class PendingJob:
 
     @property
     def dispatch_key(self) -> tuple[str, str]:
-        """Returns the composite key that uniquely identifies this job across the entire batch, combining the tracker
-        path with the job ID.
-        """
+        """Returns the composite (tracker path, job ID) key that uniquely identifies this job across the batch."""
         return str(self.tracker_path), self.job_id
 
 

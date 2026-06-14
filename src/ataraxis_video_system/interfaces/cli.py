@@ -28,7 +28,6 @@ from ..video import (  # pragma: no cover
 )
 from .mcp_server import run_server as run_mcp  # pragma: no cover
 
-# Enables console output.
 console.enable()  # pragma: no cover
 
 CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}  # pragma: no cover
@@ -110,12 +109,11 @@ def check_devices() -> None:  # pragma: no cover
     # Notifies the user that discovery is in progress, as probing camera devices may take several seconds.
     console.echo(message="Scanning for available camera devices, this may take a moment...", level=LogLevel.INFO)
 
-    # Discovers all compatible cameras from both interfaces.
     all_cameras = discover_camera_ids()
 
     # Separates cameras by interface for display purposes.
-    opencv_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
-    harvesters_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
+    opencv_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.OPENCV]
+    harvesters_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
 
     # Displays OpenCV camera information.
     if not opencv_cameras:
@@ -283,7 +281,6 @@ def live_run(
     else:
         camera_interface = CameraInterfaces.OPENCV
 
-    # Initializes the VideoSystem.
     video_system = VideoSystem(
         system_id=np.uint8(111),
         data_logger=logger,
@@ -300,10 +297,9 @@ def live_run(
         video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
         encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
         output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
-        quantization_parameter=15,  # Uses the instance's default parameter
+        quantization_parameter=15,  # Statically sets the H264 quantization parameter to 15.
     )
 
-    # Starts the system by spawning child processes.
     video_system.start()
     console.echo(message="Live VideoSystem: initialized and started (spawned child processes).", level=LogLevel.INFO)
 
@@ -469,7 +465,6 @@ def configure_group(
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("read")
 @click.option(
     "-c",
@@ -504,10 +499,9 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
         else:
             node_map = camera.node_map
-            names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
+            names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=blacklist)
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
-                # noinspection PyBroadException
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
                     console.echo(message=f"  {info.name} = {info.value}")
@@ -517,7 +511,6 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("write")
 @click.option(
     "-c",
@@ -556,7 +549,6 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("dump")
 @click.option(
     "-c",
@@ -595,7 +587,6 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("load")
 @click.option(
     "-c",
@@ -635,7 +626,7 @@ def configuration_load(
     try:
         camera.connect()
         config = GenicamConfiguration.from_yaml(file_path=config_file)
-        camera.apply_configuration(config, strict_identity=strict, blacklisted_nodes=blacklist)
+        camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=blacklist)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
     finally:
         camera.disconnect()

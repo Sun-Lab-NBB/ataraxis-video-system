@@ -171,14 +171,14 @@ def start_video_session_tool(
             "display_frame_rate": display_frame_rate,
         }
 
-    except Exception as e:
+    except Exception as error:
         # Cleans up partially initialized resources on failure to avoid leaving orphaned processes or file handles.
         if _active_logger is not None:
             _active_logger.stop()
             _active_logger = None
         _active_session = None
         _session_info = None
-        return f"Error: {e}"
+        return f"Error: {error}"
     else:
         return (
             f"Session started: {interface} #{camera_index} {width}x{height}@{frame_rate}fps "
@@ -217,8 +217,8 @@ def stop_video_session_tool() -> dict[str, Any]:
         # finalized.
         if _active_logger is not None:
             _active_logger.stop()
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as error:
+        return {"error": str(error)}
     finally:
         # Clears the module-level references regardless of success or failure to allow a new session to be started.
         _active_session = None
@@ -264,8 +264,8 @@ def start_frame_saving_tool() -> str:
     # before this call are discarded; only frames captured after this point are saved.
     try:
         _active_session.start_frame_saving()
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
     else:
         return "Recording started"
 
@@ -286,8 +286,8 @@ def stop_frame_saving_tool() -> str:
     # continues acquiring frames, so a subsequent start_frame_saving_tool call will create a new video file.
     try:
         _active_session.stop_frame_saving()
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
     else:
         return "Recording stopped"
 

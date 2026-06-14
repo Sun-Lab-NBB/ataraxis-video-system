@@ -1,9 +1,5 @@
 """Provides the core library assets for camera acquisition, video encoding, GenICam configuration, camera manifest
 management, and frame-acquisition timestamp log processing.
-
-This package re-exports every asset consumed outside the package (for example, by the CLI and MCP server modules in the
-``interfaces`` package), so cross-package callers access these assets through the package namespace rather than reaching
-into individual modules.
 """
 
 from .saver import (

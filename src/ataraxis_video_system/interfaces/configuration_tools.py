@@ -50,18 +50,17 @@ def read_genicam_node_tool(
             # during read (e.g., due to access restrictions or transient hardware state) are reported as <unreadable>
             # rather than aborting the entire listing.
             node_map = camera.node_map
-            names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
+            names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=blacklist)
             lines = [f"Found {len(names)} writable GenICam nodes:"]
             for name in names:
-                # noinspection PyBroadException
                 try:
                     info = read_node_info(node_map=node_map, name=name)
                     lines.append(f"  {info.name} = {info.value}")
                 except Exception:
                     lines.append(f"  {name} = <unreadable>")
             return "\n".join(lines)
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
 
 
 @mcp.tool()
@@ -83,8 +82,8 @@ def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> st
             # Delegates value conversion and writing to the camera's set_node_value method. That method casts the
             # string value to int, float, or bool by node type, keeping enumeration and string nodes as raw strings.
             camera.set_node_value(name=node_name, value=value)
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
     else:
         return f"Node '{node_name}' set to {value}"
 
@@ -125,8 +124,8 @@ def dump_genicam_config_tool(
             # of the same model.
             config.to_yaml(file_path=Path(output_file))
             return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception as error:
+        return f"Error: {error}"
 
 
 @mcp.tool()
@@ -168,9 +167,9 @@ def load_genicam_config_tool(
             # strict_identity is True, the camera model and serial number must match the values stored in the YAML
             # file; otherwise, a mismatch produces a warning but proceeds with the write.
             config = GenicamConfiguration.from_yaml(file_path=path)
-            camera.apply_configuration(config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
-    except Exception as e:
-        return f"Error: {e}"
+            camera.apply_configuration(config=config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
+    except Exception as error:
+        return f"Error: {error}"
     else:
         return "Configuration applied successfully"
 
