@@ -374,7 +374,7 @@ axvs mcp
 | `write_camera_manifest_tool`           | Writes or updates a camera manifest file in a log directory                      |
 | `discover_camera_data_tool`            | Discovers confirmed camera recordings under a root directory via manifests       |
 | `prepare_log_processing_batch_tool`    | Prepares a batch of log processing jobs across multiple directories              |
-| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs with concurrent worker threads             |
+| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs with concurrent worker processes           |
 | `get_log_processing_status_tool`       | Returns the current status of the active log processing session                  |
 | `get_log_processing_timing_tool`       | Returns timing information for all jobs in the active session                    |
 | `cancel_log_processing_tool`           | Cancels the active log processing execution session                              |

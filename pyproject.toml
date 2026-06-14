@@ -96,7 +96,7 @@ exclude = [".github", "recipe"]
 
 # Specifies the library structure.
 [tool.hatch.build.targets.wheel]
-packages = ["src/ataraxis_video_system", "examples"]
+packages = ["src/ataraxis_video_system"]
 
 # Ruff Configuration.
 [tool.ruff]

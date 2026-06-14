@@ -33,6 +33,14 @@ GenICam Configuration
    :undoc-members:
    :show-inheritance:
 
+Camera Manifest
+===============
+
+.. automodule:: ataraxis_video_system.video.manifest
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Log Processing
 ==============
 
