@@ -439,10 +439,10 @@ class VideoSaver:
                 self._ffmpeg_process.stdin.write(frame.data)  # type: ignore[union-attr]
             else:
                 self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore[union-attr]
-        except Exception as e:  # pragma: no cover
+        except Exception as error:  # pragma: no cover
             message = (
                 f"The FFMPEG process of the VideoSaver instance for the VideoSystem with id {self._system_id} "
-                f"has failed to process the input frame's data with error: {e}"
+                f"has failed to process the input frame's data with error: {error}"
             )
             console.error(message=message, error=BrokenPipeError)
 

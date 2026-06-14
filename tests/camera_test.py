@@ -5,7 +5,7 @@ import pytest
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import InputPixelFormats
-from ataraxis_video_system.camera import MockCamera, OpenCVCamera, HarvestersCamera
+from ataraxis_video_system.video.camera import MockCamera, OpenCVCamera, HarvestersCamera
 
 
 @pytest.mark.parametrize(
@@ -31,7 +31,6 @@ def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
 
 def test_mock_camera_connect_disconnect() -> None:
     """Verifies the functioning of the MockCamera connect() and disconnect() methods."""
-    # Setup
     camera = MockCamera(system_id=222)  # Uses default parameters
 
     # Verifies camera connection
@@ -45,7 +44,6 @@ def test_mock_camera_connect_disconnect() -> None:
 
 def test_mock_camera_grab_frame() -> None:
     """Verifies the functioning of the MockCamera grab_frame() method."""
-    # Setup
     camera = MockCamera(system_id=222, color=False, frame_width=2, frame_height=3)
     camera.connect()
 
@@ -54,7 +52,7 @@ def test_mock_camera_grab_frame() -> None:
 
     # Acquires 11 frames. Note, the code below will STOP working unless the tested number of frames is below 20.
     for frame_number in range(11):
-        frame = camera.grab_frame()  # Grabs the frame from the pre-created frame-pool
+        frame = camera.grab_frame()
 
         # Currently, the frame pool consists of 10 images. To optimize grabbed image verification, ensures that the
         # index is always within the range of the frame pool and follows the behavior of the grabber that treats the
@@ -67,7 +65,6 @@ def test_mock_camera_grab_frame() -> None:
 
 def test_mock_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the MockCamera grab_frame() method."""
-    # Setup
     camera = MockCamera(system_id=222)
 
     # Verifies that the camera cannot yield images if it is not connected.
@@ -118,7 +115,6 @@ def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
-    # Setup
     camera = OpenCVCamera(
         system_id=222,
         camera_index=0,
@@ -154,7 +150,6 @@ def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
-    # Setup
     camera = OpenCVCamera(
         system_id=222,
         camera_index=0,
@@ -165,7 +160,8 @@ def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     # Tests grab_frame() method.
     assert not camera.is_acquiring
     frame = camera.grab_frame()
-    assert camera.is_acquiring  # Ensures calling grab_frame() switches the camera into acquisition mode
+    # Ensures calling grab_frame() switches the camera into acquisition mode.
+    assert camera.is_acquiring
 
     # Ensures that acquiring colored frames correctly returns a multidimensional numpy array
     if color:
@@ -225,7 +221,6 @@ def test_opencv_camera_pixel_color_format() -> None:
 @pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_grab_frame_errors() -> None:
     """Verifies the error handling of the OpenCVCamera grab_frame() method."""
-    # Setup
     camera = OpenCVCamera(system_id=222, camera_index=333)  # Uses invalid index 333
 
     # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
@@ -254,7 +249,7 @@ def test_harvesters_camera_init_repr(has_harvesters) -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     # Setup - Note that the CTI path is automatically resolved internally by the HarvestersCamera class
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
@@ -282,9 +277,8 @@ def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
-    # Setup
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Tests connect method. Unlike OpenCV camera, if Harvesters camera is unable to set the parameters to the
@@ -308,7 +302,7 @@ def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, f
     """Verifies the functioning of the HarvestersCamera grab_frame() method."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     # Setup - The library internally manages the CTI path
     camera = HarvestersCamera(
@@ -319,7 +313,8 @@ def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, f
     # Tests grab_frame() method.
     assert not camera.is_acquiring
     frame = camera.grab_frame()
-    assert camera.is_acquiring  # Ensures calling grab_frame() switches the camera into acquisition mode
+    # Ensures calling grab_frame() switches the camera into acquisition mode.
+    assert camera.is_acquiring
 
     # Verifies the dimensions of the grabbed frame
     if frame_height is not None and frame_width is not None:
@@ -339,7 +334,7 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
     """Verifies the error handling of the HarvestersCamera grab_frame() method."""
     # Skips the test if Harvesters-compatible hardware is not available.
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     # Setup - Uses the internally stored CTI path
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
@@ -361,7 +356,7 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
 def test_harvesters_camera_pixel_color_format(has_harvesters) -> None:
     """Verifies the pixel_color_format property of HarvestersCamera for both color states."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()

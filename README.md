@@ -27,7 +27,7 @@ ___
 ## Features
 
 - Supports Windows, Linux, and macOS.
-- Uses OpenCV or GeniCam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
+- Uses OpenCV or GenICam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
 - Supports inspecting, modifying, saving, and loading GenICam camera configurations for reproducible setups.
@@ -52,7 +52,7 @@ ___
   - [Log Processing](#log-processing)
   - [CLI](#cli)
   - [MCP Server](#mcp-server)
-  - [Using GeniCam Compatible Cameras](#using-genicam-compatible-cameras)
+  - [Using GenICam Compatible Cameras](#using-genicam-compatible-cameras)
   - [GenICam Configuration](#genicam-configuration)
 - [API Documentation](#api-documentation)
 - [Developers](#developers)
@@ -357,7 +357,7 @@ axvs mcp
 |----------------------------------------|----------------------------------------------------------------------------------|
 | `list_cameras_tool`                    | Discovers all cameras compatible with OpenCV and Harvesters interfaces           |
 | `get_cti_status_tool`                  | Checks whether the library is configured with a valid GenTL Producer (.cti) file |
-| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GeniCam camera support    |
+| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GenICam camera support    |
 | `check_runtime_requirements_tool`      | Checks FFMPEG and GPU availability for video encoding                            |
 | `start_video_session_tool`             | Starts a video capture session with specified camera and encoding parameters     |
 | `stop_video_session_tool`              | Stops the active video capture session and releases resources                    |
@@ -374,7 +374,7 @@ axvs mcp
 | `write_camera_manifest_tool`           | Writes or updates a camera manifest file in a log directory                      |
 | `discover_camera_data_tool`            | Discovers confirmed camera recordings under a root directory via manifests       |
 | `prepare_log_processing_batch_tool`    | Prepares a batch of log processing jobs across multiple directories              |
-| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs with concurrent worker threads             |
+| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs with concurrent worker processes           |
 | `get_log_processing_status_tool`       | Returns the current status of the active log processing session                  |
 | `get_log_processing_timing_tool`       | Returns timing information for all jobs in the active session                    |
 | `cancel_log_processing_tool`           | Cancels the active log processing execution session                              |
@@ -390,12 +390,12 @@ MCP server registration and Claude Code skill assets for this library are distri
 from the marketplace to automatically register the MCP server with compatible clients and make all associated skills
 available.
 
-### Using GeniCam Compatible Cameras
-This library supports all cameras compatible with the [GeniCam](https://www.emva.org/standards-technology/genicam/) 
+### Using GenICam Compatible Cameras
+This library supports all cameras compatible with the [GenICam](https://www.emva.org/standards-technology/genicam/) 
 standard, which includes most GigE+ scientific and machine vision cameras. 
 
-***Note,*** before using the library with a GeniCam camera, it must be provided with the path to the .cti GenTL Producer
-Interface file. Without an interface, the library is not able to interface with the GeniCam cameras. Use the
+***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
+Interface file. Without an interface, the library is not able to interface with the GenICam cameras. Use the
 `axvs cti set` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a
 general .cti file, such as [mvImpactAcquire](#dependencies). This command only needs to be called once, as the library
 remembers and reuses the provided .cti file for all future runtimes.
@@ -437,13 +437,13 @@ that want to modify the source code of this library.
 ### Installing the Project
 
 ***Note,*** this installation method requires **mamba version 2.3.2 or above**. Currently, all
-Sun lab automation pipelines require that mamba is installed through the
+Ataraxis framework automation pipelines require that mamba is installed through the
 [miniforge3](https://github.com/conda-forge/miniforge) installer.
 
 1. Download this repository to the local machine using the preferred method, such as git-cloning.
 2. If the downloaded distribution is stored as a compressed archive, unpack it using the appropriate decompression tool.
 3. `cd` to the root directory of the prepared project distribution.
-4. Install the core Sun lab development dependencies into the ***base*** mamba environment via the
+4. Install the core Ataraxis framework development dependencies into the ***base*** mamba environment via the
    `mamba install tox uv tox-uv` command.
 5. Use the `tox -e create` command to create the project-specific development environment followed
    by `tox -e install` command to install the project into that environment as a library.
@@ -491,8 +491,9 @@ Claude Code skills and AI development assets for this project are distributed th
 - **video** plugin: Provides MCP server registration, video-specific skills for camera setup, pipeline orchestration,
   log processing, and post-recording verification. Install this plugin to register the `axvs mcp` server with
   compatible MCP clients and make all video workflow skills available.
-- **automation** plugin: Provides shared development skills that enforce Sun Lab coding conventions (Python style,
-  README style, commit messages, pyproject.toml, tox configuration) and general-purpose codebase exploration tools.
+- **automation** plugin: Provides shared development skills that enforce Ataraxis framework coding conventions
+  (Python style, README style, commit messages, pyproject.toml, tox configuration) and general-purpose codebase
+  exploration tools.
 
 Install both plugins from the marketplace to make all associated skills and development tools available to compatible
 AI coding agents.

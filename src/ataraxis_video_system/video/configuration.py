@@ -208,7 +208,6 @@ def enumerate_genicam_nodes(
         node = stack.pop()
 
         # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
-        # noinspection PyBroadException
         try:
             name: str = node.node.name
         except Exception:  # noqa: S112  # pragma: no cover
@@ -224,7 +223,6 @@ def enumerate_genicam_nodes(
             continue
 
         # Resolves the node's principal interface type to determine how to handle it.
-        # noinspection PyBroadException
         try:
             type_code = int(node.node.principal_interface_type)
         except Exception:  # noqa: S112  # pragma: no cover
@@ -411,8 +409,8 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
 
     try:
         feature.value = typed_value
-    except Exception as e:  # pragma: no cover
-        message = f"Unable to write value '{typed_value}' to GenICam node '{name}': {e}"
+    except Exception as error:  # pragma: no cover
+        message = f"Unable to write value '{typed_value}' to GenICam node '{name}': {error}"
         console.error(message=message, error=RuntimeError)
 
 
@@ -518,11 +516,11 @@ def apply_genicam_configuration(
 
             try:
                 getattr(node_map, name).value = value
-            except Exception as e:  # pragma: no cover
+            except Exception as error:  # pragma: no cover
                 # Reset-phase failures are non-fatal — the node may not exist on this camera model.
                 if use_reset_values:
                     continue
-                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {e}"
+                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
                 console.error(message=message, error=RuntimeError)
 
             # Only marks nodes as written when their target value was applied (not the reset value).
@@ -536,6 +534,6 @@ def apply_genicam_configuration(
 
         try:
             getattr(node_map, name).value = node_info.value
-        except Exception as e:  # pragma: no cover
-            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {e}"
+        except Exception as error:  # pragma: no cover
+            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
             console.error(message=message, error=RuntimeError)

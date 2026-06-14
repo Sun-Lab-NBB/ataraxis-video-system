@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # Project metadata section. Provides the general ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "3.0.0"
+version = "4.0.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ maintainers = [
     { name = "Ivan Kondratyev", email = "ik278@cornell.edu" },
 ]
 
-keywords = ["OpenCV", "FFMPEG", "GeniCam", "video recording", "camera interface", "ataraxis"]
+keywords = ["OpenCV", "FFMPEG", "GenICam", "video recording", "camera interface", "ataraxis"]
 
 classifiers = [
     # Development status
@@ -75,7 +75,7 @@ Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
 # Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
 [project.scripts]
-axvs = "ataraxis_video_system.cli:axvs_cli"
+axvs = "ataraxis_video_system.interfaces.cli:axvs_cli"
 
 # Development dependencies (PEP 735). Not published to PyPI.
 [dependency-groups]
@@ -96,7 +96,7 @@ exclude = [".github", "recipe"]
 
 # Specifies the library structure.
 [tool.hatch.build.targets.wheel]
-packages = ["src/ataraxis_video_system", "examples"]
+packages = ["src/ataraxis_video_system"]
 
 # Ruff Configuration.
 [tool.ruff]
@@ -215,14 +215,6 @@ source = ["src/", ".tox/*/lib/python*/site-packages/"]
 [tool.coverage.html]
 directory = "reports/coverage_html"
 
-# Optimizes coverage generation for parallel testing
-[tool.coverage.run]
-parallel = true
-omit = [
-    "*/cli.py",
-    "*/mcp_server.py",
-]
-
 # Specifies additional ignore directives
 [tool.coverage.report]
 exclude_lines = [
@@ -234,3 +226,9 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "pass",
 ]
+
+# Optimizes coverage generation for parallel testing
+[tool.coverage.run]
+parallel = true
+concurrency = ["multiprocessing", "thread"]
+omit = ["*/interfaces/*"]

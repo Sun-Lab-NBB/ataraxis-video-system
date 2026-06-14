@@ -2,6 +2,7 @@
 
 import sys
 from random import randint
+
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer
@@ -16,7 +17,7 @@ from ataraxis_video_system import (
     EncoderSpeedPresets,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.log_processing import extract_logged_camera_timestamps
+from ataraxis_video_system.video.log_processing import extract_logged_camera_timestamps
 
 
 @pytest.fixture
@@ -52,7 +53,6 @@ def test_init_errors(data_logger) -> None:
     """Verifies the error handling behavior of the VideoSystem initialization method."""
     # Invalid system_id input - causes conversion error
     invalid_system_id = "str"
-    # noinspection PyTypeChecker
     with pytest.raises((TypeError, ValueError)):
         VideoSystem(
             system_id=invalid_system_id,  # type: ignore[arg-type]
@@ -102,7 +102,7 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
     invalid_index = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
-        f"zero or positive integer as the 'camera_id' argument value, but got {invalid_index} of type "
+        f"zero or positive integer as the 'camera_index' argument value, but got {invalid_index} of type "
         f"{type(invalid_index).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
@@ -323,7 +323,8 @@ def test_start_stop(data_logger, tmp_path) -> None:
     # Starts all instances
     data_logger.start()
     video_system_1.start()
-    video_system_1.start()  # Ensures that calling start twice does nothing
+    # Ensures that calling start twice does nothing.
+    video_system_1.start()
     video_system_2.start()
 
     assert video_system_1.started
@@ -332,7 +333,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     # Tests frame saving control
     timer = PrecisionTimer(precision="s")
     video_system_1.start_frame_saving()
-    timer.delay(delay=2, allow_sleep=True, block=False)  # 2-second delay
+    timer.delay(delay=2, allow_sleep=True, block=False)
     video_system_1.stop_frame_saving()
 
     # Tests that system 2 (without a saver) ignores saving commands
@@ -341,13 +342,14 @@ def test_start_stop(data_logger, tmp_path) -> None:
 
     # Re-enables saving for system 1
     video_system_1.start_frame_saving()
-    timer.delay(delay=2, allow_sleep=True, block=False)  # 2-second delay
+    timer.delay(delay=2, allow_sleep=True, block=False)
     video_system_1.stop_frame_saving()
 
     # Stops the video systems
     video_system_1.stop()
     video_system_2.stop()
-    video_system_2.stop()  # Ensures that calling stop twice does nothing
+    # Ensures that calling stop twice does nothing.
+    video_system_2.stop()
 
     assert not video_system_1.started
     assert not video_system_2.started
@@ -456,7 +458,7 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
 def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> None:
     """Verifies that VideoSystem can be initialized with the Harvesters camera interface."""
     if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GeniCam camera).")
+        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -518,7 +520,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
         color=True,
     )
 
-    # Start systems
+    # Starts the systems.
     data_logger.start()
     video_system.start()
 
@@ -545,11 +547,11 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     timer.delay(delay=1, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
 
-    # Stop systems
+    # Stops the systems.
     video_system.stop()
     data_logger.stop()
 
-    # Process logs
+    # Processes the logs.
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts timestamps
@@ -560,11 +562,11 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     # Expected frames: approximately 40 (4 * 10 fps)
     actual_frames = len(timestamps)
 
-    # Allow for timing variations
+    # Allows for timing variations.
     assert actual_frames >= 30, f"Expected approximately 40 frames, got {actual_frames}"
 
-    # Check for gaps in timestamps that might indicate the pauses
-    # (This is a basic check - actual gaps depend on implementation details)
+    # Checks for gaps in the timestamps that may indicate the recording pauses.
+    # Uses a permissive threshold because the actual gap sizes depend on implementation details.
     if len(timestamps) > 10:
         intervals = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
         max_interval = max(intervals)

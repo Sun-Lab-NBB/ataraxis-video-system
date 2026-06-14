@@ -1,22 +1,21 @@
 """Provides shared fixtures for all test modules."""
 
 import json
-from collections.abc import Generator
 from contextlib import suppress
-from dataclasses import asdict
-from pathlib import Path
 import subprocess
+from dataclasses import asdict
+from collections.abc import Generator
 
-import filelock
 import pytest
+import filelock
 
 from ataraxis_video_system import (
-    CameraInformation,
     CameraInterfaces,
+    CameraInformation,
     discover_camera_ids,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.camera import HarvestersCamera
+from ataraxis_video_system.video.camera import HarvestersCamera
 
 
 def _restore_camera_state(saved_state: dict[str, int]) -> None:
@@ -76,7 +75,7 @@ def _all_cameras(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> tu
             all_cameras = ()
 
         # Caches discovery results as JSON for other workers.
-        cache_file.write_text(json.dumps([asdict(cam) for cam in all_cameras]))
+        cache_file.write_text(json.dumps([asdict(camera) for camera in all_cameras]))
 
     return all_cameras
 
@@ -84,7 +83,7 @@ def _all_cameras(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> tu
 @pytest.fixture(scope="session")
 def has_opencv(_all_cameras: tuple[CameraInformation, ...]) -> bool:
     """Checks for OpenCV camera availability using cached discovery results."""
-    return any(cam.interface == CameraInterfaces.OPENCV for cam in _all_cameras)
+    return any(camera.interface == CameraInterfaces.OPENCV for camera in _all_cameras)
 
 
 @pytest.fixture(scope="session")
@@ -95,7 +94,7 @@ def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[boo
     extra connection) so they can be restored after all tests complete. This prevents tests that modify camera
     dimensions from permanently altering the hardware configuration.
     """
-    harvesters_cameras = [cam for cam in _all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
+    harvesters_cameras = [camera for camera in _all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
     has = bool(harvesters_cameras)
 
     # Saves the original camera parameters from discovery results. No extra GenTL connection is needed since

@@ -8,31 +8,26 @@ import numpy as np  # pragma: no cover
 from ataraxis_base_utilities import LogLevel, console  # pragma: no cover
 from ataraxis_data_structures import DataLogger, assemble_log_archives  # pragma: no cover
 
-from .saver import (
-    OutputPixelFormats,
-    EncoderSpeedPresets,
-    check_gpu_availability,
-    check_ffmpeg_availability,
-)  # pragma: no cover
-from .camera import (
+from ..video import (  # pragma: no cover
+    DEFAULT_BLACKLISTED_NODES,
+    VideoSystem,
     CameraInterfaces,
     HarvestersCamera,
+    OutputPixelFormats,
+    EncoderSpeedPresets,
+    GenicamConfiguration,
     add_cti_file,
     check_cti_file,
-    discover_camera_ids,
-)  # pragma: no cover
-from .mcp_server import run_server as run_mcp  # pragma: no cover
-from .video_system import VideoSystem  # pragma: no cover
-from .configuration import (
-    DEFAULT_BLACKLISTED_NODES,
-    GenicamConfiguration,
     read_genicam_node,
+    discover_camera_ids,
     format_genicam_node,
+    check_gpu_availability,
     enumerate_genicam_nodes,
-)  # pragma: no cover
-from .log_processing import run_log_processing_pipeline  # pragma: no cover
+    check_ffmpeg_availability,
+    run_log_processing_pipeline,
+)
+from .mcp_server import run_server as run_mcp  # pragma: no cover
 
-# Enables console output.
 console.enable()  # pragma: no cover
 
 CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}  # pragma: no cover
@@ -64,9 +59,9 @@ def cti_group() -> None:  # pragma: no cover
     ),
 )
 def set_cti_file(file_path: Path) -> None:  # pragma: no cover
-    """Configures the library to use the input CTI file for all future runtimes involving GeniCam cameras.
+    """Configures the library to use the input CTI file for all future runtimes involving GenICam cameras.
 
-    This library relies on the Harvesters library to interface with GeniCam-compatible cameras. In turn, the Harvesters
+    This library relies on the Harvesters library to interface with GenICam-compatible cameras. In turn, the Harvesters
     library requires the GenTL Producer interface (.cti) file to discover and interface with compatible cameras. This
     command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library.
     """
@@ -81,7 +76,7 @@ def check_cti_status() -> None:  # pragma: no cover
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     This command verifies if a .cti file has been configured and whether it is still valid. The Harvesters camera
-    interface requires the GenTL Producer interface (.cti) file to discover and interface with GeniCam-compatible
+    interface requires the GenTL Producer interface (.cti) file to discover and interface with GenICam-compatible
     cameras. Use this command to verify the configuration status before attempting to use the Harvesters interface.
     """
     cti_path = check_cti_file()
@@ -114,12 +109,11 @@ def check_devices() -> None:  # pragma: no cover
     # Notifies the user that discovery is in progress, as probing camera devices may take several seconds.
     console.echo(message="Scanning for available camera devices, this may take a moment...", level=LogLevel.INFO)
 
-    # Discovers all compatible cameras from both interfaces.
     all_cameras = discover_camera_ids()
 
     # Separates cameras by interface for display purposes.
-    opencv_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.OPENCV]
-    harvesters_cameras = [cam for cam in all_cameras if cam.interface == CameraInterfaces.HARVESTERS]
+    opencv_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.OPENCV]
+    harvesters_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
 
     # Displays OpenCV camera information.
     if not opencv_cameras:
@@ -198,7 +192,7 @@ def check_compatibility() -> None:  # pragma: no cover
     default="mock",
     show_default=True,
     help="The camera interface to use for interacting with the camera hardware. It is recommended to use the "
-    "'harvesters' interface for all GeniCam-compatible cameras and the 'opencv' interface for all other cameras.",
+    "'harvesters' interface for all GenICam-compatible cameras and the 'opencv' interface for all other cameras.",
 )
 @click.option(
     "-c",
@@ -287,7 +281,6 @@ def live_run(
     else:
         camera_interface = CameraInterfaces.OPENCV
 
-    # Initializes the VideoSystem.
     video_system = VideoSystem(
         system_id=np.uint8(111),
         data_logger=logger,
@@ -304,10 +297,9 @@ def live_run(
         video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
         encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
         output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
-        quantization_parameter=15,  # Uses the instance's default parameter
+        quantization_parameter=15,  # Statically sets the H264 quantization parameter to 15.
     )
 
-    # Starts the system by spawning child processes.
     video_system.start()
     console.echo(message="Live VideoSystem: initialized and started (spawned child processes).", level=LogLevel.INFO)
 
@@ -473,7 +465,6 @@ def configure_group(
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("read")
 @click.option(
     "-c",
@@ -508,10 +499,9 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
         else:
             node_map = camera.node_map
-            names = enumerate_genicam_nodes(node_map, blacklisted_nodes=blacklist)
+            names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=blacklist)
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
-                # noinspection PyBroadException
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
                     console.echo(message=f"  {info.name} = {info.value}")
@@ -521,7 +511,6 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("write")
 @click.option(
     "-c",
@@ -560,7 +549,6 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("dump")
 @click.option(
     "-c",
@@ -599,7 +587,6 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
         camera.disconnect()
 
 
-# noinspection PyUnresolvedReferences
 @configure_group.command("load")
 @click.option(
     "-c",
@@ -639,7 +626,7 @@ def configuration_load(
     try:
         camera.connect()
         config = GenicamConfiguration.from_yaml(file_path=config_file)
-        camera.apply_configuration(config, strict_identity=strict, blacklisted_nodes=blacklist)
+        camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=blacklist)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
     finally:
         camera.disconnect()
