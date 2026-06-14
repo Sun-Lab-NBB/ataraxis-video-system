@@ -12,8 +12,8 @@ This ensures you:
 
 ## Style Guide Compliance
 
-Before writing, modifying, or reviewing any code or documentation, you MUST invoke the appropriate skill to load Sun
-Lab conventions. This applies to ALL file types:
+Before writing, modifying, or reviewing any code or documentation, you MUST invoke the appropriate skill to load
+Ataraxis framework conventions. This applies to ALL file types:
 
 | Task                                | Skill to Invoke    |
 |-------------------------------------|--------------------|
@@ -33,8 +33,8 @@ All contributions must strictly follow these conventions. Key conventions includ
 
 ## Cross-Referenced Library Verification
 
-Sun Lab projects often depend on other `ataraxis-*` or `sl-*` libraries. These libraries may be stored locally in the
-same parent directory as this project (`/home/cyberaxolotl/Desktop/GitHubRepos/`).
+Ataraxis framework projects often depend on other `ataraxis-*` or `sl-*` libraries. These libraries may be stored
+locally in the same parent directory as this project (`/home/cyberaxolotl/Desktop/GitHubRepos/`).
 
 **Before writing code that interacts with a cross-referenced library, you MUST:**
 
@@ -68,9 +68,9 @@ plugins:
 - **video** plugin (`ataraxis/plugins/video/`): Registers the `axvs mcp` server with compatible MCP clients and
   provides video-specific skills for camera setup, pipeline orchestration, log processing, and post-recording
   verification.
-- **automation** plugin (`ataraxis/plugins/automation/`): Provides shared development skills that enforce Sun Lab
-  coding conventions (Python style, README style, commit messages, pyproject.toml, tox configuration) and
-  general-purpose codebase exploration tools.
+- **automation** plugin (`ataraxis/plugins/automation/`): Provides shared development skills that enforce
+  Ataraxis framework coding conventions (Python style, README style, commit messages, pyproject.toml, tox
+  configuration) and general-purpose codebase exploration tools.
 
 When modifying skills, edit the SKILL.md files in the ataraxis marketplace repository, not in this repository.
 When modifying the MCP server implementation or library code, edit the source files in this repository.
@@ -121,17 +121,17 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 
 ### Automation Plugin Skills (ataraxis/plugins/automation/)
 
-| Skill                     | Description                                                          |
-|---------------------------|----------------------------------------------------------------------|
-| `/explore-codebase`       | Perform in-depth codebase exploration at session start               |
-| `/explore-dependencies`   | Explore installed ataraxis dependency APIs for reuse opportunities   |
-| `/python-style`           | Apply Sun Lab Python coding conventions (REQUIRED for code changes)  |
-| `/readme-style`           | Apply Sun Lab README conventions                                     |
-| `/commit`                 | Draft Sun Lab style-compliant git commit messages                    |
-| `/pyproject-style`        | Apply Sun Lab pyproject.toml conventions                             |
-| `/tox-config`             | Apply Sun Lab tox.ini conventions                                    |
-| `/skill-design`           | Generate and verify Claude Code skill files                          |
-| `/project-layout`         | Apply Sun Lab project directory structure conventions                |
+| Skill                     | Description                                                                    |
+|---------------------------|--------------------------------------------------------------------------------|
+| `/explore-codebase`       | Perform in-depth codebase exploration at session start                         |
+| `/explore-dependencies`   | Explore installed ataraxis dependency APIs for reuse opportunities             |
+| `/python-style`           | Apply Ataraxis framework Python coding conventions (REQUIRED for code changes) |
+| `/readme-style`           | Apply Ataraxis framework README conventions                                    |
+| `/commit`                 | Draft Ataraxis framework style-compliant git commit messages                   |
+| `/pyproject-style`        | Apply Ataraxis framework pyproject.toml conventions                            |
+| `/tox-config`             | Apply Ataraxis framework tox.ini conventions                                   |
+| `/skill-design`           | Generate and verify Claude Code skill files                                    |
+| `/project-layout`         | Apply Ataraxis framework project directory structure conventions               |
 
 ## Project Context
 
