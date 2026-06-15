@@ -29,7 +29,7 @@ def _create_onset_message(source_id: int, onset_us: int) -> NDArray[np.uint8]:
     """Creates an onset message with timestamp=0 and the onset UTC epoch as payload."""
     source_bytes = np.array([source_id], dtype=np.uint8)
     timestamp_bytes = np.array([0], dtype=np.uint64).view(np.uint8)
-    onset_bytes = np.array([onset_us], dtype=np.int64).view(np.uint8)
+    onset_bytes = np.array([onset_us], dtype=np.uint64).view(np.uint8)
     return np.concatenate([source_bytes, timestamp_bytes, onset_bytes])
 
 
