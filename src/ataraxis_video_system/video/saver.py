@@ -221,7 +221,10 @@ class VideoSaver:
             else:
                 encoder_profile = "rext" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
 
-            # Uses the resolved data to construct the GPU encoding command portion.
+            # Uses the resolved data to construct the GPU encoding command portion. The -color_range pc flag
+            # keeps the output in full range, preserving the camera's complete 0-255 luma span. The yuv420p
+            # and yuv444p formats otherwise default to the limited 16-235 (tv) range, and FFMPEG compresses
+            # the full-range source frames to fit it.
             encoder_command_portion = [
                 "-vcodec",
                 video_codec,
@@ -233,6 +236,8 @@ class VideoSaver:
                 encoder_profile,
                 "-pix_fmt",
                 output_pixel_format.value,
+                "-color_range",
+                "pc",
                 "-gpu",
                 str(gpu),
                 "-rc",
@@ -255,7 +260,8 @@ class VideoSaver:
             parameter_specifier = "-x264-params" if video_codec == "libx264" else "-x265-params"
 
             # Constructs the CPU encoding command portion, preceding the quantization parameter with the
-            # parameter specifier for the h264 / h265 encoder.
+            # parameter specifier for the h264 / h265 encoder. The -color_range pc flag keeps the output in
+            # full range, matching the GPU branch and preserving the camera's complete 0-255 luma span.
             encoder_command_portion = [
                 "-vcodec",
                 video_codec,
@@ -267,6 +273,8 @@ class VideoSaver:
                 encoder_profile,
                 "-pix_fmt",
                 output_pixel_format.value,
+                "-color_range",
+                "pc",
             ]
 
         # Constructs the complete FFMPEG command used by the start() method to initialize the encoder process,
