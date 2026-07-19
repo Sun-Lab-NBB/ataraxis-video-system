@@ -124,6 +124,9 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
     assert "libx264" in saver._ffmpeg_command or "libx265" in saver._ffmpeg_command
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "veryfast" in saver._ffmpeg_command  # FASTEST maps to veryfast for CPU
+    # Verifies the output is forced to full (pc) range
+    range_index = saver._ffmpeg_command.index("-color_range")
+    assert saver._ffmpeg_command[range_index + 1] == "pc"
 
 
 @pytest.mark.parametrize(
@@ -163,6 +166,9 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
     gpu_index = saver._ffmpeg_command.index("-gpu")
     assert saver._ffmpeg_command[gpu_index + 1] == "0"
+    # Verifies the output is forced to full (pc) range
+    range_index = saver._ffmpeg_command.index("-color_range")
+    assert saver._ffmpeg_command[range_index + 1] == "pc"
 
 
 def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
