@@ -231,7 +231,7 @@ class VideoSaver:
                 encoder_speed_preset.gpu_preset,
                 "-profile:v",
                 encoder_profile,
-                "-pixel_format",
+                "-pix_fmt",
                 output_pixel_format.value,
                 "-gpu",
                 str(gpu),
