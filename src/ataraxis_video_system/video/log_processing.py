@@ -213,7 +213,7 @@ def run_log_processing_pipeline(
             )
             console.error(message=message, error=ValueError)
 
-        prepare_tracker(tracker=tracker, jobs=universe, universe=universe)
+        tracker.align_jobs(jobs=universe, universe=universe)
 
         source_id = id_to_source[job_id]
         execute_job(
@@ -257,7 +257,7 @@ def run_log_processing_pipeline(
 
         # Aligns the tracker with the requested subset while detecting foreign entries against the full universe.
         jobs: list[tuple[str, str]] = [(TIMESTAMP_JOB_NAME, source_id) for source_id in source_ids]
-        prepare_tracker(tracker=tracker, jobs=jobs, universe=universe)
+        tracker.align_jobs(jobs=jobs, universe=universe)
 
         # Resolves workers once and creates a shared ProcessPoolExecutor to reuse across all jobs, avoiding
         # repeated process pool creation.
@@ -405,58 +405,6 @@ def extract_logged_camera_timestamps(
         return np.array([], dtype=np.uint64)
 
     return np.concatenate(batch_arrays)
-
-
-def prepare_tracker(tracker: ProcessingTracker, jobs: list[tuple[str, str]], universe: list[tuple[str, str]]) -> None:
-    """Aligns the processing tracker's job registry with the jobs requested for the current pipeline invocation.
-
-    Notes:
-        Foreign entries are detected by comparing the tracker's existing job IDs against the manifest-derived
-        universe of all possible jobs for the current camera manifest, not against the invocation's requested
-        subset. This lets a subset invocation or a single concurrent remote job align the tracker without
-        wiping previously-completed state for sibling jobs. Any existing entries that are not part of the
-        universe are treated as architectural drift (the manifest itself has changed since the tracker was last
-        written) and surfaced through a warning before the tracker is rebuilt.
-
-        The tracker is initialized when absent, reset and rebuilt (after a warning) when it contains foreign
-        entries, and additively extended via ``initialize_jobs`` when it is missing only some requested jobs. A
-        fully-aligned tracker is left untouched to avoid duplicate-entry warnings.
-
-    Args:
-        tracker: The ProcessingTracker instance bound to the camera_timestamps output directory.
-        jobs: The list of (job_name, specifier) tuples the current pipeline invocation intends to execute.
-        universe: The list of (job_name, specifier) tuples enumerating every job the manifest could produce.
-            Used exclusively for foreign-entry detection.
-    """
-    universe_ids = {
-        ProcessingTracker.generate_job_id(job_name=job_name, specifier=specifier) for job_name, specifier in universe
-    }
-    requested_ids = {
-        ProcessingTracker.generate_job_id(job_name=job_name, specifier=specifier) for job_name, specifier in jobs
-    }
-
-    if not tracker.file_path.exists():
-        tracker.initialize_jobs(jobs=jobs)
-        return
-
-    existing_ids = set(tracker.find_jobs(job_name="").keys())
-    foreign_ids = existing_ids - universe_ids
-
-    if foreign_ids:
-        console.echo(
-            message=(
-                f"The processing tracker at '{tracker.file_path}' contains {len(foreign_ids)} job entries "
-                f"that are not part of the current camera manifest's job universe. Resetting and reinitializing "
-                f"the tracker to match the requested jobs. Foreign job IDs: {sorted(foreign_ids)}."
-            ),
-            level=LogLevel.WARNING,
-        )
-        tracker.reset()
-        tracker.initialize_jobs(jobs=jobs)
-        return
-
-    if not requested_ids.issubset(existing_ids):
-        tracker.initialize_jobs(jobs=jobs)
 
 
 def execute_job(
