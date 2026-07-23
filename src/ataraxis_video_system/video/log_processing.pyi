@@ -30,9 +30,6 @@ def run_log_processing_pipeline(
 def extract_logged_camera_timestamps(
     log_path: Path, n_workers: int = -1, *, display_progress: bool = True, executor: ProcessPoolExecutor | None = None
 ) -> NDArray[np.uint64]: ...
-def prepare_tracker(
-    tracker: ProcessingTracker, jobs: list[tuple[str, str]], universe: list[tuple[str, str]]
-) -> None: ...
 def execute_job(
     log_path: Path,
     output_directory: Path,

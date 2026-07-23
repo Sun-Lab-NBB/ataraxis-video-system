@@ -6,7 +6,6 @@ from ..video import (
     LOG_ARCHIVE_SUFFIX as LOG_ARCHIVE_SUFFIX,
     TIMESTAMP_JOB_NAME as TIMESTAMP_JOB_NAME,
     CAMERA_TIMESTAMPS_DIRECTORY as CAMERA_TIMESTAMPS_DIRECTORY,
-    prepare_tracker as prepare_tracker,
     generate_job_ids as generate_job_ids,
 )
 from .mcp_instance import mcp as mcp
