@@ -7,7 +7,7 @@ All user-oriented functionality of this library is available through the public 
 from __future__ import annotations
 
 import sys
-from queue import Empty, Queue
+from queue import Queue
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 import warnings
@@ -54,7 +54,10 @@ _PROCESS_INITIALIZATION_TIME: int = 20
 """The maximum number of seconds to wait for the consumer and producer processes to initialize."""
 
 _PROCESS_SHUTDOWN_TIME: int = 600
-"""The maximum number of seconds to wait for the consumer and producer processes to shut down."""
+"""The maximum number of seconds to wait for the consumer process to save all buffered frames and shut down."""
+
+_PROCESS_TERMINATION_TIME: int = 20
+"""The maximum number of seconds to wait for the producer process and the watchdog thread to shut down."""
 
 
 class VideoSystem:
@@ -531,13 +534,7 @@ class VideoSystem:
 
             # Reclaims all committed resources before terminating with an error.
             if error:
-                # Emits the process termination command.
-                self._terminator_array[0] = 1
-
-                # Waits for any active processes to finish their execution.
-                if self._consumer_process is not None:
-                    self._consumer_process.join()
-                self._producer_process.join()
+                self._terminate_child_processes()
 
                 # Disconnects from and destroys the shared memory array buffer.
                 self._terminator_array.disconnect()
@@ -557,40 +554,22 @@ class VideoSystem:
         reserved resources.
 
         Notes:
-            The consumer process is kept alive until all frames buffered to the saver_queue are saved. However, if the
-            saver_queue does not become empty within 10 minutes from calling this method, it forcibly terminates the
-            consumer process and discards any unprocessed data.
+            The consumer process is kept alive until all frames buffered to the saver_queue are saved. If the consumer
+            process does not save all buffered frames within the shutdown timeout, it is abandoned and any unprocessed
+            data is discarded.
         """
         # Prevents stopping an already stopped VideoSystem instance.
         if not self._started or self._terminator_array is None:
             return
 
-        # Creates a timer to forcibly terminate the process that gets stuck in the shutdown sequence.
-        shutdown_timer = PrecisionTimer(precision=TimerPrecisions.SECOND)
-
         # Inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
         self._started = False
 
-        # Emits the process shutdown signal.
-        self._terminator_array[0] = 1
-
-        # Delays for 2 seconds to allow the consumer process to terminate its runtime.
-        shutdown_timer.delay(delay=2, allow_sleep=True, block=False)
-
-        # Waits until the saver_queue is empty. This is aborted if the shutdown stalls at this step for 10+ minutes.
-        for _ in shutdown_timer.poll(interval=10, allow_sleep=True, block=False):
-            if self._saver_queue.empty() or shutdown_timer.elapsed > _PROCESS_SHUTDOWN_TIME:
-                break
-
-        # Joins the producer and consumer processes.
-        if self._producer_process is not None:
-            self._producer_process.join(timeout=20)
-        if self._consumer_process is not None:
-            self._consumer_process.join(timeout=20)
+        self._terminate_child_processes()
 
         # Joins the watchdog thread.
         if self._watchdog_thread is not None:
-            self._watchdog_thread.join(timeout=20)
+            self._watchdog_thread.join(timeout=_PROCESS_TERMINATION_TIME)
 
         # Disconnects from and destroys the terminator array buffer.
         self._terminator_array.disconnect()
@@ -627,6 +606,28 @@ class VideoSystem:
     def system_id(self) -> np.uint8:
         """Returns the unique identifier code assigned to the VideoSystem instance."""
         return self._system_id
+
+    def _terminate_child_processes(self) -> None:
+        """Terminates the producer and consumer processes in the order that preserves every buffered camera frame.
+
+        Notes:
+            The producer is terminated and joined before the consumer, so the saver_queue contents are final once the
+            producer exits. The method then appends the end-of-stream sentinel, which instructs the consumer to save
+            every frame that precedes the sentinel in the queue before terminating. Ordering the shutdown this way
+            keeps a frame that the producer buffers during the shutdown from being stranded in the queue.
+        """
+        # Emits the process shutdown signal, which terminates the producer process.
+        if self._terminator_array is not None:
+            self._terminator_array[0] = 1
+
+        if self._producer_process is not None:
+            self._producer_process.join(timeout=_PROCESS_TERMINATION_TIME)
+
+        # The consumer runs until it encounters the sentinel, so the sentinel is only sent once the producer can no
+        # longer append frames to the queue.
+        if self._consumer_process is not None:
+            self._saver_queue.put(None)
+            self._consumer_process.join(timeout=_PROCESS_SHUTDOWN_TIME)
 
     @staticmethod
     def _frame_display_loop(
@@ -800,9 +801,10 @@ class VideoSystem:
             This method should be executed by the consumer Process. It is not intended to be executed by the main
             process where the VideoSystem is instantiated.
 
-            This method's main loop is kept alive until the saver_queue is empty. This is an intentional security
-            feature that ensures all buffered images are processed before the saver is terminated. Overriding this
-            behavior requires the process kill command, but tampering with this feature is strongly discouraged.
+            This method's main loop is kept alive until it encounters the end-of-stream sentinel appended to the
+            saver_queue during shutdown. This is an intentional security feature that ensures all buffered images are
+            processed before the saver is terminated. Overriding this behavior requires the process kill command, but
+            tampering with this feature is strongly discouraged.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -811,10 +813,9 @@ class VideoSystem:
             saver_queue: The multiprocessing Queue that buffers and pipes acquired frames to the consumer process.
             logger_queue: The multiprocessing Queue that buffers and pipes log entries to the DataLogger's logger
                 process.
-            terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
-                and terminate it during the global shutdown.
+            terminator_array: A SharedMemoryArray instance used to report the initialization status of the process.
         """
-        # Connects to the terminator array used to manage the loop runtime.
+        # Connects to the terminator array used to report the initialization status of this process.
         terminator_array.connect()
 
         # Initializes the FFMPEG encoder process.
@@ -827,17 +828,17 @@ class VideoSystem:
         data_placeholder = np.array([], dtype=np.uint8)
 
         try:
-            # Runs until the global shutdown command is issued (via the variable under index 0) and until the
-            # saver_queue is empty.
-            while not terminator_array[0] or not saver_queue.empty():
-                # Grabs the frame data and its acquisition timestamp from the queue.
-                try:
-                    frame: NDArray[np.integer[Any]]
-                    frame_time: int
-                    frame, frame_time = saver_queue.get_nowait()
-                except Empty:
-                    # Cycles the loop if the queue is empty.
-                    continue
+            # Runs until the end-of-stream sentinel is encountered. The sentinel is appended to the queue only after
+            # the producer process has exited, so every frame that precedes it is saved before the loop terminates.
+            while True:
+                # Waits for the next queue entry. Blocking here keeps the process idle while the queue is empty.
+                payload: tuple[NDArray[np.integer[Any]], int] | None = saver_queue.get()
+                if payload is None:
+                    break
+
+                frame: NDArray[np.integer[Any]]
+                frame_time: int
+                frame, frame_time = payload
 
                 # Sends the frame to be saved by the saver.
                 saver.save_frame(frame)
@@ -904,24 +905,9 @@ class VideoSystem:
             # If either consumer or producer is dead, ensures proper resource reclamation before terminating with an
             # error.
             if error:
-                # Reclaims all committed resources before terminating with an error.
-                self._terminator_array[0] = 1
-
-                # If the consumer process is alive, gives it time to finish processing any remaining frames.
-                drain_timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
-                while (
-                    self._consumer_process is not None
-                    and not self._saver_queue.empty()
-                    and self._consumer_process.is_alive()
-                ):
-                    if drain_timer.elapsed > _PROCESS_SHUTDOWN_TIME * 1000:
-                        break
-
-                # Joins all processes.
-                if self._consumer_process is not None:
-                    self._consumer_process.join()
-                if self._producer_process is not None:
-                    self._producer_process.join()
+                # Reclaims all committed resources before terminating with an error. The consumer is given the time to
+                # save any frames that the producer buffered before the failure.
+                self._terminate_child_processes()
 
                 # Disconnects from the shared memory array and destroys the shared memory buffer.
                 if self._terminator_array is not None:
