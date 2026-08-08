@@ -1,8 +1,8 @@
 """Contains tests for classes and functions provided by the configuration.py module."""
 
 import pytest
-from synthetic_node_map import SENSOR_WIDTH, SyntheticNodeMap, SyntheticNodeMapError
 from ataraxis_base_utilities import error_format
+from tests.synthetic_node_map import SENSOR_WIDTH, SyntheticNodeMap, SyntheticNodeMapError
 
 from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
 from ataraxis_video_system.video.camera import HarvestersCamera

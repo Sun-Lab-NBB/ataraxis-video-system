@@ -15,7 +15,7 @@ from threading import Thread
 from multiprocessing import (
     Queue as MPQueue,
     Manager,
-    Process,
+    get_context,
 )
 
 import cv2
@@ -42,6 +42,8 @@ from .camera import MockCamera, OpenCVCamera, CameraInterfaces, HarvestersCamera
 from .manifest import write_camera_manifest
 
 if TYPE_CHECKING:
+    from multiprocessing.context import SpawnContext
+    from multiprocessing.process import BaseProcess
     from multiprocessing.managers import SyncManager
 
     from numpy.typing import NDArray
@@ -49,6 +51,10 @@ if TYPE_CHECKING:
 
 MAXIMUM_QUANTIZATION_VALUE: int = 51
 """The maximum quantization parameter value accepted by FFMPEG encoders."""
+
+_MULTIPROCESSING_CONTEXT: SpawnContext = get_context("spawn")
+"""The spawn-based multiprocessing context used to create the frame producer and consumer processes, ensuring
+identical cross-platform behavior on all supported platforms."""
 
 _PROCESS_INITIALIZATION_TIME: int = 20
 """The maximum number of seconds to wait for the consumer and producer processes to initialize."""
@@ -416,8 +422,8 @@ class VideoSystem:
         self._logger_queue: MPQueue = data_logger.input_queue  # type: ignore[type-arg]
         self._saver_queue: MPQueue = self._mp_manager.Queue()  # type: ignore[type-arg, assignment]
         self._terminator_array: SharedMemoryArray | None = None
-        self._producer_process: Process | None = None
-        self._consumer_process: Process | None = None
+        self._producer_process: BaseProcess | None = None
+        self._consumer_process: BaseProcess | None = None
         self._watchdog_thread: Thread | None = None
 
         # Writes the camera manifest entry to the DataLogger output directory. The manifest identifies this
@@ -467,7 +473,7 @@ class VideoSystem:
 
         # Only starts the consumer process if the managed camera is configured to save frames.
         if self._saver is not None:
-            self._consumer_process = Process(
+            self._consumer_process = _MULTIPROCESSING_CONTEXT.Process(
                 target=self._frame_saving_loop,
                 args=(
                     self._system_id,
@@ -481,7 +487,7 @@ class VideoSystem:
             self._consumer_process.start()
 
         # Starts the producer process.
-        self._producer_process = Process(
+        self._producer_process = _MULTIPROCESSING_CONTEXT.Process(
             target=self._frame_production_loop,
             args=(
                 self._system_id,

@@ -17,7 +17,7 @@ from ataraxis_video_system import (
     EncoderSpeedPresets,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.video.log_processing import extract_logged_camera_timestamps
+from ataraxis_video_system.video.timestamps import extract_logged_camera_timestamps
 
 
 @pytest.fixture
@@ -360,7 +360,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     # Extracts frame timestamps for system 1 (which saved frames)
     log_path_1 = data_logger.output_directory / f"{data_logger._name}_101.npz"
     if log_path_1.exists():
-        frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, n_workers=1)
+        frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, workers=1)
         # With fps of 10 and running for ~4 seconds total, should have acquired around 40 frames
         assert 35 <= len(frame_timestamps_1) <= 45
 
@@ -581,7 +581,7 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
 
     # Extracts timestamps
     log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
-    timestamps = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=1)
+    timestamps = extract_logged_camera_timestamps(log_path=log_file_path, workers=1)
 
     # Total recording time: 1 + 2 + 1 = 4 seconds
     # Expected frames: approximately 40 (4 * 10 fps)
@@ -615,8 +615,8 @@ def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
     # Finds the generated .npz archive.
     npz_files = list(logger.output_directory.glob("*.npz"))
     if npz_files:
-        timestamps = extract_logged_camera_timestamps(log_path=npz_files[0], n_workers=1)
-        assert timestamps == ()
+        timestamps = extract_logged_camera_timestamps(log_path=npz_files[0], workers=1)
+        assert timestamps.size == 0
 
 
 def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> None:
@@ -657,8 +657,8 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     # Extracts timestamps using parallel workers.
     log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
     if log_file_path.exists():
-        timestamps_parallel = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=-1)
-        timestamps_sequential = extract_logged_camera_timestamps(log_path=log_file_path, n_workers=1)
+        timestamps_parallel = extract_logged_camera_timestamps(log_path=log_file_path, workers=-1)
+        timestamps_sequential = extract_logged_camera_timestamps(log_path=log_file_path, workers=1)
 
         # Both methods should return the same timestamps.
         assert len(timestamps_parallel) == len(timestamps_sequential)
