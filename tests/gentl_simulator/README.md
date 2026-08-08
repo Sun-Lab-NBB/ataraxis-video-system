@@ -1,13 +1,15 @@
 # TLSimu GenTL Producer simulator
 
 Third-party binaries used by the test suite to exercise the `harvesters` camera interface without GenICam hardware.
-Nothing in `src/` depends on these files, and they are not part of the distributed package.
+Nothing in `src/` depends on these files, and they are excluded from the installable wheel. The source distribution
+carries them alongside the test suite, so that a released version stays reproducible.
 
 `TLSimu.cti` is the GenTL Producer simulator from the GenICam reference implementation. It presents four simulated
 devices (`TLSimuMono` and `TLSimuColor`, two of each across two interfaces) and serves synthetic frames through the
 regular GenTL buffer flow, so `HarvestersCamera` drives it through the same code path it uses for a real camera.
 `libVirtualFG` is the virtual frame grabber that `TLSimu.cti` links against, and it must stay in the same directory
-because the producer resolves it through an `$ORIGIN` runtime search path.
+because each producer resolves it relative to its own location, through `$ORIGIN` on Linux, `@loader_path` on macOS,
+and the loader's DLL search order on Windows.
 
 ## Provenance
 
@@ -33,5 +35,10 @@ resulting `wheelhouse` directory.
 
 ## License
 
-These binaries are redistributed under the BSD 3-Clause license reproduced in `LICENSE.txt`, which is the license the
+These binaries are redistributed under the EMVA GenICam license reproduced in `LICENSE.txt`, which is the license the
 EMVA ships with the `genicam` wheels. It applies to the contents of this directory only.
+
+The text is BSD-style and carries the three standard clauses, but its grant reads "Redistribution and use in source
+and binary forms, without modification, are permitted" rather than the "with or without modification" of the canonical
+BSD 3-Clause license. Redistributing these binaries unmodified, as this directory does, is therefore permitted, while
+modifying them is not.

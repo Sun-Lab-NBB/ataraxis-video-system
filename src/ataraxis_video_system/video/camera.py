@@ -10,7 +10,7 @@ import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
-from contextlib import suppress, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
@@ -37,9 +37,9 @@ from .configuration import (
     GenicamNodeInfo,
     GenicamConfiguration,
     read_genicam_node,
+    read_genicam_nodes,
     write_genicam_node,
     format_genicam_node,
-    enumerate_genicam_nodes,
     apply_genicam_configuration,
 )
 
@@ -704,18 +704,10 @@ class HarvestersCamera:
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
         """
-        camera_node_map = self.node_map
-        node_names = enumerate_genicam_nodes(node_map=camera_node_map, blacklisted_nodes=blacklisted_nodes)
-
-        nodes: list[GenicamNodeInfo] = []
-        for name in node_names:
-            with suppress(Exception):
-                nodes.append(read_genicam_node(node_map=camera_node_map, name=name))
-
         return GenicamConfiguration(
             camera_model=self._model,
             camera_serial_number=self._serial_number,
-            nodes=nodes,
+            nodes=read_genicam_nodes(node_map=self.node_map, blacklisted_nodes=blacklisted_nodes),
         )
 
     def apply_configuration(
