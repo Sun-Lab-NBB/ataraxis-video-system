@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
+from itertools import product
 from contextlib import suppress
 from dataclasses import field, dataclass
 
@@ -63,7 +64,8 @@ DEFAULT_BLACKLISTED_NODES: frozenset[str] = frozenset({"CustomerIDKey", "Custome
 
 Some vendor-specific nodes report ReadWrite access but reject writes at the hardware level, causing spurious
 errors. These nodes are excluded by default from all configuration operations. End users can override this set
-via the ``blacklisted_nodes`` parameter on ``enumerate_genicam_nodes`` and ``apply_genicam_configuration``.
+via the ``blacklisted_nodes`` parameter on ``enumerate_genicam_nodes``, ``read_genicam_nodes``, and
+``apply_genicam_configuration``.
 """
 
 _VALUE_NODE_TYPES: frozenset[int] = frozenset(
@@ -72,7 +74,7 @@ _VALUE_NODE_TYPES: frozenset[int] = frozenset(
 """The GenICam node type codes that represent collectible leaf value nodes."""
 
 _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
-    # Phase 1 — Unlock: disables auto-controls and centering that lock dependent nodes.
+    # Phase 1, Unlock: disables auto-controls and centering that lock dependent nodes.
     (
         "CenterX",
         "CenterY",
@@ -81,12 +83,12 @@ _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
         "BalanceWhiteAuto",
         "BlackLevelAuto",
     ),
-    # Phase 2 — Reset: zeroes offsets to maximize the available Width/Height range.
+    # Phase 2, Reset: zeroes offsets to maximize the available Width/Height range.
     (
         "OffsetX",
         "OffsetY",
     ),
-    # Phase 3 — Format: pixel format, binning, decimation, and reversal change WidthMax/HeightMax.
+    # Phase 3, Format: pixel format, binning, decimation, and reversal change WidthMax/HeightMax.
     (
         "PixelFormat",
         "BinningHorizontal",
@@ -100,30 +102,30 @@ _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
         "ReverseX",
         "ReverseY",
     ),
-    # Phase 4 — Dimensions: sets Width/Height within the range established by phases 2-3.
+    # Phase 4, Dimensions: sets Width/Height within the range established by phases 2-3.
     (
         "Width",
         "Height",
     ),
-    # Phase 5 — Offsets: sets OffsetX/OffsetY now that Width/Height leave room for them.
+    # Phase 5, Offsets: sets OffsetX/OffsetY now that Width/Height leave room for them.
     (
         "OffsetX",
         "OffsetY",
     ),
-    # Phase 6 — Timing: exposure constrains max frame rate, so exposure is written first.
+    # Phase 6, Timing: exposure constrains max frame rate, so exposure is written first.
     (
         "ExposureMode",
         "AcquisitionFrameRateEnable",
         "ExposureTime",
         "AcquisitionFrameRate",
     ),
-    # Phase 7 — Analog: manual analog values, written while the auto-controls that own them are still disengaged.
+    # Phase 7, Analog: manual analog values, written while the auto-controls that own them are still disengaged.
     (
         "Gain",
         "BlackLevel",
         "BalanceRatio",
     ),
-    # Phase 8 — Re-lock: re-enables auto-controls and centering if the target configuration uses them.
+    # Phase 8, Re-lock: re-enables auto-controls and centering if the target configuration uses them.
     (
         "CenterX",
         "CenterY",
@@ -140,6 +142,13 @@ Writing nodes in arbitrary order causes OutOfRangeException or AccessException e
 phases in which nodes must be written to satisfy all known dependency chains. Nodes that appear in multiple phases
 (e.g., OffsetX in phases 2 and 5) are written with their reset value first, then their target value. Nodes not
 listed in any phase are written after all phases complete.
+"""
+
+_MAXIMUM_SELECTOR_COMBINATIONS: int = 64
+"""The largest number of selector combinations enumerated for a single node.
+
+A node addressed by several selectors expands into the product of their entries, so this ceiling bounds the read
+and write cost on cameras that expose large selector sets.
 """
 
 _RESET_PHASE_COUNT: int = 2
@@ -175,6 +184,13 @@ class GenicamNodeInfo:
     """The feature name of the node (e.g., "Width", "ExposureTime")."""
     value: int | float | str | bool
     """The current value of the node."""
+    selectors: dict[str, str | int] = field(default_factory=dict)
+    """The selector node values that address the instance this entry describes, empty for an unselected node.
+
+    SFNC multiplexes some features behind a selector, so a camera holds one ``BalanceRatio`` per
+    ``BalanceRatioSelector`` entry rather than a single value. This mapping pins the instance the value belongs to,
+    and it is applied to the camera before the value is read or written.
+    """
 
 
 @dataclass
@@ -255,6 +271,56 @@ def enumerate_genicam_nodes(
 
     names.sort()
     return names
+
+
+def read_genicam_nodes(
+    node_map: NodeMap,
+    blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
+) -> list[GenicamNodeInfo]:
+    """Reads every writable node of the connected camera, including each instance of a selector-addressed node.
+
+    Notes:
+        A node that SFNC multiplexes behind a selector holds one value per selector combination, so it contributes
+        one entry per combination rather than a single entry. Reading those values moves the selectors, so the
+        selector positions the camera started from are restored before this function returns.
+
+    Args:
+        node_map: The GenICam node map object.
+        blacklisted_nodes: A set of node names to exclude from the result. Defaults to ``DEFAULT_BLACKLISTED_NODES``.
+
+    Returns:
+        A list of ``GenicamNodeInfo`` instances covering every writable node instance that could be read.
+    """
+    names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=blacklisted_nodes)
+
+    # Captures the position of every selector before any of them is moved, so that reading the configuration leaves
+    # the camera exactly as it was found.
+    selector_names = {selector for name in names for selector in _get_selecting_features(node_map=node_map, name=name)}
+    original_positions: dict[str, str | int] = {}
+    for selector_name in selector_names:
+        with suppress(Exception):
+            original_positions[selector_name] = getattr(node_map, selector_name).value
+
+    nodes: list[GenicamNodeInfo] = []
+    try:
+        for name in names:
+            # A selector is recorded at the position the camera was found in, because stepping the nodes it
+            # addresses moves it away from that position before this loop reaches it.
+            if name in original_positions:
+                nodes.append(GenicamNodeInfo(name=name, value=original_positions[name], selectors={}))
+                continue
+
+            for selectors in _expand_selectors(node_map=node_map, name=name):
+                with suppress(Exception):
+                    _apply_selectors(node_map=node_map, selectors=selectors)
+                    value = read_genicam_node(node_map=node_map, name=name).value
+                    nodes.append(GenicamNodeInfo(name=name, value=value, selectors=dict(selectors)))
+    finally:
+        for selector_name, selector_value in original_positions.items():
+            with suppress(Exception):
+                getattr(node_map, selector_name).value = selector_value
+
+    return nodes
 
 
 def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
@@ -440,8 +506,9 @@ def apply_genicam_configuration(
     """Applies the ReadWrite nodes from a ``GenicamConfiguration`` to the connected camera's node map.
 
     First validates that the camera identity matches and that all non-blacklisted nodes in the configuration exist
-    on the device and are writable. Then applies nodes in SFNC-compliant phase order to satisfy interdependent
-    constraints (e.g., Width/OffsetX, GainAuto/Gain, binning/dimensions).
+    on the device. Then applies nodes in SFNC-compliant phase order to satisfy interdependent constraints (e.g.,
+    Width/OffsetX, GainAuto/Gain, binning/dimensions), validating that every node is writable once the unlock phase
+    has run.
 
     Notes:
         GenICam SFNC defines dynamic constraints between nodes: ``OffsetX.Max = SensorWidth - Width``, auto-controls
@@ -450,6 +517,9 @@ def apply_genicam_configuration(
         write reset values (offsets to 0, auto-controls to Off) to unlock dependent nodes and maximize dimension
         ranges. Phases 3-8 write target values in dependency order. Remaining nodes not covered by any phase are
         written last.
+
+        The writability check runs after phase 1 rather than before it, because an engaged auto-control holds its
+        manual counterpart at ReadOnly until that phase disengages it.
 
     Args:
         node_map: The GenICam node map object.
@@ -481,12 +551,13 @@ def apply_genicam_configuration(
         else:
             console.echo(message=message, level=LogLevel.WARNING)
 
-    # Builds a lookup from node name to its target GenicamNodeInfo, filtering out blacklisted nodes.
-    node_lookup: dict[str, GenicamNodeInfo] = {}
+    # Builds a lookup from node name to its target values, filtering out blacklisted nodes. A node addressed by a
+    # selector contributes one entry per selector combination, so each name maps to a list.
+    node_lookup: dict[str, list[GenicamNodeInfo]] = {}
     for node_info in config.nodes:
         if node_info.name in blacklisted_nodes:
             continue
-        node_lookup[node_info.name] = node_info
+        node_lookup.setdefault(node_info.name, []).append(node_info)
 
     # Validates that all nodes in the lookup exist on the device.
     for name in node_lookup:
@@ -527,21 +598,23 @@ def apply_genicam_configuration(
         )
 
     # Applies all remaining nodes that were not covered by any phase, in their original configuration order.
-    for name, node_info in node_lookup.items():
+    for name, node_infos in node_lookup.items():
         if name in written:
             continue
 
-        try:
-            getattr(node_map, name).value = node_info.value
-        except Exception as error:  # pragma: no cover
-            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
-            console.error(message=message, error=RuntimeError)
+        for node_info in node_infos:
+            try:
+                _apply_selectors(node_map=node_map, selectors=node_info.selectors)
+                getattr(node_map, name).value = node_info.value
+            except Exception as error:  # pragma: no cover
+                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
+                console.error(message=message, error=RuntimeError)
 
 
 def _write_apply_phase(
     node_map: NodeMap,
     phase: tuple[str, ...],
-    node_lookup: dict[str, GenicamNodeInfo],
+    node_lookup: dict[str, list[GenicamNodeInfo]],
     written: set[str],
     *,
     use_reset_values: bool,
@@ -551,7 +624,7 @@ def _write_apply_phase(
     Args:
         node_map: The GenICam node map object.
         phase: The node names that belong to the phase, in the order they must be written.
-        node_lookup: The target value of every non-blacklisted node, keyed by node name.
+        node_lookup: The target values of every non-blacklisted node, keyed by node name.
         written: The names of the nodes that have received their target value. Nodes this call writes with their
             target value are added to it.
         use_reset_values: Determines whether nodes covered by ``_PHASE_RESET_VALUES`` receive their reset value
@@ -570,19 +643,118 @@ def _write_apply_phase(
                     getattr(node_map, name).value = _PHASE_RESET_VALUES[name]
             continue
 
-        value = (
-            _PHASE_RESET_VALUES[name] if use_reset_values and name in _PHASE_RESET_VALUES else node_lookup[name].value
-        )
+        for node_info in node_lookup[name]:
+            value = _PHASE_RESET_VALUES[name] if use_reset_values and name in _PHASE_RESET_VALUES else node_info.value
 
-        try:
-            getattr(node_map, name).value = value
-        except Exception as error:
-            # Reset-phase failures are non-fatal, as the node may not exist on this camera model.
-            if use_reset_values:  # pragma: no cover
-                continue
-            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
-            console.error(message=message, error=RuntimeError)
+            try:
+                _apply_selectors(node_map=node_map, selectors=node_info.selectors)
+                getattr(node_map, name).value = value
+            except Exception as error:
+                # Reset-phase failures are non-fatal, as the node may not exist on this camera model.
+                if use_reset_values:  # pragma: no cover
+                    continue
+                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
+                console.error(message=message, error=RuntimeError)
 
         # Only marks nodes as written when their target value was applied (not the reset value).
         if not use_reset_values:
             written.add(name)
+
+
+def _get_selecting_features(node_map: NodeMap, name: str) -> list[str]:
+    """Returns the names of the selector nodes that address the named node.
+
+    Args:
+        node_map: The GenICam node map object.
+        name: The feature name of the node to inspect.
+
+    Returns:
+        A sorted list of selector node names, empty for a node no selector addresses.
+    """
+    try:
+        feature = getattr(node_map, name)
+        return sorted(str(selector.node.name) for selector in feature.node.selecting_features)
+    except Exception:  # pragma: no cover
+        return []
+
+
+def _get_selector_values(selector: Any) -> list[str | int]:
+    """Collects every value the selector accepts that the connected camera implements.
+
+    Args:
+        selector: The selector feature object.
+
+    Returns:
+        The symbolic entries of an Enumeration selector or the permitted values of an Integer selector, empty when
+        neither applies.
+    """
+    values: list[str | int] = []
+    type_code = int(selector.node.principal_interface_type)
+
+    if type_code == _NodeType.ENUMERATION:
+        for entry in selector.entries:
+            # Entries the camera model does not implement report an unreadable access mode and are skipped.
+            with suppress(Exception):
+                if int(entry.node.get_access_mode()) in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
+                    values.append(str(entry.symbolic))
+    elif type_code == _NodeType.INTEGER:  # pragma: no cover
+        with suppress(Exception):
+            values.extend(range(int(selector.min), int(selector.max) + 1, max(int(selector.inc), 1)))
+
+    return values
+
+
+def _expand_selectors(node_map: NodeMap, name: str) -> list[dict[str, str | int]]:
+    """Resolves every selector combination under which the named node holds a separate value.
+
+    Notes:
+        A node addressed by several selectors expands into the product of their values. The expansion is capped at
+        ``_MAXIMUM_SELECTOR_COMBINATIONS`` entries, and the truncation is reported to the user.
+
+    Args:
+        node_map: The GenICam node map object.
+        name: The feature name of the node to expand.
+
+    Returns:
+        A list of selector mappings, holding a single empty mapping for a node no selector addresses.
+    """
+    axes: list[list[tuple[str, str | int]]] = []
+    for selector_name in _get_selecting_features(node_map=node_map, name=name):
+        selector = getattr(node_map, selector_name, None)
+        if selector is None:  # pragma: no cover
+            continue
+
+        # A selector the camera does not allow writing cannot be stepped, so the node keeps its current instance.
+        with suppress(Exception):
+            if int(selector.node.get_access_mode()) != _AccessMode.READ_WRITE:  # pragma: no cover
+                continue
+
+        values = _get_selector_values(selector=selector)
+        if values:
+            axes.append([(selector_name, value) for value in values])
+
+    if not axes:
+        return [{}]
+
+    combinations = [dict(combination) for combination in product(*axes)]
+    if len(combinations) > _MAXIMUM_SELECTOR_COMBINATIONS:  # pragma: no cover
+        message = (
+            f"The GenICam node '{name}' is addressed by {len(combinations)} selector combinations, which exceeds the "
+            f"ceiling of {_MAXIMUM_SELECTOR_COMBINATIONS}. Only the first {_MAXIMUM_SELECTOR_COMBINATIONS} "
+            f"combinations are covered."
+        )
+        console.echo(message=message, level=LogLevel.WARNING)
+        combinations = combinations[:_MAXIMUM_SELECTOR_COMBINATIONS]
+
+    return combinations
+
+
+def _apply_selectors(node_map: NodeMap, selectors: dict[str, str | int]) -> None:
+    """Positions the selector nodes so that a selected feature addresses the intended instance.
+
+    Args:
+        node_map: The GenICam node map object.
+        selectors: The selector values to write, keyed by selector node name.
+    """
+    for selector_name, selector_value in selectors.items():
+        getattr(node_map, selector_name).value = selector_value

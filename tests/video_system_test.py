@@ -454,7 +454,8 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
     assert vs._saver is not None
 
 
-def test_init_harvesters_interface(gentl_simulator, data_logger, tmp_path) -> None:
+@pytest.mark.usefixtures("gentl_simulator")
+def test_init_harvesters_interface(data_logger, tmp_path) -> None:
     """Verifies that VideoSystem can be initialized with the Harvesters camera interface."""
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")

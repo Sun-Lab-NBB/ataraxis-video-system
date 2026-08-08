@@ -284,7 +284,8 @@ def test_harvesters_camera_init_repr() -> None:
     assert repr(camera) == representation_string
 
 
-def test_harvesters_camera_connect_disconnect(gentl_simulator) -> None:
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_connect_disconnect() -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
 
@@ -302,7 +303,8 @@ def test_harvesters_camera_connect_disconnect(gentl_simulator) -> None:
     assert not camera.is_connected
 
 
-def test_get_harvesters_ids(gentl_simulator) -> None:
+@pytest.mark.usefixtures("gentl_simulator")
+def test_get_harvesters_ids() -> None:
     """Verifies that Harvesters discovery reports every device the configured GenTL Producer exposes."""
     cameras = _get_harvesters_ids()
 
@@ -318,7 +320,8 @@ def test_get_harvesters_ids(gentl_simulator) -> None:
     assert all(camera.acquisition_frame_rate == 0 for camera in cameras)
 
 
-def test_harvesters_camera_connect_missing_frame_rate_node(gentl_simulator) -> None:
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_connect_missing_frame_rate_node() -> None:
     """Verifies that connecting to a camera without an AcquisitionFrameRate node retains the requested rate."""
     # The simulated devices do not implement the optional AcquisitionFrameRate feature.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10)
@@ -337,11 +340,12 @@ def test_harvesters_camera_connect_missing_frame_rate_node(gentl_simulator) -> N
         default_camera.disconnect()
 
 
+@pytest.mark.usefixtures("gentl_simulator")
 @pytest.mark.parametrize(
     ("frame_width", "frame_height"),
     [(440, 440), (200, 200), (None, None)],
 )
-def test_harvesters_camera_grab_frame(gentl_simulator, frame_width, frame_height) -> None:
+def test_harvesters_camera_grab_frame(frame_width, frame_height) -> None:
     """Verifies the functioning of the HarvestersCamera grab_frame() method."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=frame_width, frame_height=frame_height)
     camera.connect()
@@ -364,7 +368,8 @@ def test_harvesters_camera_grab_frame(gentl_simulator, frame_width, frame_height
     del camera
 
 
-def test_harvesters_camera_grab_frame_color(gentl_simulator) -> None:
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_grab_frame_color() -> None:
     """Verifies that HarvestersCamera converts frames from a color device into three-channel BGR arrays."""
     camera = HarvestersCamera(system_id=222, camera_index=_SIMULATED_COLOR_INDEX, frame_width=200, frame_height=200)
     camera.connect()
@@ -394,11 +399,12 @@ def test_harvesters_camera_grab_frame_errors() -> None:
     # encounter under most real-world conditions.
 
 
+@pytest.mark.usefixtures("gentl_simulator")
 @pytest.mark.parametrize(
     ("camera_index", "expected_format"),
     [(0, InputPixelFormats.MONOCHROME), (_SIMULATED_COLOR_INDEX, InputPixelFormats.BGR)],
 )
-def test_harvesters_camera_pixel_color_format(gentl_simulator, camera_index, expected_format) -> None:
+def test_harvesters_camera_pixel_color_format(camera_index, expected_format) -> None:
     """Verifies that pixel_color_format reflects the data format of the connected device."""
     camera = HarvestersCamera(system_id=222, camera_index=camera_index)
     camera.connect()

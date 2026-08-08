@@ -150,8 +150,7 @@ def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[boo
     harvesters_cameras = [camera for camera in _all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
     has = bool(harvesters_cameras)
 
-    # Captures the full writable configuration so that every node a test may touch can be restored, rather than only
-    # the frame dimensions and rate.
+    # Captures the full writable configuration so that every node a test may touch can be restored.
     saved_configuration: GenicamConfiguration | None = None
     if has:
         camera = HarvestersCamera(system_id=222, camera_index=0)

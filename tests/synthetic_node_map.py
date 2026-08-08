@@ -1,9 +1,10 @@
 """Provides a synthetic GenICam node map that reproduces the SFNC feature interdependencies of real hardware.
 
-The bundled GenTL Producer simulator exposes ten mutually independent writable nodes, so it cannot exercise the
-dependency chains that ``apply_genicam_configuration`` orders its write phases around. This module models those
-chains directly: binning rescales the addressable sensor area, offsets and dimensions compete for that area, the
-auto-controls lock their manual counterparts, and exposure bounds the attainable frame rate.
+The bundled GenTL Producer simulator exposes ten writable nodes whose only interdependency is the degenerate
+single-entry EventSelector and EventNotification pair, so it cannot exercise the dependency chains that
+``apply_genicam_configuration`` orders its write phases around. This module models those chains directly: binning
+rescales the addressable sensor area, offsets and dimensions compete for that area, the auto-controls lock their
+manual counterparts, exposure bounds the attainable frame rate, and a selector addresses one value per channel.
 """
 
 from typing import Any
@@ -84,8 +85,30 @@ _NODE_SPECS: dict[str, _NodeSpec] = {
     "AcquisitionFrameRate": _NodeSpec(type_code=_FLOAT, category="AcquisitionControl", unit="Hz"),
     "GainAuto": _NodeSpec(type_code=_ENUMERATION, category="AnalogControl", entries=("Off", "Once", "Continuous")),
     "Gain": _NodeSpec(type_code=_FLOAT, category="AnalogControl", unit="dB"),
+    "BalanceRatioSelector": _NodeSpec(
+        type_code=_ENUMERATION, category="AnalogControl", entries=("Red", "Green", "Blue")
+    ),
+    "BalanceRatio": _NodeSpec(type_code=_FLOAT, category="AnalogControl", unit="dB"),
 }
 """Describes every node the synthetic camera implements, keyed by feature name."""
+
+_SELECTED_BY: dict[str, tuple[str, ...]] = {
+    "BalanceRatio": ("BalanceRatioSelector",),
+}
+"""Maps each selector-addressed node to the selector nodes that address it.
+
+SFNC multiplexes these nodes, so the camera holds one value per selector position rather than a single value.
+"""
+
+_SELECTED_DEFAULTS: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = {
+    ("BalanceRatio", (("BalanceRatioSelector", "Red"),)): 1.0,
+    ("BalanceRatio", (("BalanceRatioSelector", "Green"),)): 2.0,
+    ("BalanceRatio", (("BalanceRatioSelector", "Blue"),)): 3.0,
+}
+"""Stores the distinct value each selector-addressed instance holds before a test applies its own starting state.
+
+The three balance ratios differ so that a configuration collapsing them into one entry is detectable.
+"""
 
 _CATEGORY_ORDER: tuple[str, ...] = ("DeviceControl", "ImageFormatControl", "AcquisitionControl", "AnalogControl")
 """Orders the category nodes as they appear under the synthetic root node."""
@@ -104,8 +127,9 @@ _DEFAULT_VALUES: dict[str, Any] = {
     "AcquisitionFrameRate": 30.0,
     "GainAuto": "Off",
     "Gain": 0.0,
+    "BalanceRatioSelector": "Red",
 }
-"""Stores the value each node holds before a test applies its own starting state."""
+"""Stores the value each node no selector addresses holds before a test applies its own starting state."""
 
 
 class SyntheticNodeMapError(Exception):
@@ -130,10 +154,30 @@ class _RawNode:
     """The human-readable description of the node."""
     access_mode: int
     """The GenICam access mode code the node currently reports."""
+    node_map: Any = None
+    """The node map that owns this node, used to resolve the selector relationships."""
 
     def get_access_mode(self) -> int:
         """Returns the access mode code the node currently reports."""
         return self.access_mode
+
+    def is_selector(self) -> bool:
+        """Returns True if this node addresses the value of at least one other node."""
+        return any(self.name in selectors for selectors in _SELECTED_BY.values())
+
+    @property
+    def selected_features(self) -> list[Any]:
+        """Returns the features whose value this node addresses."""
+        return [
+            _Feature(node_map=self.node_map, name=name)
+            for name, selectors in _SELECTED_BY.items()
+            if self.name in selectors
+        ]
+
+    @property
+    def selecting_features(self) -> list[Any]:
+        """Returns the selector features that address the value of this node."""
+        return [_Feature(node_map=self.node_map, name=name) for name in _SELECTED_BY.get(self.name, ())]
 
 
 @dataclass(slots=True)
@@ -144,70 +188,6 @@ class _EnumEntry:
     """The descriptor of the entry."""
     symbolic: str
     """The symbolic name of the entry."""
-
-
-class _Feature:
-    """Exposes the value half of a synthetic node, mirroring the feature accessor of a GenICam node map."""
-
-    def __init__(self, node_map: "SyntheticNodeMap", name: str) -> None:
-        self._node_map = node_map
-        self._name = name
-
-    @property
-    def node(self) -> _RawNode:
-        """Returns the descriptor of the node."""
-        specification = _NODE_SPECS[self._name]
-        return _RawNode(
-            name=self._name,
-            principal_interface_type=specification.type_code,
-            description=specification.description,
-            access_mode=self._node_map.access_mode(name=self._name),
-        )
-
-    @property
-    def value(self) -> Any:
-        """Returns the current value of the node."""
-        return self._node_map.values[self._name]
-
-    @value.setter
-    def value(self, new_value: Any) -> None:
-        self._node_map.write(name=self._name, value=new_value)
-
-    @property
-    def unit(self) -> str:
-        """Returns the measurement unit of the node, or an empty string when the node defines none."""
-        return _NODE_SPECS[self._name].unit
-
-    @property
-    def min(self) -> int | float:
-        """Returns the lower bound the node currently accepts."""
-        return self._node_map.bounds(name=self._name)[0]
-
-    @property
-    def max(self) -> int | float:
-        """Returns the upper bound the node currently accepts."""
-        return self._node_map.bounds(name=self._name)[1]
-
-    @property
-    def inc(self) -> int:
-        """Returns the step increment of the node."""
-        return _NODE_SPECS[self._name].increment
-
-    @property
-    def entries(self) -> list[_EnumEntry]:
-        """Returns the symbolic entries of an Enumeration node."""
-        return [
-            _EnumEntry(
-                node=_RawNode(
-                    name=entry,
-                    principal_interface_type=_ENUMERATION,
-                    description="",
-                    access_mode=_READ_WRITE,
-                ),
-                symbolic=entry,
-            )
-            for entry in _NODE_SPECS[self._name].entries
-        ]
 
 
 @dataclass(slots=True)
@@ -232,12 +212,15 @@ class SyntheticNodeMap:
         overrides: The node values to apply on top of the defaults, establishing the starting state of the camera.
 
     Attributes:
-        values: The current value of every node, keyed by feature name.
+        values: The current value of every node no selector addresses, keyed by feature name.
+        selected_values: The current value of every selector-addressed node instance, keyed by the node name paired
+            with the selector positions that address it.
         writes: The feature name of every successful write, in the order the writes occurred.
     """
 
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self.values: dict[str, Any] = dict(_DEFAULT_VALUES)
+        self.selected_values: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = dict(_SELECTED_DEFAULTS)
         self.writes: list[str] = []
 
         # Seeds the starting state without constraint checking so that a test can describe any camera state directly.
@@ -252,6 +235,17 @@ class SyntheticNodeMap:
             return _Feature(node_map=self, name=name)
         message = f"The synthetic node map does not implement the node '{name}'."
         raise AttributeError(message)
+
+    def instance_key(self, name: str) -> tuple[str, tuple[tuple[str, Any], ...]]:
+        """Builds the storage key that identifies the instance of the named node the selectors currently address."""
+        selectors = _SELECTED_BY.get(name, ())
+        return (name, tuple((selector, self.values[selector]) for selector in sorted(selectors)))
+
+    def read(self, name: str) -> Any:
+        """Returns the value of the instance of the named node the selectors currently address."""
+        if name in _SELECTED_BY:
+            return self.selected_values[self.instance_key(name=name)]
+        return self.values[name]
 
     def access_mode(self, name: str) -> int:
         """Returns the access mode code the named node currently reports.
@@ -290,6 +284,8 @@ class SyntheticNodeMap:
             return 1.0, 1000000.0 / self.values["ExposureTime"]
         if name == "Gain":
             return 0.0, 48.0
+        if name == "BalanceRatio":
+            return 0.0, 8.0
         return 0, 0
 
     def write(self, name: str, value: Any) -> None:
@@ -314,7 +310,12 @@ class SyntheticNodeMap:
                 message = f"The value '{value}' falls outside the range [{minimum}, {maximum}] of the node '{name}'."
                 raise SyntheticNodeMapError(message)
 
-        self.values[name] = value
+        # A selector-addressed node stores one value per selector position, so the write lands on the instance the
+        # selectors currently point at rather than on a single shared slot.
+        if name in _SELECTED_BY:
+            self.selected_values[self.instance_key(name=name)] = value
+        else:
+            self.values[name] = value
         self.writes.append(name)
 
         # Reducing the addressable area shrinks the frame to fit, matching how cameras clamp dimensions on a binning
@@ -334,6 +335,7 @@ class SyntheticNodeMap:
                     principal_interface_type=_CATEGORY,
                     description="",
                     access_mode=_READ_ONLY,
+                    node_map=self,
                 )
             )
 
@@ -346,6 +348,73 @@ class SyntheticNodeMap:
                 principal_interface_type=_CATEGORY,
                 description="",
                 access_mode=_READ_ONLY,
+                node_map=self,
             ),
             features=[categories[category_name] for category_name in _CATEGORY_ORDER],
         )
+
+
+class _Feature:
+    """Exposes the value half of a synthetic node, mirroring the feature accessor of a GenICam node map."""
+
+    def __init__(self, node_map: "SyntheticNodeMap", name: str) -> None:
+        self._node_map = node_map
+        self._name = name
+
+    @property
+    def node(self) -> _RawNode:
+        """Returns the descriptor of the node."""
+        specification = _NODE_SPECS[self._name]
+        return _RawNode(
+            name=self._name,
+            principal_interface_type=specification.type_code,
+            description=specification.description,
+            access_mode=self._node_map.access_mode(name=self._name),
+            node_map=self._node_map,
+        )
+
+    @property
+    def value(self) -> Any:
+        """Returns the current value of the node."""
+        return self._node_map.read(name=self._name)
+
+    @value.setter
+    def value(self, new_value: Any) -> None:
+        self._node_map.write(name=self._name, value=new_value)
+
+    @property
+    def unit(self) -> str:
+        """Returns the measurement unit of the node, or an empty string when the node defines none."""
+        return _NODE_SPECS[self._name].unit
+
+    @property
+    def min(self) -> int | float:
+        """Returns the lower bound the node currently accepts."""
+        return self._node_map.bounds(name=self._name)[0]
+
+    @property
+    def max(self) -> int | float:
+        """Returns the upper bound the node currently accepts."""
+        return self._node_map.bounds(name=self._name)[1]
+
+    @property
+    def inc(self) -> int:
+        """Returns the step increment of the node."""
+        return _NODE_SPECS[self._name].increment
+
+    @property
+    def entries(self) -> list[_EnumEntry]:
+        """Returns the symbolic entries of an Enumeration node."""
+        return [
+            _EnumEntry(
+                node=_RawNode(
+                    name=entry,
+                    principal_interface_type=_ENUMERATION,
+                    description="",
+                    access_mode=_READ_WRITE,
+                    node_map=self._node_map,
+                ),
+                symbolic=entry,
+            )
+            for entry in _NODE_SPECS[self._name].entries
+        ]
