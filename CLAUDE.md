@@ -2,39 +2,34 @@
 
 ## Session start behavior
 
-At the beginning of each coding session, before making any code changes, you should build a comprehensive
-understanding of the codebase by invoking the `/explore-codebase` skill.
+At the beginning of each coding session, before making any code changes, you MUST build a comprehensive understanding
+of the codebase by invoking the `/explore-codebase` skill.
 
-This ensures you:
-- Understand the project architecture before modifying code
-- Follow existing patterns and conventions
-- Don't introduce inconsistencies or break integrations
+This builds an accurate model of the project architecture before changes are made, keeping new code consistent with the
+patterns that the library, its CLI, and its MCP server already follow.
 
 ## Style guide compliance
 
 Before writing, modifying, or reviewing any code or documentation, you MUST invoke the appropriate skill to load
 Ataraxis framework conventions. This applies to ALL file types:
 
-| Task                                | Skill to Invoke    |
-|-------------------------------------|--------------------|
-| Writing or modifying Python code    | `/python-style`    |
-| Writing or modifying README files   | `/readme-style`    |
-| Writing git commit messages         | `/commit`          |
-| Writing or modifying pyproject.toml | `/pyproject-style` |
-| Configuring tox.ini                 | `/tox-config`      |
+| Task                                    | Skill to invoke    |
+|-----------------------------------------|--------------------|
+| Writing or modifying Python code        | `/python-style`    |
+| Writing or modifying README files       | `/readme-style`    |
+| Writing or modifying pyproject.toml     | `/pyproject-style` |
+| Writing or modifying tox.ini files      | `/tox-config`      |
+| Writing or modifying Sphinx docs files  | `/api-docs`        |
+| Writing or modifying skill files        | `/skill-design`    |
+| Creating or verifying project structure | `/project-layout`  |
+| Committing local changes                | `/commit`          |
 
-All contributions must strictly follow these conventions. Key conventions include:
-- Google-style docstrings with proper sections
-- Full type annotations with explicit array dtypes
-- Keyword arguments for function calls
-- Third person imperative mood for comments and documentation
-- Proper error handling with `console.error()`
-- 120 character line limit
+This is non-negotiable. Each skill carries a verification checklist that you MUST complete before submitting any work.
 
 ## Cross-referenced library verification
 
-Ataraxis framework projects often depend on other `ataraxis-*` or `sl-*` libraries. These libraries may be stored
-locally in the same parent directory as this project (`/home/cyberaxolotl/Desktop/GitHubRepos/`).
+Ataraxis framework projects often depend on other `ataraxis-*` or `sollertia-*` libraries. These libraries may be
+stored locally in the same parent directory as this project, reachable as `../` from the repository root.
 
 **Before writing code that interacts with a cross-referenced library, you MUST:**
 
@@ -82,7 +77,10 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 |-------------------------|--------------------------------------------------------------------------------|
 | `/explore-codebase`     | Perform in-depth codebase exploration at session start                         |
 | `/explore-dependencies` | Explore installed ataraxis dependency APIs for reuse opportunities             |
+| `/audit-correctness`    | Audit source code for bugs, edge cases, races, and leaks                       |
 | `/audit-facts`          | Audit documentation for factual accuracy against source code                   |
+| `/audit-performance`    | Audit source code for cost, speed, memory use, and dtype predictability        |
+| `/audit-project`        | Orchestrate the four audits and merge their findings into one report           |
 | `/audit-style`          | Audit files for style and convention compliance                                |
 | `/python-style`         | Apply Ataraxis framework Python coding conventions (REQUIRED for code changes) |
 | `/readme-style`         | Apply Ataraxis framework README conventions                                    |
@@ -95,7 +93,7 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 | `/pr`                   | Draft Ataraxis framework style-compliant pull request summaries                |
 | `/release`              | Draft Ataraxis framework style-compliant release notes                         |
 
-## MCP server integration
+## MCP server
 
 This library provides an MCP server (`axvs mcp`) that exposes camera discovery, configuration, video recording,
 manifest management, and log data processing tools. When working with this project or its dependencies, prefer using
@@ -168,7 +166,7 @@ video encoding using CPU or GPU.
 ### Architecture
 
 - **VideoSystem**: Producer-consumer multiprocessing pattern. Constructor requires `system_id`, `data_logger`,
-  `name`, and `output_directory` as positional arguments; `__init__` writes a camera manifest entry associating
+  `name`, and `output_directory` as positional arguments. `__init__` writes a camera manifest entry associating
   the system_id with the human-readable name. A producer process acquires frames from the camera interface and
   pushes them to a queue. A consumer process pops frames and streams raw bytes to FFMPEG via stdin. A 4-element
   SharedMemoryArray controls termination and frame-saving toggles via IPC.
@@ -198,8 +196,8 @@ video encoding using CPU or GPU.
   status and management (4), and post-processing analysis and cleanup (2). Session tools expose configurable
   encoding parameters (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log
   archives and returns output paths. Batch log processing uses `JobExecutionState` (in
-  `interfaces/mcp_execution.py`) with budget-based worker allocation via `job_execution_manager()`: the budget is
-  divided evenly among concurrent parallel jobs (snapped to multiples of 5) with a `_compute_sqrt_minimum()`
+  `interfaces/mcp_execution.py`) with budget-based worker allocation via `job_execution_manager()`, which divides the
+  budget evenly among concurrent parallel jobs (snapped to multiples of 5) with a `_compute_sqrt_minimum()`
   saturation floor. The MCP server is registered with MCP clients via the **video** plugin in the ataraxis
   marketplace, not directly from this repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
@@ -291,5 +289,6 @@ video encoding using CPU or GPU.
 2. Enforce single-session constraint via `_active_session` global state check
 3. Log processing execution uses `JobExecutionState` with budget-based worker allocation
 4. The execution manager divides budget among parallel jobs via `job_execution_manager()` and `_compute_sqrt_minimum()`
-5. Most tools return `dict[str, Any]` structured data (the instance sets `json_response=True`); some return strings
+5. Most tools return `dict[str, Any]` structured data, as the instance sets `json_response=True`, and some return
+   strings
 6. MCP server registration happens in the ataraxis marketplace video plugin, not in this repository

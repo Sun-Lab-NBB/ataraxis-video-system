@@ -156,7 +156,6 @@ from ataraxis_video_system import VideoSystem, VideoEncoders, CameraInterfaces, 
 # Since the VideoSystem and DataLogger classes use multiprocessing under-the-hood, the runtime must be protected by the
 # __main__ guard.
 if __name__ == "__main__":
-
     # Enables the console module to communicate the example's runtime progress via the terminal.
     console.enable()
 
@@ -465,23 +464,23 @@ This project uses `tox` for development automation. The following tox environmen
 | `lint`               | Runs ruff formatting, ruff linting, and mypy type checking   |
 | `stubs`              | Generates py.typed marker and .pyi stub files                |
 | `{py312,...}-test`   | Runs the test suite via pytest for each supported Python     |
-| `coverage`           | Aggregates test coverage into an HTML report                 |
+| `coverage`           | Aggregates test coverage and applies the 100% coverage gate  |
 | `docs`               | Builds the API documentation via Sphinx                      |
 | `build`              | Builds sdist and wheel distributions                         |
 | `upload`             | Uploads distributions to PyPI via twine                      |
+| `deploy`             | Uploads the built documentation to the Netlify site          |
 | `install`            | Builds and installs the project into its mamba environment   |
 | `uninstall`          | Uninstalls the project from its mamba environment            |
-| `create`             | Creates the project’s mamba development environment          |
-| `remove`             | Removes the project’s mamba development environment          |
+| `create`             | Creates the project's mamba development environment          |
+| `remove`             | Removes the project's mamba development environment          |
 | `provision`          | Recreates the mamba environment from scratch                 |
-| `export`             | Exports the mamba environment as .yml and spec.txt files     |
+| `export`             | Exports the mamba environment as a .yml file                 |
 | `import`             | Creates or updates the mamba environment from a .yml file    |
 
 Run any environment using `tox -e ENVIRONMENT`. For example, `tox -e lint`.
 
-***Note,*** all pull requests for this project have to successfully complete the `tox` task before
-being merged. To expedite the task’s runtime, use the `tox --parallel` command to run some tasks
-in parallel.
+***Note,*** all pull requests for this project have to successfully complete the `tox` task before being merged. To
+expedite the task's runtime, use the `tox --parallel` command to run some tasks in parallel.
 
 ### AI-Assisted Development
 

@@ -1,12 +1,12 @@
 # Configuration file for the Sphinx documentation builder.
-import importlib_metadata
+import importlib.metadata
 
 # -- Project information -----------------------------------------------------
 project = 'ataraxis-video-system'
 copyright = '2026, Sun (NeuroAI) lab'
 authors = ['Ivan Kondratyev', 'Jacob Groner', 'Natalie Yeung']
 # Extracts the project version from the metadata .toml file.
-release = importlib_metadata.version("ataraxis-video-system")
+release = importlib.metadata.version("ataraxis-video-system")
 
 # -- General configuration ---------------------------------------------------
 extensions = [
