@@ -454,17 +454,41 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
     assert vs._saver is not None
 
 
-@pytest.mark.xdist_group(name="group2")
-def test_init_harvesters_interface(has_harvesters, data_logger, tmp_path) -> None:
+def test_init_harvesters_interface(gentl_simulator, data_logger, tmp_path) -> None:
     """Verifies that VideoSystem can be initialized with the Harvesters camera interface."""
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_directory = tmp_path / "harvesters_test"
+    # The simulated devices report no acquisition rate of their own, so the encoder rate is supplied explicitly.
+    vs = VideoSystem(
+        system_id=np.uint8(51),
+        data_logger=data_logger,
+        name="test_camera",
+        output_directory=output_directory,
+        camera_interface=CameraInterfaces.HARVESTERS,
+        camera_index=0,
+        frame_rate=10,
+        frame_width=200,
+        frame_height=200,
+    )
+    assert vs._saver is not None
+    assert vs._camera.frame_rate == 10
+    assert vs._camera.frame_width == 200
+    assert vs._camera.frame_height == 200
+
+
+@pytest.mark.xdist_group(name="group2")
+def test_init_harvesters_interface_hardware(has_harvesters, data_logger, tmp_path) -> None:
+    """Verifies that VideoSystem can be initialized against real GenICam hardware."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
-    output_directory = tmp_path / "harvesters_test"
+    output_directory = tmp_path / "harvesters_hardware_test"
     vs = VideoSystem(
-        system_id=np.uint8(51),
+        system_id=np.uint8(52),
         data_logger=data_logger,
         name="test_camera",
         output_directory=output_directory,

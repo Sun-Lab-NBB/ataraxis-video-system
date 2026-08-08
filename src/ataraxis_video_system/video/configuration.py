@@ -117,7 +117,13 @@ _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
         "ExposureTime",
         "AcquisitionFrameRate",
     ),
-    # Phase 7 — Re-lock: re-enables auto-controls and centering if the target configuration uses them.
+    # Phase 7 — Analog: manual analog values, written while the auto-controls that own them are still disengaged.
+    (
+        "Gain",
+        "BlackLevel",
+        "BalanceRatio",
+    ),
+    # Phase 8 — Re-lock: re-enables auto-controls and centering if the target configuration uses them.
     (
         "CenterX",
         "CenterY",
@@ -136,6 +142,13 @@ phases in which nodes must be written to satisfy all known dependency chains. No
 listed in any phase are written after all phases complete.
 """
 
+_RESET_PHASE_COUNT: int = 2
+"""The number of leading phases in ``_APPLY_PHASE_ORDER`` that write reset values instead of target values.
+
+Phases are identified by position rather than by content, because the later phases that restore the target values
+repeat the node names of the leading phases that reset them.
+"""
+
 _PHASE_RESET_VALUES: dict[str, int | float | bool | str] = {
     "OffsetX": 0,
     "OffsetY": 0,
@@ -149,7 +162,7 @@ _PHASE_RESET_VALUES: dict[str, int | float | bool | str] = {
 """Reset values for nodes in the unlock and reset phases.
 
 Nodes in phases 1-2 are written with these values (not their target values) to maximize the permissible range for
-subsequent phases. Their target values are applied in later phases (phase 5 for offsets, phase 7 for auto-controls
+subsequent phases. Their target values are applied in later phases (phase 5 for offsets, phase 8 for auto-controls
 and centering).
 """
 
@@ -359,10 +372,11 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
             entry_names = [str(entry.node.name) for entry in feature.entries]
             lines.append(f"  Entries: {', '.join(entry_names)}")
 
-    # Appends the measurement unit if the node defines one.
+    # Appends the measurement unit if the node defines one. GenICam exposes the unit on the feature rather than on
+    # the INode descriptor, and only the numeric node types carry one at all.
     with suppress(Exception):
-        raw_unit = str(raw_node.unit)
-        if raw_unit:  # pragma: no cover
+        raw_unit = str(feature.unit)
+        if raw_unit:
             lines.append(f"  Unit: {raw_unit}")
 
     return "\n".join(lines)
@@ -434,7 +448,7 @@ def apply_genicam_configuration(
         lock their manual counterparts, and binning changes ``WidthMax``/``HeightMax``. This function applies nodes
         in a fixed phase order defined by ``_APPLY_PHASE_ORDER`` to satisfy all known dependency chains. Phases 1-2
         write reset values (offsets to 0, auto-controls to Off) to unlock dependent nodes and maximize dimension
-        ranges. Phases 3-7 write target values in dependency order. Remaining nodes not covered by any phase are
+        ranges. Phases 3-8 write target values in dependency order. Remaining nodes not covered by any phase are
         written last.
 
     Args:
@@ -474,7 +488,7 @@ def apply_genicam_configuration(
             continue
         node_lookup[node_info.name] = node_info
 
-    # Validates that all nodes in the lookup exist on the device and are writable.
+    # Validates that all nodes in the lookup exist on the device.
     for name in node_lookup:
         if not hasattr(node_map, name):
             message = (
@@ -482,50 +496,35 @@ def apply_genicam_configuration(
             )
             console.error(message=message, error=ValueError)
 
+    # Tracks which nodes have been written so that remaining nodes can be applied after all phases.
+    written: set[str] = set()
+
+    # Runs the unlock phase ahead of the writability check, because an engaged auto-control holds its manual
+    # counterpart at ReadOnly until it is disengaged.
+    _write_apply_phase(
+        node_map=node_map, phase=_APPLY_PHASE_ORDER[0], node_lookup=node_lookup, written=written, use_reset_values=True
+    )
+
+    # Validates that all nodes in the lookup are writable now that the auto-controls have been disengaged.
+    for name in node_lookup:
         access_code = int(getattr(node_map, name).node.get_access_mode())
-        if access_code != _AccessMode.READ_WRITE:  # pragma: no cover
+        if access_code != _AccessMode.READ_WRITE:
             message = (
                 f"Unable to apply GenICam configuration. The node '{name}' must have ReadWrite access, "
                 f"but got access code {access_code}."
             )
             console.error(message=message, error=ValueError)
 
-    # Tracks which nodes have been written so that remaining nodes can be applied after all phases.
-    written: set[str] = set()
-
-    # Applies nodes in SFNC-compliant phase order. Phases 1-2 use reset values from _PHASE_RESET_VALUES to unlock
-    # dependent nodes and maximize dimension ranges. Phases 3+ use the target values from the configuration.
-    reset_phases = frozenset(_APPLY_PHASE_ORDER[:2])
-    for phase in _APPLY_PHASE_ORDER:
-        use_reset_values = phase in reset_phases
-        for name in phase:
-            if name not in node_lookup:
-                # Handles nodes that exist on the camera but are absent from the configuration (e.g., the
-                # configuration was dumped from a camera without CenterX support). Reset-phase nodes are still
-                # written with their safe defaults to unlock constraints.
-                if use_reset_values and name in _PHASE_RESET_VALUES:
-                    with suppress(Exception):
-                        getattr(node_map, name).value = _PHASE_RESET_VALUES[name]
-                continue
-
-            value = (
-                _PHASE_RESET_VALUES[name]
-                if use_reset_values and name in _PHASE_RESET_VALUES
-                else node_lookup[name].value
-            )
-
-            try:
-                getattr(node_map, name).value = value
-            except Exception as error:  # pragma: no cover
-                # Reset-phase failures are non-fatal — the node may not exist on this camera model.
-                if use_reset_values:
-                    continue
-                message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
-                console.error(message=message, error=RuntimeError)
-
-            # Only marks nodes as written when their target value was applied (not the reset value).
-            if not use_reset_values:
-                written.add(name)
+    # Applies the remaining phases in SFNC-compliant order. Phase membership is resolved by position, because the
+    # re-lock and offset phases repeat the node names of the unlock and reset phases they undo.
+    for phase_index, phase in enumerate(_APPLY_PHASE_ORDER[1:], start=1):
+        _write_apply_phase(
+            node_map=node_map,
+            phase=phase,
+            node_lookup=node_lookup,
+            written=written,
+            use_reset_values=phase_index < _RESET_PHASE_COUNT,
+        )
 
     # Applies all remaining nodes that were not covered by any phase, in their original configuration order.
     for name, node_info in node_lookup.items():
@@ -537,3 +536,53 @@ def apply_genicam_configuration(
         except Exception as error:  # pragma: no cover
             message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
             console.error(message=message, error=RuntimeError)
+
+
+def _write_apply_phase(
+    node_map: NodeMap,
+    phase: tuple[str, ...],
+    node_lookup: dict[str, GenicamNodeInfo],
+    written: set[str],
+    *,
+    use_reset_values: bool,
+) -> None:
+    """Writes every node of a single ``apply_genicam_configuration`` phase to the connected camera.
+
+    Args:
+        node_map: The GenICam node map object.
+        phase: The node names that belong to the phase, in the order they must be written.
+        node_lookup: The target value of every non-blacklisted node, keyed by node name.
+        written: The names of the nodes that have received their target value. Nodes this call writes with their
+            target value are added to it.
+        use_reset_values: Determines whether nodes covered by ``_PHASE_RESET_VALUES`` receive their reset value
+            instead of their target value.
+
+    Raises:
+        RuntimeError: If a node write outside a reset phase fails.
+    """
+    for name in phase:
+        if name not in node_lookup:
+            # Handles nodes that exist on the camera but are absent from the configuration (e.g., the
+            # configuration was dumped from a camera without CenterX support). Reset-phase nodes are still
+            # written with their safe defaults to unlock constraints.
+            if use_reset_values and name in _PHASE_RESET_VALUES:
+                with suppress(Exception):
+                    getattr(node_map, name).value = _PHASE_RESET_VALUES[name]
+            continue
+
+        value = (
+            _PHASE_RESET_VALUES[name] if use_reset_values and name in _PHASE_RESET_VALUES else node_lookup[name].value
+        )
+
+        try:
+            getattr(node_map, name).value = value
+        except Exception as error:
+            # Reset-phase failures are non-fatal, as the node may not exist on this camera model.
+            if use_reset_values:  # pragma: no cover
+                continue
+            message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
+            console.error(message=message, error=RuntimeError)
+
+        # Only marks nodes as written when their target value was applied (not the reset value).
+        if not use_reset_values:
+            written.add(name)

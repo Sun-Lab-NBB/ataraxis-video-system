@@ -216,3 +216,9 @@ cython_debug/
 /temp
 /imgs
 /out
+
+# Vendored GenTL Producer simulator binaries used by the test suite. These are shared libraries, so the
+# compiled-library rules above would otherwise discard the companion each TLSimu.cti links against.
+!tests/gentl_simulator/**/*.so
+!tests/gentl_simulator/**/*.dylib
+!tests/gentl_simulator/**/*.dll
