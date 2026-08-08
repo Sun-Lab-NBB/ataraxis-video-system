@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
-
-from ..video import LOG_ARCHIVE_SUFFIX
+from ataraxis_data_structures import discover_log_archives
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,8 +17,9 @@ mcp: FastMCP = FastMCP(name="ataraxis-video-system", json_response=True)
 def scan_archive_source_ids(directory: Path) -> list[str]:
     """Scans a directory for assembled log archives and extracts source IDs from their filenames.
 
-    Matches files ending with the log archive suffix and strips the suffix to recover the source ID string. Results
-    are returned in sorted order.
+    Inspects the directory's own entries alone, since one DataLogger writes every archive it assembles side by side.
+    A directory that does not exist yields no source IDs rather than raising, so callers may scan a path before the
+    logger has written to it.
 
     Args:
         directory: The directory to scan for log archives.
@@ -27,8 +27,7 @@ def scan_archive_source_ids(directory: Path) -> list[str]:
     Returns:
         A sorted list of source ID strings extracted from archive filenames.
     """
-    return sorted(
-        source_id
-        for archive_path in directory.glob(f"*{LOG_ARCHIVE_SUFFIX}")
-        if (source_id := archive_path.name.removesuffix(LOG_ARCHIVE_SUFFIX))
-    )
+    if not directory.is_dir():
+        return []
+
+    return sorted(discover_log_archives(log_directory=directory))

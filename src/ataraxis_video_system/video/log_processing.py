@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from contextlib import ExitStack
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import polars as pl
 from ataraxis_base_utilities import LogLevel, console, resolve_worker_count
-from ataraxis_data_structures import LogArchiveReader, ProcessingTracker
+from ataraxis_data_structures import (
+    PARALLEL_PROCESSING_THRESHOLD,
+    LogArchiveReader,
+    ProcessingTracker,
+    find_log_archive,
+    limit_worker_threads,
+    discover_marker_files,
+)
 
 from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest
 
@@ -17,9 +25,6 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-LOG_ARCHIVE_SUFFIX: str = "_log.npz"
-"""Naming convention suffix for log archives produced by assemble_log_archives()."""
-
 TRACKER_FILENAME: str = "camera_processing_tracker.yaml"
 """Filename for the processing tracker file placed in the output directory."""
 
@@ -27,90 +32,8 @@ CAMERA_TIMESTAMPS_DIRECTORY: str = "camera_timestamps"
 """Name of the subdirectory created under the output path for camera timestamp processing results. All tracker files
 and processed feather outputs are written into this subdirectory."""
 
-PARALLEL_PROCESSING_THRESHOLD: int = 2000
-"""The minimum number of messages in a log archive required to enable parallel processing. Archives with fewer messages
-are processed sequentially to avoid multiprocessing overhead. Matches the threshold used internally by
-``LogArchiveReader`` (2000).
-"""
-
 TIMESTAMP_JOB_NAME: str = "camera_timestamp_extraction"
 """The job name used by the processing pipeline for camera timestamp extraction."""
-
-
-def resolve_recording_roots(paths: list[Path] | tuple[Path, ...]) -> tuple[Path, ...]:
-    """Resolves a set of discovered log directories to their recording root directories.
-
-    Recording roots are the meaningful top-level directories that uniquely identify each recording session. Log
-    archives and pipeline outputs may be nested at arbitrary depths below the root, but the root itself is essential
-    for proper recording identification and display labels. Uses _extract_unique_components to identify the first path
-    component (from the end) that uniquely distinguishes each path, then truncates each path at that component to
-    strip shared structural subdirectories without assuming a fixed directory hierarchy.
-
-    Args:
-        paths: The directories containing discovered log archives. Each path is resolved to its recording root
-            by walking up to the ancestor matching its unique component.
-
-    Returns:
-        A deduplicated tuple of recording root paths, one per unique recording.
-
-    Raises:
-        RuntimeError: If one or more paths do not contain unique components.
-    """
-    unique_ids = _extract_unique_components(paths=list(paths))
-    roots: list[Path] = []
-    for path, unique_id in zip(paths, unique_ids, strict=True):
-        # Walks up from the path to the ancestor whose name matches the unique component.
-        current = path
-        while current.name != unique_id and current != current.parent:
-            current = current.parent
-        if current not in roots:
-            roots.append(current)
-    return tuple(roots)
-
-
-def find_log_archive(log_directory: Path, source_id: str) -> Path:
-    """Searches for a single log archive matching the target source ID under the log directory.
-
-    Recursively searches the log_directory and all subdirectories for an archive file matching the
-    ``{source_id}_log.npz`` naming convention. Expects exactly one match per source ID within the directory tree.
-
-    Args:
-        log_directory: The path to the root directory to search. The directory is searched recursively, so archives
-            may be nested at any depth below this path.
-        source_id: The source ID string to match. Corresponds to the filename prefix before the ``_log.npz`` suffix.
-
-    Returns:
-        The path to the discovered log archive.
-
-    Raises:
-        FileNotFoundError: If the log_directory does not exist, is not a directory, or no archive matching the
-            source ID is found.
-        ValueError: If multiple archives matching the source ID are found under the log directory.
-    """
-    if not log_directory.exists() or not log_directory.is_dir():
-        message = (
-            f"Unable to find log archive for source '{source_id}' in '{log_directory}'. The path does not exist or "
-            f"is not a directory."
-        )
-        console.error(message=message, error=FileNotFoundError)
-
-    matches = sorted(log_directory.rglob(f"{source_id}{LOG_ARCHIVE_SUFFIX}"))
-
-    if not matches:
-        message = (
-            f"Unable to find log archive for source '{source_id}' in '{log_directory}'. No file matching "
-            f"'{source_id}{LOG_ARCHIVE_SUFFIX}' was found."
-        )
-        console.error(message=message, error=FileNotFoundError)
-
-    if len(matches) > 1:
-        message = (
-            f"Unable to find log archive for source '{source_id}' in '{log_directory}'. Found {len(matches)} "
-            f"matching archives, but expected exactly one: {[str(p) for p in matches]}."
-        )
-        console.error(message=message, error=ValueError)
-
-    return matches[0]
 
 
 def run_log_processing_pipeline(
@@ -155,6 +78,7 @@ def run_log_processing_pipeline(
     Raises:
         FileNotFoundError: If the log_directory does not exist, a requested log ID has no matching archive, or no
             camera manifest is found.
+        OSError: If any directory beneath the log_directory cannot be read.
         ValueError: If the provided job_id does not match any job in the manifest universe, if no source IDs can be
             resolved, if a requested log ID matches multiple archives, or if resolved archives span multiple
             directories.
@@ -166,7 +90,7 @@ def run_log_processing_pipeline(
     # Locates the camera manifest to resolve or validate source IDs. The manifest ensures only
     # axvs-produced log archives are processed, preventing accidental processing of logs from other
     # libraries (e.g., ataraxis-communication-interface, sl-experiment).
-    candidates = sorted(log_directory.rglob(CAMERA_MANIFEST_FILENAME))
+    candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
     if not candidates:
         message = (
             f"Unable to process logs in '{log_directory}'. No {CAMERA_MANIFEST_FILENAME} was found. "
@@ -203,19 +127,10 @@ def run_log_processing_pipeline(
         # tracker with the full universe so start_job finds the requested ID and concurrent remote jobs do not
         # treat each other's entries as foreign. Resolves only the matched archive so a missing or late sibling
         # archive cannot fail this job.
-        all_job_ids = generate_job_ids(source_ids=universe_ids)
-        id_to_source: dict[str, str] = {generated_id: source for source, generated_id in all_job_ids.items()}
-
-        if job_id not in id_to_source:
-            message = (
-                f"Unable to execute the requested job with ID '{job_id}'. The input identifier does not match "
-                f"any jobs available for the camera manifest. Valid job IDs: {list(all_job_ids.values())}."
-            )
-            console.error(message=message, error=ValueError)
+        _, source_id = tracker.resolve_job(job_id=job_id, universe=universe)
 
         tracker.align_jobs(jobs=universe, universe=universe)
 
-        source_id = id_to_source[job_id]
         execute_job(
             log_path=find_log_archive(log_directory=log_directory, source_id=source_id),
             output_directory=timestamps_path,
@@ -263,23 +178,28 @@ def run_log_processing_pipeline(
         # repeated process pool creation.
         job_ids = generate_job_ids(source_ids=source_ids)
         resolved_workers = resolve_worker_count(requested_workers=workers)
-        shared_executor = ProcessPoolExecutor(max_workers=resolved_workers) if resolved_workers > 1 else None
 
-        try:
-            for source_id in source_ids:
-                execute_job(
-                    log_path=archive_paths[source_id],
-                    output_directory=timestamps_path,
-                    source_id=source_id,
-                    job_id=job_ids[source_id],
-                    workers=resolved_workers,
-                    tracker=tracker,
-                    display_progress=display_progress,
-                    executor=shared_executor,
-                )
-        finally:
-            if shared_executor is not None:
-                shared_executor.shutdown(wait=True)
+        # Pins each worker's numeric backends to a single thread. Those backends size their thread pools from the
+        # environment a spawned child inherits, so the limit encloses the pool's whole lifetime rather than only its
+        # construction. Without it, a pool holding one worker per core opens the square of the core count in threads.
+        with limit_worker_threads(thread_count=1):
+            shared_executor = ProcessPoolExecutor(max_workers=resolved_workers) if resolved_workers > 1 else None
+
+            try:
+                for source_id in source_ids:
+                    execute_job(
+                        log_path=archive_paths[source_id],
+                        output_directory=timestamps_path,
+                        source_id=source_id,
+                        job_id=job_ids[source_id],
+                        workers=resolved_workers,
+                        tracker=tracker,
+                        display_progress=display_progress,
+                        executor=shared_executor,
+                    )
+            finally:
+                if shared_executor is not None:
+                    shared_executor.shutdown(wait=True)
 
     console.echo(message="All processing jobs completed successfully.", level=LogLevel.SUCCESS)
 
@@ -321,7 +241,7 @@ def extract_logged_camera_timestamps(
         display_progress: Determines whether to display a progress bar during parallel batch processing.
         executor: When provided, parallel batch work is submitted to this pool instead of a newly created one, and
             the caller owns the pool's lifecycle. Its worker count must match the n_workers value used for batch
-            generation.
+            generation, and the caller is responsible for the worker thread limit its processes inherit.
 
     Returns:
         A contiguous numpy array of frame acquisition timestamps. Each timestamp is stored as the number of
@@ -369,11 +289,16 @@ def extract_logged_camera_timestamps(
     onset_us = reader.onset_timestamp_us
 
     # Uses the provided executor or creates a managed one for this invocation. Managed executors are shut down after
-    # use; external executors are left open for reuse across multiple archives.
-    managed = executor is None
-    active_executor = executor if executor is not None else ProcessPoolExecutor(max_workers=n_workers)
+    # use; external executors are left open for reuse across multiple archives. A managed pool is created under a
+    # worker thread limit, which its children inherit. An external pool carries the limit its owner created it under.
+    with ExitStack() as pool_scope:
+        if executor is not None:
+            active_executor = executor
+        else:
+            pool_scope.enter_context(limit_worker_threads(thread_count=1))
+            active_executor = ProcessPoolExecutor(max_workers=n_workers)
+            pool_scope.callback(active_executor.shutdown, wait=True)
 
-    try:
         future_to_index = {
             active_executor.submit(
                 _process_frame_message_batch, log_path=log_path, keys=batch_keys, onset_us=onset_us
@@ -394,9 +319,6 @@ def extract_logged_camera_timestamps(
         else:
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()
-    finally:
-        if managed:
-            active_executor.shutdown(wait=True)
 
     # Concatenates batch arrays into a single contiguous array. Filters out None placeholders from batches that
     # yielded no frame messages.
@@ -423,6 +345,11 @@ def execute_job(
     Extracts camera frame acquisition timestamps from the log archive, converts them to a Polars DataFrame, and
     writes the result as an IPC (Feather) file.
 
+    Notes:
+        Delegates the job's state transitions to the tracker's run_job() context manager, which marks the job as
+        running, completes it when the block returns, and marks it as failed with the exception's message before
+        re-raising when the block raises an Exception.
+
     Args:
         log_path: The path to the .npz log archive to process.
         output_directory: The path to the directory where the output Feather file is written.
@@ -435,9 +362,8 @@ def execute_job(
             passed through to extract_logged_camera_timestamps to avoid spawning a redundant process pool.
     """
     console.echo(message=f"Running '{TIMESTAMP_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
-    tracker.start_job(job_id=job_id)
 
-    try:
+    with tracker.run_job(job_id=job_id):
         # Extracts frame acquisition timestamps from the log archive as a contiguous numpy array.
         timestamps = extract_logged_camera_timestamps(
             log_path=log_path, n_workers=workers, display_progress=display_progress, executor=executor
@@ -448,56 +374,6 @@ def execute_job(
         dataframe = pl.DataFrame({"frame_time_us": pl.Series(name="frame_time_us", values=timestamps)})
         output_path = output_directory / f"camera_{source_id}_timestamps.feather"
         dataframe.write_ipc(file=output_path)
-
-        tracker.complete_job(job_id=job_id)
-
-    except Exception as exception:
-        tracker.fail_job(job_id=job_id, error_message=str(exception))
-        raise
-
-
-def _extract_unique_components(paths: list[Path] | tuple[Path, ...]) -> tuple[str, ...]:
-    """Extracts the first component from the end of each input path that uniquely identifies each path globally.
-
-    Adapts the processing pipeline to directory structures where the unique recording identifier appears at different
-    levels of the path hierarchy. For example, given paths like ``/data/day1/recording`` and ``/data/day2/recording``,
-    identifies ``day1`` and ``day2`` as the unique components (not ``recording``, which is shared).
-
-    Args:
-        paths: The list or tuple of Path objects to extract unique components from.
-
-    Returns:
-        A tuple of unique component strings, one for each path, stored in the same order as the input paths.
-
-    Raises:
-        RuntimeError: If one or more paths do not contain unique components.
-    """
-    paths_list = list(paths)
-    unique_components: list[str] = []
-
-    for index, path in enumerate(paths_list):
-        # Iterates components from right to left to find the first one unique to this path.
-        components = list(path.parts)[::-1]
-        found_unique = False
-
-        for component in components:
-            # Checks whether this component appears in any other path.
-            is_unique = all(
-                component not in other_path.parts
-                for other_index, other_path in enumerate(paths_list)
-                if other_index != index
-            )
-
-            if is_unique:
-                unique_components.append(component)
-                found_unique = True
-                break
-
-        if not found_unique:
-            message = f"Unable to extract a unique component from the given path: {path}."
-            console.error(message=message, error=RuntimeError)
-
-    return tuple(unique_components)
 
 
 def generate_job_ids(source_ids: list[str]) -> dict[str, str]:

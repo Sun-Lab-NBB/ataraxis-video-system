@@ -495,12 +495,6 @@ class VideoSystem:
         )
         self._producer_process.start()
 
-        # Connects to the shared memory array to receive control signals. It is important for this to be done after
-        # both processes have been started.
-        self._terminator_array.connect()
-        # Ensures the buffer is destroyed if the instance is garbage-collected to prevent memory leaks.
-        self._terminator_array.enable_buffer_destruction()
-
         # Waits for the processes to report that they have been successfully initialized.
         for _ in initialization_timer.poll(interval=10, allow_sleep=True, block=False):  # pragma: no cover
             # Exits once both processes have reported successful initialization.
