@@ -58,6 +58,11 @@ _ALL_RGB_FORMATS: set[Any] = set(rgb_formats)
 method.
 """
 
+_CTI_PATH_VARIABLE: str = "AXVS_CTI_PATH"
+"""Stores the name of the environment variable that overrides the persisted GenTL Producer interface (.cti) file path
+for the duration of a single runtime.
+"""
+
 _FRAME_POOL_SIZE: int = 10
 """Determines the size of the frame pool used by the MockCamera instances."""
 
@@ -97,7 +102,8 @@ class CameraInformation:
     frame_height: int
     """The height of the frames acquired by the camera, in pixels."""
     acquisition_frame_rate: int
-    """The frame rate at which the camera acquires frames, in frames per second."""
+    """The frame rate at which the camera acquires frames, in frames per second, or 0 for Harvesters cameras that do
+    not implement the optional AcquisitionFrameRate feature."""
     serial_number: str | None = None
     """Only for Harvesters-discoverable cameras. Contains the camera's serial number."""
     model: str | None = None
@@ -173,22 +179,27 @@ def check_cti_file() -> Path | None:  # pragma: no cover
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
     compatible GenTL devices (cameras). This function checks if a valid .cti file path has been configured and returns
-    the path if it exists.
+    the path if it exists. The ``AXVS_CTI_PATH`` environment variable takes precedence over the persisted path, matching
+    the resolution order applied when connecting to a camera.
 
     Returns:
         The Path to the configured .cti file if one exists and is valid, or None otherwise.
     """
-    # Resolves the path to the .cti path file using platformdirs.
-    application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
-    cti_path_file = application_directory / "cti_path.txt"
+    override = os.environ.get(_CTI_PATH_VARIABLE)
+    if override:
+        cti_path = Path(override)
+    else:
+        # Resolves the path to the .cti path file using platformdirs.
+        application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
+        cti_path_file = application_directory / "cti_path.txt"
 
-    # Checks if the path file exists.
-    if not cti_path_file.exists():
-        return None
+        # Checks if the path file exists.
+        if not cti_path_file.exists():
+            return None
 
-    # Reads the stored .cti file path.
-    with cti_path_file.open() as file:
-        cti_path = Path(file.read().strip())
+        # Reads the stored .cti file path.
+        with cti_path_file.open() as file:
+            cti_path = Path(file.read().strip())
 
     # Verifies the CTI file still exists and is valid.
     try:
@@ -530,20 +541,26 @@ class HarvestersCamera:
         self._model = device_info.model
         self._serial_number = device_info.serial_number
 
+        node_map = self._camera.remote_device.node_map
+
         # Overrides the requested camera acquisition parameters if necessary. Note, there is no guarantee that the
         # camera accepts the requested parameters.
         if self._frame_width != 0:
-            self._camera.remote_device.node_map.Width.value = self._frame_width
+            node_map.Width.value = self._frame_width
         if self._frame_height != 0:
-            self._camera.remote_device.node_map.Height.value = self._frame_height
-        # Sets the frame rate last, as it is affected by frame width and height.
-        if self._frame_rate != 0:
-            self._camera.remote_device.node_map.AcquisitionFrameRate.value = self._frame_rate
+            node_map.Height.value = self._frame_height
+
+        # Sets the frame rate last, as it is affected by frame width and height. Devices that omit the optional
+        # AcquisitionFrameRate feature retain the requested rate, as there is no hardware value to negotiate against.
+        frame_rate_node = _get_frame_rate_node(node_map=node_map)
+        if frame_rate_node is not None:
+            if self._frame_rate != 0:
+                frame_rate_node.value = self._frame_rate
+            self._frame_rate = int(frame_rate_node.value)
 
         # Queries the current camera acquisition parameters and stores them in class attributes.
-        self._frame_rate = int(self._camera.remote_device.node_map.AcquisitionFrameRate.value)
-        self._frame_width = int(self._camera.remote_device.node_map.Width.value)
-        self._frame_height = int(self._camera.remote_device.node_map.Height.value)
+        self._frame_width = int(node_map.Width.value)
+        self._frame_height = int(node_map.Height.value)
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
@@ -580,7 +597,9 @@ class HarvestersCamera:
 
     @property
     def frame_rate(self) -> int:
-        """Returns the acquisition rate of the camera, in frames per second (fps)."""
+        """Returns the acquisition rate of the camera, in frames per second (fps), which is the requested rate for
+        cameras that do not implement the optional AcquisitionFrameRate feature.
+        """
         return self._frame_rate
 
     @property
@@ -1169,10 +1188,12 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
             try:
                 node_map = camera.remote_device.node_map
 
-                # Retrieves frame dimensions and acquisition rate from the camera's node map.
+                # Retrieves frame dimensions and acquisition rate from the camera's node map. Devices that omit the
+                # optional AcquisitionFrameRate feature report a rate of 0.
                 frame_width = int(node_map.Width.value)
                 frame_height = int(node_map.Height.value)
-                acquisition_rate = int(round(number=node_map.AcquisitionFrameRate.value, ndigits=0))
+                frame_rate_node = _get_frame_rate_node(node_map=node_map)
+                acquisition_rate = 0 if frame_rate_node is None else int(round(number=frame_rate_node.value, ndigits=0))
 
                 # Creates CameraInformation instance with all retrieved data.
                 camera_data = CameraInformation(
@@ -1203,12 +1224,33 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     return tuple(working_ids)  # Converts to tuple before returning to the caller.
 
 
+def _get_frame_rate_node(node_map: NodeMap) -> Any | None:
+    """Resolves the node that reports the camera's frame acquisition rate.
+
+    Notes:
+        AcquisitionFrameRate is an optional SFNC feature, so devices that derive their rate from exposure and readout
+        timing alone, which includes GenTL Producer simulators, do not implement it.
+
+    Args:
+        node_map: The GenICam node map of the connected camera.
+
+    Returns:
+        The AcquisitionFrameRate node, or None if the camera does not implement the feature.
+    """
+    return getattr(node_map, "AcquisitionFrameRate", None)
+
+
 def _get_cti_path() -> Path:
     """Resolves and returns the path to the CTI file that provides the GenTL Producer interface.
 
     This service function is used when initializing HarvestersCamera instances to resolve the GenTL Producer interface.
-    The returned path is not validated here; callers are responsible for validation via
+    The returned path is not validated here, callers are responsible for validation via
     ``harvester.add_file(check_existence=True, check_validity=True)`` to avoid redundant Harvester instantiation.
+
+    Notes:
+        The ``AXVS_CTI_PATH`` environment variable takes precedence over the persisted path when it is set. Since the
+        variable is inherited by spawned child processes, it redirects every process of a runtime to an alternative
+        Producer without modifying the path persisted for future runtimes.
 
     Returns:
         The path to the GenTL Producer interface (.cti) file.
@@ -1216,6 +1258,11 @@ def _get_cti_path() -> Path:
     Raises:
         FileNotFoundError: If the function is unable to resolve the path to the .cti file.
     """
+    # Honors the runtime override before consulting the persisted path.
+    override = os.environ.get(_CTI_PATH_VARIABLE)
+    if override:
+        return Path(override)
+
     # Uses platformdirs to locate the user's data directory and resolve the path to the .cti path file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = application_directory / "cti_path.txt"

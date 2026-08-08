@@ -4,8 +4,25 @@ import numpy as np
 import pytest
 from ataraxis_base_utilities import error_format
 
-from ataraxis_video_system import InputPixelFormats
-from ataraxis_video_system.video.camera import MockCamera, OpenCVCamera, HarvestersCamera
+from ataraxis_video_system import CameraInterfaces, InputPixelFormats
+from ataraxis_video_system.video.camera import (
+    MockCamera,
+    OpenCVCamera,
+    HarvestersCamera,
+    _get_harvesters_ids,
+)
+
+_SIMULATED_DEVICE_COUNT: int = 4
+"""Stores the number of devices the bundled GenTL Producer simulator exposes."""
+
+_SIMULATED_MONOCHROME_MODEL: str = "TLSimuMono"
+"""Stores the model name the bundled GenTL Producer simulator reports for its monochrome devices."""
+
+_SIMULATED_MONOCHROME_SERIAL: str = "SN_InterfaceA_0"
+"""Stores the serial number the bundled GenTL Producer simulator reports for the first monochrome device."""
+
+_SIMULATED_COLOR_INDEX: int = 1
+"""Stores the discovery index of the first color device exposed by the bundled GenTL Producer simulator."""
 
 
 @pytest.mark.parametrize(
@@ -244,14 +261,9 @@ def test_opencv_camera_grab_frame_errors() -> None:
         _ = camera.grab_frame()
 
 
-@pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_init_repr(has_harvesters) -> None:
+def test_harvesters_camera_init_repr() -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
-    # Skips the test if Harvesters-compatible hardware is not available.
-    if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
-
-    # Setup - Note that the CTI path is automatically resolved internally by the HarvestersCamera class
+    # Construction resolves no GenTL Producer, so this test needs neither hardware nor the simulator.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Verifies initial camera parameters
@@ -272,42 +284,66 @@ def test_harvesters_camera_init_repr(has_harvesters) -> None:
     assert repr(camera) == representation_string
 
 
-@pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_connect_disconnect(has_harvesters) -> None:
+def test_harvesters_camera_connect_disconnect(gentl_simulator) -> None:
     """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
-    # Skips the test if Harvesters-compatible hardware is not available.
-    if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
 
-    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
-
-    # Tests connect method. Unlike OpenCV camera, if Harvesters camera is unable to set the parameters to the
-    # requested values, it may raise an error depending on the camera model.
     assert not camera.is_connected
     camera.connect()
     assert camera.is_connected
     assert not camera.is_acquiring
+
+    # The simulator reports the identity of the device the instance connected to.
+    assert camera.model == _SIMULATED_MONOCHROME_MODEL
+    assert camera.serial_number == _SIMULATED_MONOCHROME_SERIAL
 
     # Tests disconnect method
     camera.disconnect()
     assert not camera.is_connected
 
 
-@pytest.mark.xdist_group(name="group2")
-@pytest.mark.parametrize(
-    ("frame_rate", "frame_width", "frame_height"),
-    [(5, 440, 440), (10, 200, 200), (None, None, None)],
-)
-def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, frame_height) -> None:
-    """Verifies the functioning of the HarvestersCamera grab_frame() method."""
-    # Skips the test if Harvesters-compatible hardware is not available.
-    if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
+def test_get_harvesters_ids(gentl_simulator) -> None:
+    """Verifies that Harvesters discovery reports every device the configured GenTL Producer exposes."""
+    cameras = _get_harvesters_ids()
 
-    # Setup - The library internally manages the CTI path
-    camera = HarvestersCamera(
-        system_id=222, camera_index=0, frame_rate=frame_rate, frame_width=frame_width, frame_height=frame_height
-    )
+    assert len(cameras) == _SIMULATED_DEVICE_COUNT
+    assert all(camera.interface == CameraInterfaces.HARVESTERS for camera in cameras)
+    assert [camera.camera_index for camera in cameras] == list(range(_SIMULATED_DEVICE_COUNT))
+    assert cameras[0].model == _SIMULATED_MONOCHROME_MODEL
+    assert cameras[0].serial_number == _SIMULATED_MONOCHROME_SERIAL
+    assert all(camera.frame_width > 0 for camera in cameras)
+    assert all(camera.frame_height > 0 for camera in cameras)
+
+    # The simulated devices omit the optional AcquisitionFrameRate feature, so discovery reports no rate for them.
+    assert all(camera.acquisition_frame_rate == 0 for camera in cameras)
+
+
+def test_harvesters_camera_connect_missing_frame_rate_node(gentl_simulator) -> None:
+    """Verifies that connecting to a camera without an AcquisitionFrameRate node retains the requested rate."""
+    # The simulated devices do not implement the optional AcquisitionFrameRate feature.
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10)
+    camera.connect()
+    try:
+        assert camera.frame_rate == 10
+    finally:
+        camera.disconnect()
+
+    # Without a requested rate there is no value to fall back to, so the camera reports no rate at all.
+    default_camera = HarvestersCamera(system_id=222, camera_index=0)
+    default_camera.connect()
+    try:
+        assert default_camera.frame_rate == 0
+    finally:
+        default_camera.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("frame_width", "frame_height"),
+    [(440, 440), (200, 200), (None, None)],
+)
+def test_harvesters_camera_grab_frame(gentl_simulator, frame_width, frame_height) -> None:
+    """Verifies the functioning of the HarvestersCamera grab_frame() method."""
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=frame_width, frame_height=frame_height)
     camera.connect()
 
     # Tests grab_frame() method.
@@ -321,22 +357,28 @@ def test_harvesters_camera_grab_frame(has_harvesters, frame_rate, frame_width, f
         assert frame.shape[0] == frame_height
         assert frame.shape[1] == frame_width
 
-    # Does not check the color handling, as it is expected that the camera itself is configured to properly handle
-    # monochrome / color conversions on-hardware. Also, because Harvesters cameras used in testing may not be
-    # compatible with color imaging.
+    # The monochrome simulated device yields single-channel frames.
+    assert frame.ndim == 2
 
     # Deletes the class to test the functioning of the __del__() method.
     del camera
 
 
-@pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
-    """Verifies the error handling of the HarvestersCamera grab_frame() method."""
-    # Skips the test if Harvesters-compatible hardware is not available.
-    if not has_harvesters:
-        pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
+def test_harvesters_camera_grab_frame_color(gentl_simulator) -> None:
+    """Verifies that HarvestersCamera converts frames from a color device into three-channel BGR arrays."""
+    camera = HarvestersCamera(system_id=222, camera_index=_SIMULATED_COLOR_INDEX, frame_width=200, frame_height=200)
+    camera.connect()
+    try:
+        frame = camera.grab_frame()
+        assert frame.shape == (200, 200, 3)
+        assert camera.pixel_color_format == InputPixelFormats.BGR
+    finally:
+        camera.disconnect()
 
-    # Setup - Uses the internally stored CTI path
+
+def test_harvesters_camera_grab_frame_errors() -> None:
+    """Verifies the error handling of the HarvestersCamera grab_frame() method."""
+    # The guard under test runs before any GenTL Producer is resolved, so no camera source is required.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
     # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
@@ -352,21 +394,41 @@ def test_harvesters_camera_grab_frame_errors(has_harvesters) -> None:
     # encounter under most real-world conditions.
 
 
+@pytest.mark.parametrize(
+    ("camera_index", "expected_format"),
+    [(0, InputPixelFormats.MONOCHROME), (_SIMULATED_COLOR_INDEX, InputPixelFormats.BGR)],
+)
+def test_harvesters_camera_pixel_color_format(gentl_simulator, camera_index, expected_format) -> None:
+    """Verifies that pixel_color_format reflects the data format of the connected device."""
+    camera = HarvestersCamera(system_id=222, camera_index=camera_index)
+    camera.connect()
+    try:
+        # Grabs a frame to trigger pixel format detection.
+        camera.grab_frame()
+        assert camera.pixel_color_format == expected_format
+    finally:
+        camera.disconnect()
+
+
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_pixel_color_format(has_harvesters) -> None:
-    """Verifies the pixel_color_format property of HarvestersCamera for both color states."""
+def test_harvesters_camera_hardware_acquisition(has_harvesters) -> None:
+    """Verifies frame rate negotiation and acquisition against real GenICam hardware."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
 
-    camera = HarvestersCamera(system_id=222, camera_index=0)
+    # Frame rate negotiation depends on the optional AcquisitionFrameRate feature, which the bundled GenTL Producer
+    # simulator does not implement, so it is only reachable through real hardware.
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10)
     camera.connect()
     try:
-        # Grabs a frame to trigger pixel format detection from real hardware.
-        camera.grab_frame()
+        assert camera.frame_rate > 0
+        assert camera.frame_width > 0
+        assert camera.frame_height > 0
 
-        # Verifies that pixel_color_format returns a valid InputPixelFormats member.
-        pixel_format = camera.pixel_color_format
-        assert pixel_format in (InputPixelFormats.BGR, InputPixelFormats.MONOCHROME)
+        frame = camera.grab_frame()
+        assert camera.is_acquiring
+        assert frame.shape[0] == camera.frame_height
+        assert frame.shape[1] == camera.frame_width
     finally:
         camera.disconnect()
 

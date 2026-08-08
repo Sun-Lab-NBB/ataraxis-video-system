@@ -1,6 +1,10 @@
 """Provides shared fixtures for all test modules."""
 
+import sys
 import json
+from pathlib import Path
+import platform
+import warnings
 from contextlib import suppress
 import subprocess
 from dataclasses import asdict
@@ -12,33 +16,79 @@ import filelock
 from ataraxis_video_system import (
     CameraInterfaces,
     CameraInformation,
+    GenicamConfiguration,
     discover_camera_ids,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.video.camera import HarvestersCamera
+from ataraxis_video_system.video.camera import _CTI_PATH_VARIABLE, HarvestersCamera
+
+_SIMULATOR_ROOT: Path = Path(__file__).parent / "gentl_simulator"
+"""Stores the path to the directory holding the vendored TLSimu GenTL Producer simulator binaries."""
 
 
-def _restore_camera_state(saved_state: dict[str, int]) -> None:
-    """Restores critical camera parameters in the correct GenICam order.
+def _resolve_simulator_cti() -> Path | None:
+    """Resolves the path to the bundled GenTL Producer simulator built for the host platform.
 
-    Resets offsets to 0 first to maximize the allowed Width/Height range, then restores dimensions and frame rate.
-    Silently skips if the camera is inaccessible.
+    Returns:
+        The path to the platform-appropriate TLSimu.cti file, or None if no build is bundled for the host.
     """
-    with suppress(Exception):
-        camera = HarvestersCamera(system_id=222, camera_index=0)
+    machine = platform.machine().lower()
+
+    # The macOS binary is universal, so it covers both Intel and Apple Silicon hosts.
+    if sys.platform == "darwin":
+        directory = _SIMULATOR_ROOT / "macos_universal2"
+    elif machine not in {"x86_64", "amd64"}:
+        return None
+    elif sys.platform == "win32":
+        directory = _SIMULATOR_ROOT / "windows_amd64"
+    elif sys.platform.startswith("linux"):
+        directory = _SIMULATOR_ROOT / "linux_x86_64"
+    else:
+        return None
+
+    cti_path = directory / "TLSimu.cti"
+    return cti_path if cti_path.exists() else None
+
+
+def _restore_camera_configuration(saved_configuration: GenicamConfiguration) -> None:
+    """Writes the saved GenICam configuration back onto the connected camera.
+
+    Notes:
+        Identity validation runs in strict mode so that a configuration captured from one camera is never written onto
+        a different camera that happens to occupy the same index at teardown.
+    """
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    try:
         camera.connect()
-        node_map = camera.node_map
-
-        # Resets offsets to 0 to ensure the saved Width/Height values fit within the allowed range.
+        camera.apply_configuration(config=saved_configuration, strict_identity=True)
+    except Exception as error:
+        warnings.warn(
+            f"Failed to restore the GenICam camera configuration after the test session: {error!r}",
+            stacklevel=2,
+        )
+    finally:
         with suppress(Exception):
-            node_map.OffsetX.value = 0
-        with suppress(Exception):
-            node_map.OffsetY.value = 0
+            camera.disconnect()
 
-        node_map.Width.value = saved_state["width"]
-        node_map.Height.value = saved_state["height"]
-        node_map.AcquisitionFrameRate.value = saved_state["frame_rate"]
-        camera.disconnect()
+
+@pytest.fixture(scope="session")
+def simulator_cti_path() -> Path | None:
+    """Provides the path to the bundled GenTL Producer simulator, or None when the host has no bundled build."""
+    return _resolve_simulator_cti()
+
+
+@pytest.fixture
+def gentl_simulator(simulator_cti_path: Path | None, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Points the library at the bundled GenTL Producer simulator for the duration of a single test.
+
+    The override is applied through the environment so that it also reaches the processes VideoSystem spawns, and it
+    leaves the CTI path persisted for the user's real hardware untouched.
+    """
+    if simulator_cti_path is None:
+        pytest.skip("Skipping this test as no GenTL Producer simulator is bundled for this platform.")
+
+    monkeypatch.setenv(_CTI_PATH_VARIABLE, str(simulator_cti_path))
+    return simulator_cti_path
 
 
 @pytest.fixture(scope="session")
@@ -47,37 +97,41 @@ def _all_cameras(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> tu
 
     Serializes camera discovery across pytest-xdist workers so that only the first worker probes hardware. Subsequent
     workers read cached results from a shared JSON file, preventing concurrent exclusive-access conflicts on USB camera
-    devices.
+    devices. Discovery runs with the simulator override removed so that simulated devices are never mistaken for
+    hardware.
     """
-    # When not running under xdist (worker_id == "master"), discovers cameras directly without locking.
-    if worker_id == "master":
-        try:
-            return discover_camera_ids()
-        except Exception:
-            return ()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.delenv(_CTI_PATH_VARIABLE, raising=False)
 
-    # Resolves the shared temp directory that all xdist workers can access. The parent of each worker's basetemp
-    # is shared across the entire test session.
-    root_tmp_dir = tmp_path_factory.getbasetemp().parent
-    cache_file = root_tmp_dir / "camera_discovery.json"
-    lock_file = root_tmp_dir / "camera_discovery.lock"
+        # When not running under xdist (worker_id == "master"), discovers cameras directly without locking.
+        if worker_id == "master":
+            try:
+                return discover_camera_ids()
+            except Exception:
+                return ()
 
-    with filelock.FileLock(lock_file=str(lock_file), timeout=120):
-        if cache_file.exists():
-            # Reads cached discovery results written by the first worker.
-            data = json.loads(cache_file.read_text())
-            return tuple(CameraInformation(**entry) for entry in data)
+        # Resolves the shared temp directory that all xdist workers can access. The parent of each worker's basetemp
+        # is shared across the entire test session.
+        root_tmp_dir = tmp_path_factory.getbasetemp().parent
+        cache_file = root_tmp_dir / "camera_discovery.json"
+        lock_file = root_tmp_dir / "camera_discovery.lock"
 
-        # First worker to acquire the lock runs the actual hardware discovery.
-        try:
-            all_cameras = discover_camera_ids()
-        except Exception:
-            all_cameras = ()
+        with filelock.FileLock(lock_file=str(lock_file), timeout=120):
+            if cache_file.exists():
+                # Reads cached discovery results written by the first worker.
+                data = json.loads(cache_file.read_text())
+                return tuple(CameraInformation(**entry) for entry in data)
 
-        # Caches discovery results as JSON for other workers.
-        cache_file.write_text(json.dumps([asdict(camera) for camera in all_cameras]))
+            # First worker to acquire the lock runs the actual hardware discovery.
+            try:
+                all_cameras = discover_camera_ids()
+            except Exception:
+                all_cameras = ()
 
-    return all_cameras
+            # Caches discovery results as JSON for other workers.
+            cache_file.write_text(json.dumps([asdict(camera) for camera in all_cameras]))
+
+        return all_cameras
 
 
 @pytest.fixture(scope="session")
@@ -88,31 +142,35 @@ def has_opencv(_all_cameras: tuple[CameraInformation, ...]) -> bool:
 
 @pytest.fixture(scope="session")
 def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[bool, None, None]:
-    """Checks for Harvesters camera availability and saves camera state for restore at session end.
+    """Checks for Harvesters camera availability and sandboxes the camera configuration for the whole session.
 
-    Captures the camera's original Width, Height, and AcquisitionFrameRate from the discovery results (without an
-    extra connection) so they can be restored after all tests complete. This prevents tests that modify camera
-    dimensions from permanently altering the hardware configuration.
+    Captures the complete set of writable GenICam nodes before any test runs and writes it back once every test has
+    finished, so that tests which reconfigure the camera leave no trace on the hardware.
     """
     harvesters_cameras = [camera for camera in _all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
     has = bool(harvesters_cameras)
 
-    # Saves the original camera parameters from discovery results. No extra GenTL connection is needed since
-    # discover_camera_ids() already reads Width, Height, and AcquisitionFrameRate from the node map.
-    saved_state: dict[str, int] | None = None
+    # Captures the full writable configuration so that every node a test may touch can be restored, rather than only
+    # the frame dimensions and rate.
+    saved_configuration: GenicamConfiguration | None = None
     if has:
-        camera_info = harvesters_cameras[0]
-        saved_state = {
-            "width": camera_info.frame_width,
-            "height": camera_info.frame_height,
-            "frame_rate": camera_info.acquisition_frame_rate,
-        }
+        camera = HarvestersCamera(system_id=222, camera_index=0)
+        try:
+            camera.connect()
+            saved_configuration = camera.get_configuration()
+        except Exception as error:
+            warnings.warn(
+                f"Failed to capture the GenICam camera configuration before the test session: {error!r}",
+                stacklevel=2,
+            )
+        finally:
+            with suppress(Exception):
+                camera.disconnect()
 
     yield has
 
-    # Restores camera state at session end if it was successfully saved.
-    if saved_state is not None:
-        _restore_camera_state(saved_state=saved_state)
+    if saved_configuration is not None:
+        _restore_camera_configuration(saved_configuration=saved_configuration)
 
 
 @pytest.fixture(scope="session")
