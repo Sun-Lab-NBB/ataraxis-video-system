@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 import cv2
 import numpy as np
 import platformdirs
-from ataraxis_time import PrecisionTimer, TimerPrecisions
+from ataraxis_time import TimeUnits, PrecisionTimer, TimerPrecisions, rate_to_interval
 from harvesters.core import Harvester, ImageAcquirer  # type: ignore[import-untyped]
 from harvesters.util.pfnc import (  # type: ignore[import-untyped]
     bgr_formats,
@@ -167,7 +167,7 @@ def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
     cti_path_file = application_directory / "cti_path.txt"
 
     # Ensures the application directory exists before writing.
-    ensure_directory_exists(cti_path_file)
+    ensure_directory_exists(path=cti_path_file, is_file=True)
 
     # Overwrites the contents of the path file with the verified .cti file path.
     with cti_path_file.open("w") as file:
@@ -926,7 +926,9 @@ class MockCamera:
 
         # Uses the frame_rate to derive the number of milliseconds that has to pass between two consecutive frame
         # acquisitions, used to simulate a physical camera's frame rate during grab_frame() runtime.
-        self._time_between_frames: float = 1000 / self._frame_rate
+        self._time_between_frames: float = rate_to_interval(
+            rate=self._frame_rate, to_units=TimeUnits.MILLISECOND, as_float=True
+        )
 
     def __repr__(self) -> str:
         """Returns the string representation of the MockCamera instance."""

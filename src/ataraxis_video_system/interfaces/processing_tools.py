@@ -12,11 +12,17 @@ import numpy as np
 import polars as pl
 from ataraxis_time import TimeUnits, TimestampFormats, TimestampPrecisions, convert_time, get_timestamp
 from ataraxis_base_utilities import resolve_worker_count
-from ataraxis_data_structures import ProcessingStatus, ProcessingTracker, delete_directory
+from ataraxis_data_structures import (
+    LOG_ARCHIVE_SUFFIX,
+    ProcessingStatus,
+    ProcessingTracker,
+    delete_directory,
+    discover_marker_files,
+    read_archive_message_count,
+)
 
 from ..video import (
     TRACKER_FILENAME,
-    LOG_ARCHIVE_SUFFIX,
     TIMESTAMP_JOB_NAME,
     CAMERA_TIMESTAMPS_DIRECTORY,
     generate_job_ids,
@@ -570,7 +576,12 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
     aggregate_running = 0
     aggregate_scheduled = 0
 
-    for tracker_path in sorted(root_path.rglob(TRACKER_FILENAME)):
+    try:
+        tracker_paths = discover_marker_files(directory=root_path, marker_name=TRACKER_FILENAME)
+    except OSError as error:
+        return {"error": f"Unable to search '{root_directory}': {error}"}
+
+    for tracker_path in tracker_paths:
         log_directory = str(tracker_path.parent)
         try:
             status = _read_tracker_status(tracker_path=tracker_path)
@@ -581,7 +592,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             aggregate_running += summary.get("running", 0)
             aggregate_scheduled += summary.get("scheduled", 0)
 
-            directory_status = _derive_tracker_status(summary=summary)
+            directory_status = ProcessingTracker.resolve_status(summary=summary).value
 
             log_directory_statuses.append(
                 {
@@ -721,30 +732,6 @@ def _read_tracker_status(tracker_path: Path) -> dict[str, Any]:
             "scheduled": scheduled_count,
         },
     }
-
-
-def _derive_tracker_status(summary: dict[str, Any]) -> str:
-    """Derives a high-level processing status label from a tracker summary's job counts.
-
-    Applies a fixed priority: ``failed`` if any job failed, ``completed`` if all succeeded, ``processing`` if any
-    are running, ``not_started`` if all are scheduled, and ``in_progress`` otherwise.
-
-    Args:
-        summary: A dictionary containing 'total', 'succeeded', 'failed', 'running', and 'scheduled' counts.
-
-    Returns:
-        A status string: one of 'failed', 'completed', 'processing', 'not_started', or 'in_progress'.
-    """
-    total = summary.get("total", 0)
-    if summary.get("failed", 0) > 0:
-        return "failed"
-    if summary.get("succeeded", 0) == total and total > 0:
-        return "completed"
-    if summary.get("running", 0) > 0:
-        return "processing"
-    if summary.get("scheduled", 0) == total and total > 0:
-        return "not_started"
-    return "in_progress"
 
 
 def _group_jobs_by_tracker(state: JobExecutionState) -> dict[Path, list[PendingJob]]:
@@ -986,11 +973,10 @@ def _clean_single_output(output_directory: str) -> dict[str, Any]:
 
 
 def _probe_archive_message_count(job: PendingJob) -> int:
-    """Probes the message count of a job's log archive by reading the .npz zip directory.
+    """Probes the message count of a job's log archive without decoding any of its messages.
 
-    Reconstructs the archive path from the job's log directory and source ID, then reads the file list from the .npz
-    archive without loading any message data. The message count is the total entry count minus one (excluding the onset
-    message).
+    Reconstructs the archive path from the job's log directory and source ID. An unreadable archive degrades the job
+    to the sequential worker tier rather than aborting batch preparation, so every failure resolves to a count of 0.
 
     Args:
         job: The pending job descriptor containing the log directory and source ID.
@@ -999,11 +985,8 @@ def _probe_archive_message_count(job: PendingJob) -> int:
         The number of data messages in the archive, or 0 if the archive cannot be read.
     """
     archive_path = job.log_directory / f"{job.source_id}{LOG_ARCHIVE_SUFFIX}"
-    if not archive_path.exists():
-        return 0
 
     try:
-        with np.load(file=archive_path, allow_pickle=False) as archive:
-            return max(0, len(archive.files) - 1)
+        return read_archive_message_count(archive_path=archive_path)
     except Exception:
         return 0

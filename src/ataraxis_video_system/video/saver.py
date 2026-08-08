@@ -204,7 +204,7 @@ class VideoSaver:
         output_pixel_format = OutputPixelFormats(output_pixel_format)
 
         # Ensures that the output file's directory exists.
-        ensure_directory_exists(output_file)
+        ensure_directory_exists(path=output_file, is_file=True)
 
         # Constructs the encoder-specific portion of the FFMPEG command based on whether GPU or CPU encoding is
         # requested. This portion contains the encoder parameters but lacks the input header and output path.

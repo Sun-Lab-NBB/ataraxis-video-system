@@ -10,9 +10,15 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 from ataraxis_time import PrecisionTimer, TimerPrecisions
-from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
+from ataraxis_data_structures import (
+    PARALLEL_PROCESSING_THRESHOLD,
+    ProcessingStatus,
+    ProcessingTracker,
+    find_log_archive,
+    limit_worker_threads,
+)
 
-from ..video import PARALLEL_PROCESSING_THRESHOLD, execute_job, find_log_archive
+from ..video import execute_job
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -226,45 +232,50 @@ def _group_worker(jobs: list[PendingJob], workers: int, state: JobExecutionState
         workers: The number of CPU cores allocated to this group's ProcessPoolExecutor.
         state: The execution state, checked for cancellation between jobs.
     """
-    shared_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
+    # Pins each worker's numeric backends to a single thread. Those backends size their thread pools from the
+    # environment a spawned child inherits, so the limit encloses the pool's whole lifetime rather than only its
+    # construction. Without it, a group holding one worker per core opens the square of the core count in threads.
+    with limit_worker_threads(thread_count=1):
+        shared_executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 else None
 
-    try:
-        for job in jobs:
-            # Checks for cancellation between jobs so the group stops promptly.
-            if state.canceled:
-                break
+        try:
+            for job in jobs:
+                # Checks for cancellation between jobs so the group stops promptly.
+                if state.canceled:
+                    break
 
-            tracker = ProcessingTracker(file_path=job.tracker_path)
+                tracker = ProcessingTracker(file_path=job.tracker_path)
 
-            # execute_job already calls tracker.fail_job on exception, so the tracker state is updated. The
-            # exception is suppressed here to prevent it from terminating the group worker thread.
-            with contextlib.suppress(Exception):
-                log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
-                execute_job(
-                    log_path=log_path,
-                    output_directory=job.output_directory,
-                    source_id=job.source_id,
-                    job_id=job.job_id,
-                    workers=workers,
-                    tracker=tracker,
-                    display_progress=False,
-                    executor=shared_executor,
-                )
+                # execute_job wraps the job in tracker.run_job(), which already calls tracker.fail_job on exception,
+                # so the tracker state is updated. The exception is suppressed here to prevent it from terminating
+                # the group worker thread.
+                with contextlib.suppress(Exception):
+                    log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
+                    execute_job(
+                        log_path=log_path,
+                        output_directory=job.output_directory,
+                        source_id=job.source_id,
+                        job_id=job.job_id,
+                        workers=workers,
+                        tracker=tracker,
+                        display_progress=False,
+                        executor=shared_executor,
+                    )
 
-            # Failsafe: if the tracker was not updated to a terminal state, marks the job as failed.
-            try:
-                reloaded = ProcessingTracker(file_path=job.tracker_path).snapshot()
-                if job.job_id in reloaded:
-                    status = reloaded[job.job_id].status
-                    if status not in (ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED):
-                        tracker.fail_job(
-                            job_id=job.job_id, error_message="Job terminated without updating tracker status."
-                        )
-            except Exception:  # noqa: S110
-                pass
-    finally:
-        if shared_executor is not None:
-            shared_executor.shutdown(wait=True)
+                # Failsafe: if the tracker was not updated to a terminal state, marks the job as failed.
+                try:
+                    reloaded = ProcessingTracker(file_path=job.tracker_path).snapshot()
+                    if job.job_id in reloaded:
+                        status = reloaded[job.job_id].status
+                        if status not in (ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED):
+                            tracker.fail_job(
+                                job_id=job.job_id, error_message="Job terminated without updating tracker status."
+                            )
+                except Exception:  # noqa: S110
+                    pass
+        finally:
+            if shared_executor is not None:
+                shared_executor.shutdown(wait=True)
 
 
 def _compute_sqrt_minimum(message_count: int) -> int:

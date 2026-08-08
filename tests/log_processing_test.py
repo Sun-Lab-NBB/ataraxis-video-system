@@ -7,19 +7,15 @@ import polars as pl
 import pytest
 from numpy.typing import NDArray
 from ataraxis_base_utilities import error_format
-from ataraxis_data_structures import ProcessingStatus, ProcessingTracker
+from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, ProcessingStatus, ProcessingTracker, find_log_archive
 
 from ataraxis_video_system.video.manifest import write_camera_manifest
 from ataraxis_video_system.video.log_processing import (
     TRACKER_FILENAME,
-    LOG_ARCHIVE_SUFFIX,
     TIMESTAMP_JOB_NAME,
     CAMERA_TIMESTAMPS_DIRECTORY,
     execute_job,
-    find_log_archive,
     generate_job_ids,
-    resolve_recording_roots,
-    _extract_unique_components,
     run_log_processing_pipeline,
     extract_logged_camera_timestamps,
 )
@@ -76,42 +72,6 @@ def _create_test_archive(
     np.savez(archive_path, **arrays)
 
 
-def test_resolve_recording_roots_basic(tmp_path: Path) -> None:
-    """Verifies that resolve_recording_roots correctly identifies unique recording roots."""
-    # Creates two recording directories with shared subdirectory structure.
-    root_a = tmp_path / "day1" / "recordings" / "logs"
-    root_b = tmp_path / "day2" / "recordings" / "logs"
-    root_a.mkdir(parents=True)
-    root_b.mkdir(parents=True)
-
-    roots = resolve_recording_roots(paths=[root_a, root_b])
-    root_names = {root.name for root in roots}
-    assert root_names == {"day1", "day2"}
-    assert len(roots) == 2
-
-
-def test_resolve_recording_roots_single_path(tmp_path: Path) -> None:
-    """Verifies that resolve_recording_roots handles a single path correctly."""
-    path = tmp_path / "experiment" / "session" / "logs"
-    path.mkdir(parents=True)
-
-    roots = resolve_recording_roots(paths=[path])
-    assert len(roots) == 1
-
-
-def test_resolve_recording_roots_deduplication(tmp_path: Path) -> None:
-    """Verifies that resolve_recording_roots deduplicates paths sharing the same root."""
-    root_a = tmp_path / "day1" / "logs_a"
-    root_b = tmp_path / "day1" / "logs_b"
-    root_a.mkdir(parents=True)
-    root_b.mkdir(parents=True)
-
-    roots = resolve_recording_roots(paths=[root_a, root_b])
-
-    # Both paths share "day1" as parent, unique components are "logs_a" and "logs_b", so they remain distinct.
-    assert len(roots) == 2
-
-
 def test_find_log_archive_success(tmp_path: Path) -> None:
     """Verifies that find_log_archive returns the correct path for a matching archive."""
     archive_path = tmp_path / f"cam1{LOG_ARCHIVE_SUFFIX}"
@@ -140,51 +100,6 @@ def test_find_log_archive_nested(tmp_path: Path) -> None:
 
     result = find_log_archive(log_directory=tmp_path, source_id="cam2")
     assert result == archive_path
-
-
-def test_find_log_archive_directory_not_found(tmp_path: Path) -> None:
-    """Verifies that find_log_archive raises FileNotFoundError for a missing directory."""
-    missing_dir = tmp_path / "nonexistent"
-    message = (
-        f"Unable to find log archive for source 'cam1' in '{missing_dir}'. The path does not exist or "
-        f"is not a directory."
-    )
-    with pytest.raises(FileNotFoundError, match=error_format(message)):
-        find_log_archive(log_directory=missing_dir, source_id="cam1")
-
-
-def test_find_log_archive_no_match(tmp_path: Path) -> None:
-    """Verifies that find_log_archive raises FileNotFoundError when no archive matches."""
-    message = (
-        f"Unable to find log archive for source 'missing' in '{tmp_path}'. No file matching "
-        f"'missing{LOG_ARCHIVE_SUFFIX}' was found."
-    )
-    with pytest.raises(FileNotFoundError, match=error_format(message)):
-        find_log_archive(log_directory=tmp_path, source_id="missing")
-
-
-def test_find_log_archive_multiple_matches(tmp_path: Path) -> None:
-    """Verifies that find_log_archive raises ValueError when multiple archives match."""
-    sub_a = tmp_path / "a"
-    sub_b = tmp_path / "b"
-    sub_a.mkdir()
-    sub_b.mkdir()
-
-    for sub_dir in (sub_a, sub_b):
-        _create_test_archive(
-            archive_path=sub_dir / f"cam1{LOG_ARCHIVE_SUFFIX}",
-            source_id=1,
-            onset_us=1700000000000000,
-            frame_timestamps_us=[1000],
-        )
-
-    expected_paths = sorted(tmp_path.rglob(f"cam1{LOG_ARCHIVE_SUFFIX}"))
-    message = (
-        f"Unable to find log archive for source 'cam1' in '{tmp_path}'. Found 2 "
-        f"matching archives, but expected exactly one: {[str(path) for path in expected_paths]}."
-    )
-    with pytest.raises(ValueError, match=error_format(message)):
-        find_log_archive(log_directory=tmp_path, source_id="cam1")
 
 
 def test_extract_logged_camera_timestamps_invalid_path(tmp_path: Path) -> None:
@@ -452,7 +367,7 @@ def test_run_log_processing_pipeline_invalid_job_id(tmp_path: Path) -> None:
     write_camera_manifest(log_directory=log_dir, source_id=1, name="cam1")
 
     output_dir = tmp_path / "output"
-    with pytest.raises(ValueError, match=error_format("does not match any jobs")):
+    with pytest.raises(ValueError, match=error_format("Unable to resolve the job with ID")):
         run_log_processing_pipeline(
             log_directory=log_dir,
             output_directory=output_dir,
@@ -537,40 +452,6 @@ def test_run_log_processing_pipeline_remote_jobs_share_tracker(tmp_path: Path) -
     tracker = ProcessingTracker(file_path=output_dir / CAMERA_TIMESTAMPS_DIRECTORY / TRACKER_FILENAME)
     assert tracker.get_job_status(job_id=job_id_one) == ProcessingStatus.SUCCEEDED
     assert tracker.get_job_status(job_id=job_id_two) == ProcessingStatus.SUCCEEDED
-
-
-def test_extract_unique_components_two_paths() -> None:
-    """Verifies extraction of unique components from two paths with shared structure."""
-    paths = [Path("/data/day1/recordings/logs"), Path("/data/day2/recordings/logs")]
-    result = _extract_unique_components(paths=paths)
-    assert result == ("day1", "day2")
-
-
-def test_extract_unique_components_single_path() -> None:
-    """Verifies extraction of unique components from a single path."""
-    paths = [Path("/data/experiment/session")]
-    result = _extract_unique_components(paths=paths)
-
-    # With a single path, the rightmost component is unique by definition.
-    assert result == ("session",)
-
-
-def test_extract_unique_components_different_depths() -> None:
-    """Verifies extraction when unique components appear at different depths."""
-    paths = [
-        Path("/data/alpha/sub/logs"),
-        Path("/data/beta/sub/logs"),
-        Path("/data/gamma/sub/logs"),
-    ]
-    result = _extract_unique_components(paths=paths)
-    assert result == ("alpha", "beta", "gamma")
-
-
-def test_extract_unique_components_no_unique_raises() -> None:
-    """Verifies that _extract_unique_components raises RuntimeError when paths share all components."""
-    paths = [Path("/a/b/c"), Path("/a/b/c")]
-    with pytest.raises(RuntimeError, match=error_format("Unable to extract a unique component")):
-        _extract_unique_components(paths=paths)
 
 
 def test_generate_job_ids_basic() -> None:

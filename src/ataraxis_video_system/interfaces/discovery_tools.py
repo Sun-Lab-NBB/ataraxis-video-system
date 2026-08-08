@@ -5,15 +5,18 @@ from typing import Any
 from pathlib import Path
 import subprocess
 
-from ataraxis_data_structures import assemble_log_archives
+from ataraxis_data_structures import (
+    LOG_ARCHIVE_SUFFIX,
+    resolve_unique_roots,
+    assemble_log_archives,
+    discover_marker_files,
+)
 
 from ..video import (
-    LOG_ARCHIVE_SUFFIX,
     CAMERA_MANIFEST_FILENAME,
     CAMERA_TIMESTAMPS_DIRECTORY,
     CameraManifest,
     write_camera_manifest,
-    resolve_recording_roots,
 )
 from .mcp_instance import mcp, scan_archive_source_ids
 
@@ -134,7 +137,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     log_directories_with_archives: set[Path] = set()
 
     try:
-        for manifest_path in sorted(root_path.rglob(CAMERA_MANIFEST_FILENAME)):
+        for manifest_path in discover_marker_files(directory=root_path, marker_name=CAMERA_MANIFEST_FILENAME):
             log_directory = manifest_path.parent
 
             try:
@@ -152,8 +155,8 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
 
                 confirmed_sources.append((log_directory, source.id, source.name, archive_path))
                 log_directories_with_archives.add(log_directory)
-    except PermissionError as error:
-        return {"error": f"Permission denied during search: {error}"}
+    except OSError as error:
+        return {"error": f"Unable to search '{root_directory}': {error}"}
 
     if not confirmed_sources:
         return {
@@ -349,6 +352,18 @@ def assemble_log_archives_tool(
     if not directory_path.is_dir():
         return {"error": f"Not a directory: {log_directory}"}
 
+    # Archive assembly covers the target directory's own entries and does not descend into subdirectories, so a path
+    # holding its entries one level down assembles nothing and reports a silently empty success. The probe runs ahead
+    # of the assembly call because a successful assembly removes the entries it consumed.
+    if not any(directory_path.glob("*.npy")) and next(directory_path.rglob("*.npy"), None) is not None:
+        return {
+            "error": (
+                f"No .npy log entries found directly inside {log_directory}, but entries exist in its "
+                f"subdirectories. Archive assembly does not descend into subdirectories. Pass the DataLogger "
+                f"output directory itself, rather than a parent directory grouping several of them."
+            )
+        }
+
     try:
         assemble_log_archives(
             log_directory=directory_path,
@@ -375,8 +390,9 @@ def assemble_log_archives_tool(
 def _resolve_log_directory_roots(log_directory_paths: list[Path]) -> dict[Path, Path]:
     """Resolves each log directory to its recording root.
 
-    Uses unique path component detection to identify recording session boundaries. Falls back to using each
-    log directory's parent when unique component detection fails (e.g., single log directory).
+    Uses unique path component detection to identify recording session boundaries. Falls back to using each log
+    directory's parent when a directory shares every one of its path components with another discovered directory,
+    such as when one log directory is nested inside another.
 
     Args:
         log_directory_paths: The sorted list of log directory paths to resolve.
@@ -385,8 +401,8 @@ def _resolve_log_directory_roots(log_directory_paths: list[Path]) -> dict[Path, 
         A mapping from each log directory to its recording root path.
     """
     try:
-        recording_roots = resolve_recording_roots(paths=log_directory_paths)
-    except RuntimeError:
+        recording_roots = resolve_unique_roots(paths=log_directory_paths)
+    except ValueError:
         recording_roots = tuple(dict.fromkeys(log_directory.parent for log_directory in log_directory_paths))
 
     log_directory_to_root: dict[Path, Path] = {}
