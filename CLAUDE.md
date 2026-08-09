@@ -161,8 +161,8 @@ video encoding using CPU or GPU.
 | `src/.../orchestration/pipeline.py`   | Single-job runner and the local pipeline entry point                              |
 | `src/.../interfaces/`                 | CLI and MCP server subpackage                                                     |
 | `src/.../interfaces/cli.py`           | Click-based `axvs` CLI with subcommand groups                                     |
-| `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs FastMCP                       |
-| `src/.../interfaces/mcp_instance.py`  | Shared FastMCP instance and cross-tool helper functions                           |
+| `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs MCPServer                     |
+| `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and cross-tool helper functions                         |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
 | `tests/`                              | Test suite (camera, saver, video_system, configuration, manifest, orchestration)  |
 | `docs/`                               | Sphinx API documentation source                                                   |
@@ -191,19 +191,20 @@ video encoding using CPU or GPU.
   memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job lifecycle
   management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job by ID)
   execution modes. Outputs Polars DataFrames as Feather files in a `camera_timestamps/` subdirectory.
-- **MCP Server**: A shared FastMCP instance (`name="ataraxis-video-system"`, `json_response=True`) is defined in
-  `interfaces/mcp_instance.py`. Session global state (`_active_session`, `_active_logger`, `_session_info`), defined
-  in `interfaces/session_tools.py`, enforces a single active VideoSystem session at a time. The 27 tools are split
-  across the `interfaces/*_tools.py` modules. Tool categories: camera discovery and CTI management (3), system
-  checks (1), video session lifecycle (5), GenICam configuration (4), camera manifest management (2), log archive
-  and video validation (2), recording discovery via manifests (1), batch log processing execution (3), processing
-  status and management (4), and post-processing analysis and cleanup (2). Session tools expose configurable
-  encoding parameters (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log
-  archives and returns output paths. Batch log processing uses `JobExecutionState` (in
-  `orchestration/execution.py`) with separate core and memory budgets. `size_pending_job()` resolves each job's cores
-  and memory from its own archive before dispatch, and `job_execution_manager()` admits a job once the running set
-  has room for both, admitting an oversized job alone so it never stalls the queue. The MCP server is registered with MCP clients via the **video** plugin in the ataraxis
-  marketplace, not directly from this repository.
+- **MCP Server**: A shared `MCPServer` instance (`name="ataraxis-video-system"`) is defined in
+  `interfaces/mcp_instance.py`, and `run_server()` enables JSON responses when it starts the streamable-http transport.
+  Session global state (`_active_session`, `_active_logger`, `_session_info`), defined in `interfaces/session_tools.py`,
+  enforces a single active VideoSystem session at a time. The 27 tools are split across the `interfaces/*_tools.py`
+  modules. Tool categories: camera discovery and CTI management (3), system checks (1), video session lifecycle (5),
+  GenICam configuration (4), camera manifest management (2), log archive and video validation (2), recording discovery
+  via manifests (1), batch log processing execution (3), processing status and management (4), and post-processing
+  analysis and cleanup (2). Session tools expose configurable encoding parameters (encoder, speed preset, pixel format,
+  quantization). `stop_video_session` auto-assembles log archives and returns output paths. Batch log processing uses
+  `JobExecutionState` (in `orchestration/execution.py`) with separate core and memory budgets. `size_pending_job()`
+  resolves each job's cores and memory from its own archive before dispatch, and `job_execution_manager()` admits a job
+  once the running set has room for both, admitting an oversized job alone so it never stalls the queue. The MCP server
+  is registered with MCP clients via the **video** plugin in the ataraxis marketplace, not directly from this
+  repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
@@ -294,6 +295,5 @@ video encoding using CPU or GPU.
 2. Enforce single-session constraint via `_active_session` global state check
 3. Log processing execution uses `JobExecutionState` (from `..orchestration`) with core and memory budgets
 4. `size_pending_job()` sizes each job from its own archive, and `job_execution_manager()` admits what both budgets fit
-5. Most tools return `dict[str, Any]` structured data, as the instance sets `json_response=True`, and some return
-   strings
+5. Most tools return `dict[str, Any]` structured data, and some return strings
 6. MCP server registration happens in the ataraxis marketplace video plugin, not in this repository
