@@ -52,7 +52,6 @@ from .video import (
     extract_logged_camera_timestamps,
 )
 from .orchestration import (
-    RESERVED_CORES,
     TRACKER_FILENAME,
     FRAME_TIME_COLUMN,
     TIMESTAMP_JOB_NAME,
@@ -78,7 +77,6 @@ __all__ = [
     "CAMERA_TIMESTAMPS_SUFFIX",
     "DEFAULT_BLACKLISTED_NODES",
     "FRAME_TIME_COLUMN",
-    "RESERVED_CORES",
     "TIMESTAMP_JOB_CORES",
     "TIMESTAMP_JOB_NAME",
     "TRACKER_FILENAME",

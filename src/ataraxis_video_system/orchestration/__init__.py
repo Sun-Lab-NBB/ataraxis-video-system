@@ -24,7 +24,6 @@ from .execution import (
     job_execution_manager,
 )
 from .allocation import (
-    RESERVED_CORES,
     TIMESTAMP_JOB_CORES,
     ArchiveFootprint,
     resolve_core_budget,
@@ -39,7 +38,6 @@ __all__ = [
     "CAMERA_TIMESTAMPS_PREFIX",
     "CAMERA_TIMESTAMPS_SUFFIX",
     "FRAME_TIME_COLUMN",
-    "RESERVED_CORES",
     "TIMESTAMP_JOB_CORES",
     "TIMESTAMP_JOB_NAME",
     "TRACKER_FILENAME",

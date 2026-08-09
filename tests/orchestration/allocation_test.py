@@ -1,4 +1,4 @@
-"""Contains tests for the classes and functions provided by the orchestration allocation.py module."""
+"""Contains tests for the classes and functions provided by the allocation.py module."""
 
 import os
 
@@ -7,7 +7,7 @@ from tests.log_archives import create_test_archive
 from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, PARALLEL_PROCESSING_THRESHOLD
 
 from ataraxis_video_system.orchestration.allocation import (
-    RESERVED_CORES,
+    _RESERVED_CORES,
     _WORKER_MEMORY_MB,
     TIMESTAMP_JOB_CORES,
     _SUBPROCESS_MEMORY_MB,
@@ -214,7 +214,7 @@ def test_resolve_core_budget_auto_resolves(requested_budget):
 
     assert budget >= 1
     assert budget <= available_cores
-    assert budget == max(1, available_cores - RESERVED_CORES)
+    assert budget == max(1, available_cores - _RESERVED_CORES)
 
 
 @pytest.mark.parametrize("requested_budget_mb", [1, 1024, 4096, 1_000_000])
