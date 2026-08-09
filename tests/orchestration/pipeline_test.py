@@ -1,4 +1,4 @@
-"""Contains tests for functions provided by the orchestration/pipeline.py module."""
+"""Contains tests for functions provided by the pipeline.py module."""
 
 import polars as pl
 import pytest

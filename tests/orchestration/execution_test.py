@@ -1,4 +1,4 @@
-"""Contains tests for the classes and functions provided by the orchestration/execution.py module."""
+"""Contains tests for the classes and functions provided by the execution.py module."""
 
 from threading import Thread
 

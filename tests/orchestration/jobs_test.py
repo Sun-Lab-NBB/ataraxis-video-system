@@ -1,4 +1,4 @@
-"""Contains tests for the classes and functions provided by the orchestration/jobs.py module."""
+"""Contains tests for the classes and functions provided by the jobs.py module."""
 
 import pytest
 from tests.log_archives import create_test_archive
