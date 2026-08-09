@@ -434,7 +434,14 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     camera manifest management, and log processing functionality through the MCP protocol, enabling AI agents to
     programmatically interact with the library.
     """
-    console.echo(message=f"Starting AXVS MCP server with {transport} transport...", level=LogLevel.INFO)
+    # The stdio transport carries the JSON-RPC message stream over stdout, which is also where the console writes
+    # every message up to the WARNING level. Silencing the console keeps library output out of that stream, as a
+    # single logged line renders the message it interleaves with unparsable for the connected client.
+    if transport == "stdio":
+        console.disable()
+    else:
+        console.echo(message=f"Starting AXVS MCP server with {transport} transport...", level=LogLevel.INFO)
+
     run_mcp(transport=transport)
 
 
