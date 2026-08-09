@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 from dataclasses import dataclass
 
 from ataraxis_base_utilities import console
-from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, ProcessingTracker, discover_marker_files
+from ataraxis_data_structures import (
+    LOG_ARCHIVE_SUFFIX,
+    ProcessingTracker,
+    index_marker_files,
+    discover_marker_files,
+)
 
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
 
@@ -62,6 +67,8 @@ class PendingJob:
     """The cores this job occupies while it runs."""
     memory_mb: int = 0
     """The memory this job occupies while it runs, estimated from the archive it reads."""
+    archive_path: Path | None = None
+    """The path to the archive this job reads, resolved while the job is sized, or None when it did not resolve."""
 
     @property
     def dispatch_key(self) -> tuple[str, str]:
@@ -117,12 +124,17 @@ def discover_camera_jobs(log_directory: Path) -> tuple[list[tuple[str, str]], li
 
     universe = [(TIMESTAMP_JOB_NAME, source_id) for source_id in source_ids]
 
-    # A source whose name resolves to several archives spans several loggers, which is ambiguous rather than
-    # redundant, so it is left out of the possible set alongside the sources holding no archive at all.
+    # Indexes every source's archive in one pass, since the archive names are known once the manifest resolves. A
+    # source whose name resolves to several archives spans several loggers, which is ambiguous rather than redundant,
+    # so it is left out of the possible set alongside the sources holding no archive at all.
+    archives = index_marker_files(
+        directory=log_directory,
+        marker_names=[f"{source_id}{LOG_ARCHIVE_SUFFIX}" for source_id in source_ids],
+    )
     possible = [
         (TIMESTAMP_JOB_NAME, source_id)
         for source_id in source_ids
-        if len(discover_marker_files(directory=log_directory, marker_name=f"{source_id}{LOG_ARCHIVE_SUFFIX}")) == 1
+        if len(archives[f"{source_id}{LOG_ARCHIVE_SUFFIX}"]) == 1
     ]
 
     return universe, possible

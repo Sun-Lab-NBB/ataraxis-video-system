@@ -69,7 +69,7 @@ dependencies = [
     # Ataraxis Libraries
     "ataraxis-time>=7,<8",
     "ataraxis-base-utilities>=7,<8",
-    "ataraxis-data-structures>=7,<8",
+    "ataraxis-data-structures>=7.1,<8",
 ]
 
 [project.urls]

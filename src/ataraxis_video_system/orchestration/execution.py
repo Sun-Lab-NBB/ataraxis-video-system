@@ -99,7 +99,7 @@ def size_pending_job(job: PendingJob, core_budget: int) -> ArchiveFootprint:
         which sizes the job at the single-core baseline rather than dropping it.
 
     Args:
-        job: The queued job to size. Its core and memory weights are set in place.
+        job: The queued job to size. Its archive path, core weight, and memory weight are set in place.
         core_budget: The cores the batch may commit, which bounds the width this job receives.
 
     Returns:
@@ -107,9 +107,13 @@ def size_pending_job(job: PendingJob, core_budget: int) -> ArchiveFootprint:
     """
     try:
         archive_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
-        footprint = resolve_archive_footprint(archive_path=archive_path)
     except Exception:
         footprint = ArchiveFootprint(message_count=0, archive_bytes=0, modeled=False)
+    else:
+        # Holds the resolved path on the job, so the dispatch that follows reads it instead of searching the tree a
+        # second time for the archive this search already found.
+        job.archive_path = archive_path
+        footprint = resolve_archive_footprint(archive_path=archive_path)
 
     job.core_weight = resolve_job_workers(footprint=footprint, ceiling=core_budget)
     job.memory_mb = estimate_job_memory_mb(footprint=footprint, cores=job.core_weight)
@@ -239,8 +243,14 @@ def _run_job(job: PendingJob) -> None:
     tracker = ProcessingTracker(file_path=job.tracker_path)
 
     with contextlib.suppress(Exception):
+        # Falls back to a fresh search only for a job whose sizing failed to resolve the archive, where the search
+        # repeats that failure and the tracker records it below.
+        log_path = job.archive_path
+        if log_path is None:
+            log_path = find_log_archive(log_directory=job.log_directory, source_id=job.source_id)
+
         execute_job(
-            log_path=find_log_archive(log_directory=job.log_directory, source_id=job.source_id),
+            log_path=log_path,
             output_directory=job.output_directory,
             source_id=job.source_id,
             job_id=job.job_id,
