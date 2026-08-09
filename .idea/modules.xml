@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/AtaraxisVideoSystem.iml" filepath="$PROJECT_DIR$/.idea/AtaraxisVideoSystem.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/ataraxis-video-system.iml" filepath="$PROJECT_DIR$/.idea/ataraxis-video-system.iml" />
     </modules>
   </component>
 </project>
