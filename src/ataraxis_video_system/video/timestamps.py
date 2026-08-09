@@ -91,8 +91,8 @@ def extract_logged_camera_timestamps(
     # Processes sequentially for small archives or explicit single-worker requests to avoid multiprocessing overhead.
     # An archive holding no data messages also lands here and yields an empty array.
     if workers == 1 or reader.message_count < PARALLEL_PROCESSING_THRESHOLD:
-        return np.array(
-            [message.timestamp_us for message in reader.iter_messages() if message.payload.size == 0],
+        return np.fromiter(
+            (message.timestamp_us for message in reader.iter_messages() if message.payload.size == 0),
             dtype=np.uint64,
         )
 
@@ -177,7 +177,7 @@ def _process_frame_message_batch(
         A contiguous numpy array of absolute frame acquisition timestamps in microseconds since UTC epoch.
     """
     reader = LogArchiveReader(archive_path=log_path, onset_us=onset_us)
-    return np.array(
-        [message.timestamp_us for message in reader.iter_messages(keys=keys) if message.payload.size == 0],
+    return np.fromiter(
+        (message.timestamp_us for message in reader.iter_messages(keys=keys) if message.payload.size == 0),
         dtype=np.uint64,
     )

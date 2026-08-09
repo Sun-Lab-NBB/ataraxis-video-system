@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 from ataraxis_base_utilities import LogLevel, console
-from ataraxis_data_structures import ProcessingTracker, find_log_archive
+from ataraxis_data_structures import ProcessingTracker, find_log_archive, find_log_archives
 
 from .jobs import (
     TRACKER_FILENAME,
@@ -177,10 +177,8 @@ def run_log_processing_pipeline(
                 console.error(message=message, error=ValueError)
             source_ids = sorted(log_ids)
 
-        # Resolves all requested archive paths upfront and validates they belong to the same DataLogger directory.
-        archive_paths = {
-            source_id: find_log_archive(log_directory=log_directory, source_id=source_id) for source_id in source_ids
-        }
+        # Resolves all requested archive paths in one pass and validates they belong to the same DataLogger directory.
+        archive_paths = find_log_archives(log_directory=log_directory, source_ids=source_ids)
         parent_directories = {path.parent for path in archive_paths.values()}
         if len(parent_directories) > 1:
             message = (

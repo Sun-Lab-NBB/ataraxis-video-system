@@ -827,8 +827,14 @@ def _analyze_single_feather(
     )
     estimated_fps = round((total_frames - 1) / duration_seconds, 3) if duration_seconds > 0 else 0.0
 
-    # Computes inter-frame interval statistics. Casts to int64 to handle potential uint64 underflow.
-    intervals_us = np.diff(timestamps).astype(np.int64)
+    # Computes inter-frame interval statistics. Reinterpreting a uint64 buffer as int64 before differencing keeps a
+    # decreasing pair negative and costs no allocation, so it holds the same values the cast produces while dropping
+    # the full-length temporary. A column of any other width keeps the cast, which rounds each difference rather than
+    # each timestamp.
+    if timestamps.dtype == np.uint64:
+        intervals_us = np.diff(timestamps.view(np.int64))
+    else:
+        intervals_us = np.diff(timestamps).astype(np.int64)
     mean_us = round(float(np.mean(intervals_us)), 2)
     median_us = round(float(np.median(intervals_us)), 2)
     std_us = round(float(np.std(intervals_us)), 2)
