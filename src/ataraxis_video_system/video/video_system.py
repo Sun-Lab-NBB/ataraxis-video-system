@@ -66,6 +66,23 @@ _PROCESS_TERMINATION_TIME: int = 20
 """The maximum number of seconds to wait for the producer process and the watchdog thread to shut down."""
 
 
+def resolve_camera_video_path(output_directory: Path, system_id: int) -> Path:
+    """Resolves the path of the video file the target VideoSystem writes its acquired frames to.
+
+    Notes:
+        The identifier is zero-padded so that a directory holding the output of several systems sorts its recordings
+        in identifier order.
+
+    Args:
+        output_directory: The directory the VideoSystem writes its output into.
+        system_id: The identifier of the VideoSystem whose output path is resolved.
+
+    Returns:
+        The path to the system's video file.
+    """
+    return output_directory / f"{system_id:03d}.mp4"
+
+
 class VideoSystem:
     """Acquires, displays, and saves camera frames to disk using the requested camera interface and video saver.
 
@@ -207,9 +224,11 @@ class VideoSystem:
             )
             console.error(message=message, error=TypeError)
 
-        # If the output directory is provided, resolves the path to the output .mp4 video file to be created during
-        # runtime.
-        self._output_file: Path | None = None if output_directory is None else output_directory / f"{system_id:03d}.mp4"
+        self._output_file: Path | None = (
+            None
+            if output_directory is None
+            else resolve_camera_video_path(output_directory=output_directory, system_id=int(self._system_id))
+        )
 
         # Initializes the camera interface.
 

@@ -12,7 +12,6 @@ from ..video import (
     DEFAULT_BLACKLISTED_NODES,
     VideoSystem,
     CameraInterfaces,
-    HarvestersCamera,
     OutputPixelFormats,
     EncoderSpeedPresets,
     GenicamConfiguration,
@@ -21,6 +20,7 @@ from ..video import (
     read_genicam_node,
     discover_camera_ids,
     format_genicam_node,
+    harvester_connection,
     check_gpu_availability,
     enumerate_genicam_nodes,
     check_ffmpeg_availability,
@@ -496,10 +496,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
-    try:
-        camera.connect()
-
+    with harvester_connection(camera_index=camera_index) as camera:
         if node_name:
             description = format_genicam_node(node_map=camera.node_map, name=node_name)
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
@@ -513,8 +510,6 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
                     console.echo(message=f"  {info.name} = {info.value}")
                 except Exception:
                     console.echo(message=f"  {name} = <unreadable>")
-    finally:
-        camera.disconnect()
 
 
 @configure_group.command("write")
@@ -546,13 +541,9 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None:
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
     based on the node's type.
     """
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
-    try:
-        camera.connect()
+    with harvester_connection(camera_index=camera_index) as camera:
         camera.set_node_value(name=node_name, value=value)
         console.echo(message=f"Node '{node_name}' set to {value}.", level=LogLevel.SUCCESS)
-    finally:
-        camera.disconnect()
 
 
 @configure_group.command("dump")
@@ -580,17 +571,13 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
-    try:
-        camera.connect()
+    with harvester_connection(camera_index=camera_index) as camera:
         config = camera.get_configuration(blacklisted_nodes=blacklist)
         config.to_yaml(file_path=output_file)
         console.echo(
             message=f"Configuration saved: {len(config.nodes)} nodes written to {output_file}.",
             level=LogLevel.SUCCESS,
         )
-    finally:
-        camera.disconnect()
 
 
 @configure_group.command("load")
@@ -626,11 +613,7 @@ def configuration_load(context: click.Context, camera_index: int, config_file: P
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
-    try:
-        camera.connect()
+    with harvester_connection(camera_index=camera_index) as camera:
         config = GenicamConfiguration.from_yaml(file_path=config_file)
         camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=blacklist)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
-    finally:
-        camera.disconnect()

@@ -17,10 +17,11 @@ from .camera import (
     add_cti_file,
     check_cti_file,
     discover_camera_ids,
+    harvester_connection,
 )
 from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, CameraSourceData, write_camera_manifest
 from .timestamps import extract_logged_camera_timestamps
-from .video_system import MAXIMUM_QUANTIZATION_VALUE, VideoSystem
+from .video_system import MAXIMUM_QUANTIZATION_VALUE, VideoSystem, resolve_camera_video_path
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
     GenicamNodeInfo,
@@ -54,6 +55,8 @@ __all__ = [
     "enumerate_genicam_nodes",
     "extract_logged_camera_timestamps",
     "format_genicam_node",
+    "harvester_connection",
     "read_genicam_node",
+    "resolve_camera_video_path",
     "write_camera_manifest",
 ]
