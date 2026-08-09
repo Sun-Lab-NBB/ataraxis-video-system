@@ -147,20 +147,24 @@ video encoding using CPU or GPU.
 | Directory                             | Purpose                                                                           |
 |---------------------------------------|-----------------------------------------------------------------------------------|
 | `src/ataraxis_video_system/`          | Main library source code                                                          |
-| `src/.../video/`                      | Camera acquisition, encoding, and log-processing subpackage                       |
+| `src/.../video/`                      | Camera acquisition, encoding, and timestamp extraction subpackage                 |
 | `src/.../video/video_system.py`       | Core VideoSystem class with multiprocessing architecture                          |
 | `src/.../video/camera.py`             | Camera interfaces (OpenCV, Harvesters, Mock) and CTI management                   |
 | `src/.../video/saver.py`              | VideoSaver with FFMPEG subprocess encoding                                        |
 | `src/.../video/configuration.py`      | GenICam node inspection, read/write, dump/load via YAML                           |
 | `src/.../video/manifest.py`           | Camera manifest data classes and writer for source-to-name mappings               |
-| `src/.../video/log_processing.py`     | Log data processing pipeline for extracting frame timestamps                      |
+| `src/.../video/timestamps.py`         | Frame acquisition timestamp extraction algorithm                                  |
+| `src/.../orchestration/`              | Job discovery, allocation, batch execution, and pipeline subpackage               |
+| `src/.../orchestration/jobs.py`       | Job identity constants, PendingJob, and manifest-derived job discovery            |
+| `src/.../orchestration/allocation.py` | Declared core allocation and archive-derived memory footprint model               |
+| `src/.../orchestration/execution.py`  | Batch engine admitting jobs against core and memory budgets                       |
+| `src/.../orchestration/pipeline.py`   | Single-job runner and the local pipeline entry point                              |
 | `src/.../interfaces/`                 | CLI and MCP server subpackage                                                     |
 | `src/.../interfaces/cli.py`           | Click-based `axvs` CLI with subcommand groups                                     |
 | `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs FastMCP                       |
 | `src/.../interfaces/mcp_instance.py`  | Shared FastMCP instance and cross-tool helper functions                           |
-| `src/.../interfaces/mcp_execution.py` | Batch log processing job execution and worker allocation                          |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
-| `tests/`                              | Test suite (camera, saver, video_system, configuration, manifest, log_processing) |
+| `tests/`                              | Test suite (camera, saver, video_system, configuration, manifest, orchestration)  |
 | `docs/`                               | Sphinx API documentation source                                                   |
 
 ### Architecture
@@ -196,9 +200,9 @@ video encoding using CPU or GPU.
   status and management (4), and post-processing analysis and cleanup (2). Session tools expose configurable
   encoding parameters (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log
   archives and returns output paths. Batch log processing uses `JobExecutionState` (in
-  `interfaces/mcp_execution.py`) with budget-based worker allocation via `job_execution_manager()`, which divides the
-  budget evenly among concurrent parallel jobs (snapped to multiples of 5) with a `_compute_sqrt_minimum()`
-  saturation floor. The MCP server is registered with MCP clients via the **video** plugin in the ataraxis
+  `orchestration/execution.py`) with separate core and memory budgets. `size_pending_job()` resolves each job's cores
+  and memory from its own archive before dispatch, and `job_execution_manager()` admits a job once the running set
+  has room for both, admitting an oversized job alone so it never stalls the queue. The MCP server is registered with MCP clients via the **video** plugin in the ataraxis
   marketplace, not directly from this repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
@@ -275,7 +279,8 @@ video encoding using CPU or GPU.
 
 **Modifying log processing:**
 
-1. Review `src/ataraxis_video_system/video/log_processing.py` for the processing pipeline
+1. Review `src/ataraxis_video_system/orchestration/pipeline.py` for the pipeline entry point, `orchestration/jobs.py`
+   for job discovery and identity, and `src/ataraxis_video_system/video/timestamps.py` for the extraction algorithm
 2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` from `ataraxis-data-structures`
 3. `run_log_processing_pipeline()` supports local mode (all jobs sequentially) and remote mode (single job by ID)
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
@@ -287,8 +292,8 @@ video encoding using CPU or GPU.
 
 1. Review the `interfaces/*_tools.py` modules for tool patterns (`interfaces/mcp_instance.py` holds the `mcp` instance)
 2. Enforce single-session constraint via `_active_session` global state check
-3. Log processing execution uses `JobExecutionState` with budget-based worker allocation
-4. The execution manager divides budget among parallel jobs via `job_execution_manager()` and `_compute_sqrt_minimum()`
+3. Log processing execution uses `JobExecutionState` (from `..orchestration`) with core and memory budgets
+4. `size_pending_job()` sizes each job from its own archive, and `job_execution_manager()` admits what both budgets fit
 5. Most tools return `dict[str, Any]` structured data, as the instance sets `json_response=True`, and some return
    strings
 6. MCP server registration happens in the ataraxis marketplace video plugin, not in this repository

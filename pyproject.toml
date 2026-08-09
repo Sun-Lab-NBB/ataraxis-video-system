@@ -38,7 +38,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
     # Typing
-    "Typing :: Typed"
+    "Typing :: Typed",
 ]
 
 # Runtime project dependencies.
@@ -58,6 +58,9 @@ dependencies = [
 
     # Configuration
     "platformdirs>=4,<5",
+
+    # Host Resource Introspection
+    "psutil>=7,<8",
 
     # MCP Server
     "mcp>=1,<2",
@@ -87,6 +90,9 @@ dev = [
 
     # Development Automation
     "ataraxis-automation>=9,<10",
+
+    # Types
+    "types-psutil>=7,<8",
 ]
 
 # Specifies files that should not be included in the source-code distribution.
@@ -100,9 +106,9 @@ packages = ["src/ataraxis_video_system"]
 # Ruff Configuration.
 [tool.ruff]
 line-length = 120         # Deviates from the commonly used '80' standard.
-indent-width = 4          # Same as black, indents are 4 spaces
+indent-width = 4
 target-version = "py312"  # Targets the lowest supported version of python
-src = ["src"]             # The name of the root source code directory
+src = ["src"]
 
 # Excludes 'service' .py files, such as the sphinx configuration file, from linting.
 extend-exclude = ["conf.py"]
@@ -135,8 +141,8 @@ lint.ignore = [
 
 # Additional formatting configurations
 [tool.ruff.format]
-quote-style = "double"             # Uses double quotes for strings
-indent-style = "space"             # Uses space for indents
+quote-style = "double"
+indent-style = "space"
 skip-magic-trailing-comma = false  # Like black, honors magic trailing commas
 line-ending = "auto"               # Automatically detects and standardizes line-ending character
 
@@ -167,11 +173,11 @@ convention = "google"
     "ANN",     # Test functions and mock helpers do not need annotations
 
     # Project-specific
-    "S311",    # Synthetic frame and timestamp data is generated with the standard pseudo-random generators
+    "S311",    # A unique DataLogger instance name is drawn with the standard pseudo-random generator
 ]
 
 [tool.ruff.lint.isort]
-case-sensitive = true              # Takes case into account when sorting imports
+case-sensitive = true
 combine-as-imports = true          # Combines multiple "as" imports for the same package
 force-wrap-aliases = true          # Wraps "as" imports so that each uses a separate line
 force-sort-within-sections = true  # Forces "as" and "from" imports for the same package to be close
@@ -214,6 +220,12 @@ exclude = [
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 
+# Places the repository root on sys.path, so that the 'tests' package is importable by the test modules that share the
+# synthetic GenICam node map and the synthetic log archive builders. The import mode above resolves test modules without
+# touching sys.path, which leaves a sibling helper unreachable on its own. The src layout keeps this entry from
+# shadowing the installed distribution the tests measure coverage against.
+pythonpath = ["."]
+
 # Lists the source files excluded from coverage measurement in full. The interfaces subpackage holds the CLI and the
 # MCP server tools, which are covered by the tests written for the library functions they wrap. The 'parallel' and
 # 'concurrency' keys extend measurement to the spawned producer and consumer processes and to the stderr drain thread,
@@ -221,18 +233,7 @@ addopts = "--import-mode=importlib"
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
-omit = [
-    "*/ataraxis_video_system/interfaces/__init__.py",
-    "*/ataraxis_video_system/interfaces/camera_tools.py",
-    "*/ataraxis_video_system/interfaces/cli.py",
-    "*/ataraxis_video_system/interfaces/configuration_tools.py",
-    "*/ataraxis_video_system/interfaces/discovery_tools.py",
-    "*/ataraxis_video_system/interfaces/mcp_execution.py",
-    "*/ataraxis_video_system/interfaces/mcp_instance.py",
-    "*/ataraxis_video_system/interfaces/mcp_server.py",
-    "*/ataraxis_video_system/interfaces/processing_tools.py",
-    "*/ataraxis_video_system/interfaces/session_tools.py",
-]
+omit = ["*/ataraxis_video_system/interfaces/*"]
 
 # Used by the 'coverage' tox task to merge the coverage data files the '{py}-test' tasks produce.
 [tool.coverage.paths]

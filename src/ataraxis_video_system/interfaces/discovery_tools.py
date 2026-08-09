@@ -12,19 +12,9 @@ from ataraxis_data_structures import (
     discover_marker_files,
 )
 
-from ..video import (
-    CAMERA_MANIFEST_FILENAME,
-    CAMERA_TIMESTAMPS_DIRECTORY,
-    CameraManifest,
-    write_camera_manifest,
-)
+from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest, write_camera_manifest
 from .mcp_instance import mcp, scan_archive_source_ids
-
-_FEATHER_PREFIX: str = "camera_"
-"""Filename prefix for camera timestamp feather files."""
-
-_FEATHER_SUFFIX: str = "_timestamps.feather"
-"""Filename suffix for camera timestamp feather files."""
+from ..orchestration import CAMERA_TIMESTAMPS_DIRECTORY, resolve_camera_timestamps_path
 
 
 @mcp.tool()
@@ -470,9 +460,9 @@ def _match_video_file(
 def _find_feather_file(timestamps_dirs: tuple[Path, ...], source_id: int) -> Path | None:
     """Searches pre-discovered ``camera_timestamps/`` directories for a processed feather file matching a source ID.
 
-    Performs a flat (non-recursive) glob inside each ``camera_timestamps/`` directory for a feather file matching the
-    ``camera_{source_id}_timestamps.feather`` naming convention. The caller is responsible for pre-discovering
-    ``camera_timestamps/`` directories via a single ``rglob`` pass over the search root.
+    Resolves the source's output path directly inside each ``camera_timestamps/`` directory through the same helper
+    the extraction job writes with. The caller is responsible for pre-discovering ``camera_timestamps/`` directories
+    via a single ``rglob`` pass over the search root.
 
     Args:
         timestamps_dirs: Pre-discovered ``camera_timestamps/`` directory paths collected from the search root.
@@ -481,9 +471,8 @@ def _find_feather_file(timestamps_dirs: tuple[Path, ...], source_id: int) -> Pat
     Returns:
         The path to the feather file, or None if not found.
     """
-    pattern = f"{_FEATHER_PREFIX}{source_id}{_FEATHER_SUFFIX}"
     for timestamps_dir in timestamps_dirs:
-        matches = list(timestamps_dir.glob(pattern))
-        if matches:
-            return matches[0]
+        candidate = resolve_camera_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))
+        if candidate.is_file():
+            return candidate
     return None

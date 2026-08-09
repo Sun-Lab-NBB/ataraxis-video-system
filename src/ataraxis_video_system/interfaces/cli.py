@@ -1,14 +1,14 @@
 """Provides the Command Line Interface (CLI) installed into the Python environment together with the library."""
 
-from typing import Literal  # pragma: no cover
-from pathlib import Path  # pragma: no cover
+from typing import Literal
+from pathlib import Path
 
-import click  # pragma: no cover
-import numpy as np  # pragma: no cover
-from ataraxis_base_utilities import LogLevel, console  # pragma: no cover
-from ataraxis_data_structures import DataLogger, assemble_log_archives  # pragma: no cover
+import click
+import numpy as np
+from ataraxis_base_utilities import LogLevel, console
+from ataraxis_data_structures import DataLogger, assemble_log_archives
 
-from ..video import (  # pragma: no cover
+from ..video import (
     DEFAULT_BLACKLISTED_NODES,
     VideoSystem,
     CameraInterfaces,
@@ -24,25 +24,25 @@ from ..video import (  # pragma: no cover
     check_gpu_availability,
     enumerate_genicam_nodes,
     check_ffmpeg_availability,
-    run_log_processing_pipeline,
 )
-from .mcp_server import run_server as run_mcp  # pragma: no cover
+from .mcp_server import run_server as run_mcp
+from ..orchestration import run_log_processing_pipeline
 
-console.enable()  # pragma: no cover
+console.enable()
 
-CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}  # pragma: no cover
-"""Ensures that displayed Click help messages are formatted according to the lab standard."""  # pragma: no cover
+_CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}
+"""Ensures that displayed Click help messages are formatted according to the lab standard."""
 
 
-@click.group("axvs", context_settings=CONTEXT_SETTINGS)
-def axvs_cli() -> None:  # pragma: no cover
+@click.group("axvs", context_settings=_CONTEXT_SETTINGS)
+def axvs_cli() -> None:
     """Serves as the entry-point for interfacing with all interactive components of the ataraxis-video-system (AXVS)
     library.
     """
 
 
 @axvs_cli.group("cti")
-def cti_group() -> None:  # pragma: no cover
+def cti_group() -> None:
     """Allows working with the GenTL Producer interface (.cti) files."""
 
 
@@ -58,7 +58,7 @@ def cti_group() -> None:  # pragma: no cover
         "See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details."
     ),
 )
-def set_cti_file(file_path: Path) -> None:  # pragma: no cover
+def set_cti_file(file_path: Path) -> None:
     """Configures the library to use the input CTI file for all future runtimes involving GenICam cameras.
 
     This library relies on the Harvesters library to interface with GenICam-compatible cameras. In turn, the Harvesters
@@ -72,7 +72,7 @@ def set_cti_file(file_path: Path) -> None:  # pragma: no cover
 
 
 @cti_group.command("check")
-def check_cti_status() -> None:  # pragma: no cover
+def check_cti_status() -> None:
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
     This command verifies if a .cti file has been configured and whether it is still valid. The Harvesters camera
@@ -94,12 +94,12 @@ def check_cti_status() -> None:  # pragma: no cover
 
 
 @axvs_cli.group("check")
-def check_group() -> None:  # pragma: no cover
+def check_group() -> None:
     """Allows discovering compatible camera devices and verifying host-system compatibility."""
 
 
 @check_group.command("devices")
-def check_devices() -> None:  # pragma: no cover
+def check_devices() -> None:
     """Discovers all cameras compatible with the library and prints their identification information.
 
     This command is primarily intended to be used during the initial system configuration to determine the positional
@@ -156,12 +156,12 @@ def check_devices() -> None:  # pragma: no cover
 
 
 @check_group.command("compatibility")
-def check_compatibility() -> None:  # pragma: no cover
+def check_compatibility() -> None:
     """Checks whether the host system meets the requirements for CPU and (optionally) GPU video encoding.
 
     This command allows checking whether the local system is set up correctly to support saving acquired camera frames
     as videos. As a minimum, this requires that the system has the FFMPEG library installed and available on the
-    system's Path. Additionally, to support GPU (hardware) encoding, the system must have an Nvidia GPU. Note; the
+    system's Path. Additionally, to support GPU (hardware) encoding, the system must have an Nvidia GPU. Note, the
     presence of the GPU is evaluated by calling the 'nvidia-smi' command, so it must also be installed on the local
     system alongside the GPU for the check to work as expected.
     """
@@ -262,7 +262,7 @@ def live_run(
     frame_rate: int,
     *,
     monochrome: bool,
-) -> None:  # pragma: no cover
+) -> None:
     """Creates a VideoSystem instance using the input parameters and starts an interactive imaging session.
 
     This command allows testing various components of the VideoSystem by running an interactive session controlled via
@@ -322,15 +322,15 @@ def live_run(
             console.echo(message=message)
             video_system.stop()
             logger.stop()
-        elif key.lower() == "w":  # pragma: no cover
+        elif key.lower() == "w":
             message = "VideoSystem's camera frame saving: Started."
             console.echo(message=message)
             video_system.start_frame_saving()
-        elif key.lower() == "s":  # pragma: no cover
+        elif key.lower() == "s":
             message = "VideoSystem's camera frame saving: Stopped."
             console.echo(message=message)
             video_system.stop_frame_saving()
-        else:  # pragma: no cover
+        else:
             message = (
                 f"Unknown input key {key.lower()} encountered while interacting with the VideoSystem. Use 'q' to "
                 f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
@@ -383,7 +383,8 @@ def live_run(
     type=int,
     default=-1,
     show_default=True,
-    help="The number of worker processes to use. Set to a value below 1 (default -1) to use all available CPU cores.",
+    help="The ceiling on the worker processes any single job receives. Each job is sized from the archive it reads "
+    "and never exceeds this ceiling. Set to a value below 1 (default -1) to resolve the ceiling from the host.",
 )
 @click.option(
     "-p",
@@ -400,7 +401,7 @@ def process(
     *,
     workers: int,
     progress: bool,
-) -> None:  # pragma: no cover
+) -> None:
     """Processes VideoSystem log archives to extract frame timestamps.
 
     Functions as the entry point for processing the data stored in the .npz log archives generated by VideoSystem
@@ -426,7 +427,7 @@ def process(
     help="The transport protocol to use for MCP communication. Use 'stdio' for standard input/output communication "
     "(default, recommended for Claude Desktop integration) or 'streamable-http' for HTTP-based communication.",
 )
-def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # pragma: no cover
+def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     """Starts the Model Context Protocol (MCP) server for agentic interaction with the library.
 
     The MCP server exposes camera discovery, CTI file management, video session control, GenICam configuration,
@@ -457,9 +458,7 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:  # p
     "regardless of the --blacklisted-node values.",
 )
 @click.pass_context
-def configure_group(
-    context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool
-) -> None:  # pragma: no cover
+def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool) -> None:
     """Allows working with the configuration of the GenTL- (Harvesters)-compatible cameras."""
     context.ensure_object(dict)
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
@@ -482,7 +481,7 @@ def configure_group(
     help="The name of a specific GenICam node to read. If omitted, lists all writable (ReadWrite) nodes.",
 )
 @click.pass_context
-def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:  # pragma: no cover
+def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists all
@@ -534,7 +533,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
     required=True,
     help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
-def configuration_write(camera_index: int, node_name: str, value: str) -> None:  # pragma: no cover
+def configuration_write(camera_index: int, node_name: str, value: str) -> None:
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
@@ -566,7 +565,7 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None: 
     help="The path to the output YAML file to write the configuration to.",
 )
 @click.pass_context
-def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:  # pragma: no cover
+def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     The output YAML includes all writable (ReadWrite) nodes with their current values, as well as the camera model
@@ -612,9 +611,7 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
     "and the connected camera.",
 )
 @click.pass_context
-def configuration_load(
-    context: click.Context, camera_index: int, config_file: Path, *, strict: bool
-) -> None:  # pragma: no cover
+def configuration_load(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
     Applies all writable nodes from the configuration file to the camera. Optionally validates that the camera
