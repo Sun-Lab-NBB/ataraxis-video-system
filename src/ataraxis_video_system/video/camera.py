@@ -835,6 +835,29 @@ class HarvestersCamera:
             raise ValueError(message)  # pragma: no cover
 
 
+@contextmanager
+def harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None, None]:  # pragma: no cover
+    """Opens a temporary connection to the target GenICam camera for the duration of the managed block.
+
+    Notes:
+        The camera is created with a placeholder system identifier, since a connection opened this way exposes the
+        camera's GenICam node map rather than acquiring frames. The connection is always closed on exit, which
+        releases the GenTL handle for other processes.
+
+    Args:
+        camera_index: The index of the camera in the list of all cameras discoverable by Harvesters.
+
+    Yields:
+        The connected camera interface.
+    """
+    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
+    try:
+        camera.connect()
+        yield camera
+    finally:
+        camera.disconnect()
+
+
 class MockCamera:
     """Simulates (mocks) the behavior of the OpenCVCamera and HarvestersCamera classes without the need to interface
     with a physical camera.

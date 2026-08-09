@@ -1,15 +1,13 @@
 """Provides MCP tools for reading, writing, dumping, and loading GenICam node configurations on Harvesters cameras."""
 
 from pathlib import Path
-import contextlib
-from collections.abc import Generator
 
 from ..video import (
     DEFAULT_BLACKLISTED_NODES,
-    HarvestersCamera,
     GenicamConfiguration,
     read_genicam_node as read_node_info,
     format_genicam_node,
+    harvester_connection,
     enumerate_genicam_nodes,
 )
 from .mcp_instance import mcp
@@ -40,7 +38,7 @@ def read_genicam_node_tool(
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
     try:
-        with _harvester_connection(camera_index=camera_index) as camera:
+        with harvester_connection(camera_index=camera_index) as camera:
             # Single-node mode: returns a detailed formatted description including the node's type, current value,
             # valid range or enumeration entries, and access mode.
             if node_name:
@@ -78,7 +76,7 @@ def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> st
         A confirmation with the node name and written value, or an error description.
     """
     try:
-        with _harvester_connection(camera_index=camera_index) as camera:
+        with harvester_connection(camera_index=camera_index) as camera:
             # Delegates value conversion and writing to the camera's set_node_value method. That method casts the
             # string value to int, float, or bool by node type, keeping enumeration and string nodes as raw strings.
             camera.set_node_value(name=node_name, value=value)
@@ -114,7 +112,7 @@ def dump_genicam_config_tool(
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
     try:
-        with _harvester_connection(camera_index=camera_index) as camera:
+        with harvester_connection(camera_index=camera_index) as camera:
             # Reads every accessible node from the camera's GenICam node map and packages them into a
             # GenicamConfiguration object that stores the camera's model and serial number along with the name and
             # current value of each node.
@@ -162,7 +160,7 @@ def load_genicam_config_tool(
         return f"Error: File not found at {config_file}"
 
     try:
-        with _harvester_connection(camera_index=camera_index) as camera:
+        with harvester_connection(camera_index=camera_index) as camera:
             # Deserializes the YAML configuration and applies each writable node value to the connected camera. When
             # strict_identity is True, the camera model and serial number must match the values stored in the YAML
             # file; otherwise, a mismatch produces a warning but proceeds with the write.
@@ -186,24 +184,3 @@ def _resolve_blacklist(blacklisted_nodes: list[str] | None) -> frozenset[str]:
         A frozenset of blacklisted node names.
     """
     return frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
-
-
-@contextlib.contextmanager
-def _harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None, None]:
-    """Opens a temporary connection to a Harvesters camera and guarantees disconnection on exit.
-
-    Creates a HarvestersCamera with system_id=0 (placeholder, since only node map access is needed) and connects it.
-    The camera is always disconnected in the finally block, releasing the GenTL handle for other processes.
-
-    Args:
-        camera_index: The index of the Harvesters camera to connect to.
-
-    Yields:
-        The connected HarvestersCamera instance.
-    """
-    camera = HarvestersCamera(system_id=0, camera_index=camera_index)
-    try:
-        camera.connect()
-        yield camera
-    finally:
-        camera.disconnect()

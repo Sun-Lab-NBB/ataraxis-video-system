@@ -47,8 +47,11 @@ from .video import (
     add_cti_file,
     check_cti_file,
     discover_camera_ids,
+    harvester_connection,
+    write_camera_manifest,
     check_gpu_availability,
     check_ffmpeg_availability,
+    resolve_camera_video_path,
     extract_logged_camera_timestamps,
 )
 from .orchestration import (
@@ -102,8 +105,11 @@ __all__ = [
     "execute_job",
     "extract_logged_camera_timestamps",
     "generate_job_ids",
+    "harvester_connection",
     "resolve_archive_footprint",
     "resolve_camera_timestamps_path",
+    "resolve_camera_video_path",
     "resolve_job_workers",
     "run_log_processing_pipeline",
+    "write_camera_manifest",
 ]
