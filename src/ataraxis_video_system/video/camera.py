@@ -1020,7 +1020,12 @@ class MockCamera:
             self._timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # Simulates the blocking behavior of physical camera interfaces by using the timer class to enforce a certain
-        # frame rate.
+        # frame rate. Sleeping all but the final millisecond releases the logical core the way a physical interface
+        # blocking on its driver does. The spin that follows absorbs the sleep's overshoot, so the frame period lands
+        # on the same millisecond the timer reaches when the whole interval is spun.
+        sleep_time = int(self._time_between_frames - self._timer.elapsed) - 1
+        if sleep_time > 0:
+            self._timer.delay(delay=sleep_time, allow_sleep=True)
         while self._timer.elapsed < self._time_between_frames:
             pass
 
