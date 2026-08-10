@@ -5,11 +5,16 @@ import pytest
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import CameraInterfaces, InputPixelFormats
+from ataraxis_video_system.video import camera as camera_module
 from ataraxis_video_system.video.camera import (
+    GENICAM_UNAVAILABLE_REASON,
     MockCamera,
     OpenCVCamera,
     HarvestersCamera,
+    check_cti_file,
     _get_harvesters_ids,
+    discover_camera_ids,
+    genicam_runtime_available,
 )
 
 _SIMULATED_DEVICE_COUNT: int = 4
@@ -450,3 +455,49 @@ def test_harvesters_camera_pixel_color_format_both_branches() -> None:
 
     camera._color = False
     assert camera.pixel_color_format == InputPixelFormats.MONOCHROME
+
+
+def test_genicam_runtime_available_tracks_the_imported_runtime(monkeypatch) -> None:
+    """Verifies that genicam_runtime_available() reports whether the GenICam runtime imported."""
+    # Patches both states rather than reading the host's own, so the assertions hold on macOS too, where the library
+    # installs no runtime and the guarded import falls back to None.
+    monkeypatch.setattr(camera_module, "Harvester", object())
+    assert genicam_runtime_available()
+
+    monkeypatch.setattr(camera_module, "Harvester", None)
+    assert not genicam_runtime_available()
+
+
+def test_harvesters_camera_connect_requires_the_genicam_runtime(monkeypatch) -> None:
+    """Verifies that connecting to a GenICam camera aborts on a platform that does not support the interface."""
+    monkeypatch.setattr(camera_module, "Harvester", None)
+    camera = HarvestersCamera(system_id=222, camera_index=3)
+
+    # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
+    message = f"Unable to connect to the GenICam camera at index 3. {GENICAM_UNAVAILABLE_REASON}"
+    with pytest.raises(NotImplementedError, match=error_format(message)):
+        camera.connect()
+
+
+def test_discover_camera_ids_skips_genicam_without_the_runtime(monkeypatch) -> None:
+    """Verifies that camera discovery reports OpenCV cameras alone where the GenICam interface is unsupported."""
+
+    def _forbidden_discovery():
+        message = "Harvesters discovery ran without the GenICam runtime."
+        raise AssertionError(message)
+
+    def _no_opencv_cameras():
+        return ()
+
+    monkeypatch.setattr(camera_module, "Harvester", None)
+    monkeypatch.setattr(camera_module, "_get_harvesters_ids", _forbidden_discovery)
+    monkeypatch.setattr(camera_module, "_get_opencv_ids", _no_opencv_cameras)
+
+    assert discover_camera_ids() == ()
+
+
+def test_check_cti_file_reports_an_unsupported_platform(monkeypatch) -> None:
+    """Verifies that check_cti_file() reports an unusable configuration where the GenICam interface is unsupported."""
+    monkeypatch.setattr(camera_module, "Harvester", None)
+
+    assert check_cti_file() is None

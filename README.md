@@ -26,7 +26,7 @@ ___
 
 ## Features
 
-- Supports Windows, Linux, and macOS.
+- Supports Windows, Linux, and macOS, with the GenICam camera interface covering Windows and Linux.
 - Uses OpenCV or GenICam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Highly customizable and can be extensively fine-tuned for quality or throughput.
@@ -128,10 +128,12 @@ interferes with the library, as it displays the acquired frames from the same pr
 to minimize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
 be fixed any time soon.
 
-***Note,*** on macOS, this library requires Python 3.13 or earlier. The `genicam` package, a dependency of the 
-Harvesters camera interface, does not publish a macOS Python 3.14 wheel to PyPI, so installation under Python 3.14 
-fails on macOS. Linux and Windows support Python 3.14 as usual. This restriction is lifted automatically once 
-`genicam` publishes a macOS Python 3.14 wheel to the main PyPI index. No library update is required.
+***Note,*** macOS does not support the GenICam ('harvesters') camera interface. The `genicam` distribution that supplies
+the interface runtime publishes no macOS wheel for every Python version this library supports, so the library declares
+neither `harvesters` nor `genicam` on macOS and every entry point that reaches GenICam hardware aborts with an error
+naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a Linux or Windows
+host. Every other library feature, including video encoding and log processing, works on macOS under every supported
+Python version.
 
 ### Quickstart
 This example is intentionally kept minimal. Consult the
@@ -397,6 +399,9 @@ available.
 ### Using GenICam Compatible Cameras
 This library supports all cameras compatible with the [GenICam](https://www.emva.org/standards-technology/genicam/) 
 standard, which includes most GigE+ scientific and machine vision cameras. 
+
+***Note,*** this interface is available on Windows and Linux. See the [macOS](#macos) section for the platform
+limitation that leaves it out there.
 
 ***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
 Interface file. Without an interface, the library is not able to interface with the GenICam cameras. Use the

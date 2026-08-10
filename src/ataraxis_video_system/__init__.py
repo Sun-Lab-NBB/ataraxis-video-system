@@ -52,6 +52,7 @@ from .video import (
     write_camera_manifest,
     check_gpu_availability,
     check_ffmpeg_availability,
+    genicam_runtime_available,
     resolve_camera_video_path,
     extract_logged_camera_timestamps,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "estimate_archive_job_memory_mb",
     "execute_job",
     "extract_logged_camera_timestamps",
+    "genicam_runtime_available",
     "harvester_connection",
     "resolve_camera_video_path",
     "resolve_jobs",
