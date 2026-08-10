@@ -154,11 +154,13 @@ video encoding using CPU or GPU.
 | `src/.../video/configuration.py`      | GenICam node inspection, read/write, dump/load via YAML                           |
 | `src/.../video/manifest.py`           | Camera manifest data classes and writer for source-to-name mappings               |
 | `src/.../video/timestamps.py`         | Frame acquisition timestamp extraction algorithm                                  |
-| `src/.../orchestration/`              | Job discovery, allocation, batch execution, and pipeline subpackage               |
-| `src/.../orchestration/jobs.py`       | Job identity constants, PendingJob, and manifest-derived job discovery            |
+| `src/.../orchestration/`              | Job identity, sizing, discovery, the single-job runner, and both execution paths  |
+| `src/.../orchestration/jobs.py`       | Job identity, the output layout enumeration, and the job descriptor               |
 | `src/.../orchestration/allocation.py` | Declared core allocation and archive-derived memory footprint model               |
-| `src/.../orchestration/execution.py`  | Batch engine admitting jobs against core and memory budgets                       |
-| `src/.../orchestration/pipeline.py`   | Single-job runner and the local pipeline entry point                              |
+| `src/.../orchestration/discovery.py`  | Manifest-derived job resolution, preparation, and the per-job sizing pass         |
+| `src/.../orchestration/worker.py`     | Single-job runner and the picklable descriptor-addressed pool entry point         |
+| `src/.../orchestration/execution.py`  | Shared-pool batch engine admitting jobs against core and memory budgets           |
+| `src/.../orchestration/pipeline.py`   | Sequential pipeline entry point for one recording                                 |
 | `src/.../interfaces/`                 | CLI and MCP server subpackage                                                     |
 | `src/.../interfaces/cli.py`           | Click-based `axvs` CLI with subcommand groups                                     |
 | `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs MCPServer                     |
@@ -185,12 +187,12 @@ video encoding using CPU or GPU.
   names in a `camera_manifest.yaml` file alongside DataLogger archives. `CameraSourceData` stores per-camera
   entries. `write_camera_manifest()` creates or updates the manifest. Used by log processing discovery to identify
   which archives were produced by ataraxis-video-system and to route processing by source ID.
-- **Log Processing**: Pipeline for extracting frame acquisition timestamps from DataLogger `.npz` archives.
-  Requires a `camera_manifest.yaml` in the log directory for source ID resolution and validation. Supports
-  sequential and parallel (ProcessPoolExecutor) processing with contiguous numpy array output to minimize
-  memory footprint. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job lifecycle
-  management. `run_log_processing_pipeline()` orchestrates local (all jobs) and remote (single job by ID)
-  execution modes. Outputs Polars DataFrames as Feather files in a `camera_timestamps/` subdirectory.
+- **Log Processing**: Extracts frame acquisition timestamps from DataLogger `.npz` archives, one job per archive.
+  `resolve_jobs()` reads the recording's `camera_manifest.yaml` and reports an empty universe for a tree holding none,
+  `prepare_jobs()` registers the resolved jobs without reading an archive, and `size_job()` applies the memory model in
+  one pass. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job lifecycle management.
+  `run_log_processing_pipeline()` runs one recording sequentially, or the single job a caller names by its canonical
+  identifier, and fails when it resolves none. Outputs Feather files in a `camera_timestamps/` subdirectory.
 - **MCP Server**: A shared `MCPServer` instance (`name="ataraxis-video-system"`) is defined in
   `interfaces/mcp_instance.py`, and `run_server()` enables JSON responses when it starts the streamable-http transport.
   Session global state (`_active_session`, `_active_logger`, `_session_info`), defined in `interfaces/session_tools.py`,
@@ -200,9 +202,9 @@ video encoding using CPU or GPU.
   via manifests (1), batch log processing execution (3), processing status and management (4), and post-processing
   analysis and cleanup (2). Session tools expose configurable encoding parameters (encoder, speed preset, pixel format,
   quantization). `stop_video_session` auto-assembles log archives and returns output paths. Batch log processing uses
-  `JobExecutionState` (in `orchestration/execution.py`) with separate core and memory budgets. `size_pending_job()`
-  resolves each job's cores and memory from its own archive before dispatch, and `job_execution_manager()` admits a job
-  once the running set has room for both, admitting an oversized job alone so it never stalls the queue. The MCP server
+  `JobExecutionState` (in `orchestration/execution.py`) with separate core and memory budgets. `size_job()` resolves
+  each job's cores and memory from its own archive before dispatch, and `job_execution_manager()` admits what both
+  budgets fit, running an oversized job alone so it never stalls the queue. The MCP server
   is registered with MCP clients via the **video** plugin in the ataraxis marketplace, not directly from this
   repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
@@ -280,20 +282,19 @@ video encoding using CPU or GPU.
 
 **Modifying log processing:**
 
-1. Review `src/ataraxis_video_system/orchestration/pipeline.py` for the pipeline entry point, `orchestration/jobs.py`
-   for job discovery and identity, and `src/ataraxis_video_system/video/timestamps.py` for the extraction algorithm
-2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` from `ataraxis-data-structures`
-3. `run_log_processing_pipeline()` supports local mode (all jobs sequentially) and remote mode (single job by ID)
+1. Review `orchestration/discovery.py` for resolution, preparation, and sizing, `orchestration/worker.py` for the
+   single-job runner, and `video/timestamps.py` for the extraction algorithm
+2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` and returns `NDArray[np.uint64]`
+3. `run_log_processing_pipeline()` runs one recording sequentially, or one job by identifier, and imports no engine
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
-5. `extract_logged_camera_timestamps()` returns `NDArray[np.uint64]` for minimal memory footprint
-6. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
-7. Log discovery uses manifest-based routing via `camera_manifest.yaml` files
+5. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
+6. Log discovery uses manifest-based routing via `camera_manifest.yaml` files
 
 **Adding or modifying MCP tools:**
 
 1. Review the `interfaces/*_tools.py` modules for tool patterns (`interfaces/mcp_instance.py` holds the `mcp` instance)
 2. Enforce single-session constraint via `_active_session` global state check
 3. Log processing execution uses `JobExecutionState` (from `..orchestration`) with core and memory budgets
-4. `size_pending_job()` sizes each job from its own archive, and `job_execution_manager()` admits what both budgets fit
+4. `size_job()` sizes each job from its own archive, and `job_execution_manager()` admits what both budgets fit
 5. Most tools return `dict[str, Any]` structured data, and some return strings
 6. MCP server registration happens in the ataraxis marketplace video plugin, not in this repository
