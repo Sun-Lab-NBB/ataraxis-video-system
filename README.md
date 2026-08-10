@@ -117,9 +117,11 @@ all test conditions. It is very likely that Linux users will not experience any 
 #### Windows
 The library is mostly stable on Windows systems, but requires additional setup to ensure smooth operation. First, the 
 FFMPEG **has** to be updated to the latest stable version, as older versions may have a drastically reduced encoding 
-speed even with hardware acceleration. Additionally, some of the advanced OpenCV’s features, such as the MSMF HW 
-transformations, have to be disabled to support smooth runtimes on the Windows platform. Typically, the information of 
-which features to disable is readily available from the OpenCV’s Windows community.
+speed even with hardware acceleration. Some of the advanced OpenCV’s features also have to be disabled to support
+smooth runtimes on the Windows platform. The library disables the MSMF HW transformations for you, exporting
+`OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0` when it is imported, so that feature requires no user action. For any
+remaining camera-specific feature, the information of which features to disable is readily available from the OpenCV’s
+Windows community.
 
 #### macOS
 macOS mostly works as expected except for live frame displaying, which does not work for modern macOS devices. The issue
@@ -416,8 +418,9 @@ through the GenICam standard. This library provides tools to inspect, modify, sa
 CLI (`axvs configure`) or the [MCP server](#mcp-server).
 
 The `axvs configure read` command lists all writable nodes on a connected camera, or displays detailed metadata for a
-specific node (type, current value, valid range, unit, and description). The `axvs configure write` command sets a
-single node to a new value, with automatic type conversion for integer, float, boolean, and enumeration nodes.
+specific node (type, current value, access mode, valid range, step increment, enumeration entries, unit, and
+description). The `axvs configure write` command sets a single node to a new value, with automatic type conversion for
+integer, float, boolean, and enumeration nodes.
 
 To support reproducible configurations, the `axvs configure dump` command saves all current camera parameters to a
 human-readable YAML file, tagged with the camera model and serial number. The `axvs configure load` command restores a

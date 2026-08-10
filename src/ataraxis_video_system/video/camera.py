@@ -209,6 +209,8 @@ def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
 
     Raises:
         NotImplementedError: If the host platform does not support the GenICam camera interface.
+        FileNotFoundError: If the supplied .cti file does not exist.
+        OSError: If the supplied .cti file is not a loadable GenTL Producer.
     """
     _require_genicam_runtime(action="configure the GenTL Producer interface (.cti) file")
 
@@ -584,6 +586,8 @@ class HarvestersCamera:
 
         Raises:
             NotImplementedError: If the host platform does not support the GenICam camera interface.
+            FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
+            OSError: If the configured .cti file is not a loadable GenTL Producer.
         """
         # Prevents connecting to an already connected camera.
         if self._camera is not None:  # pragma: no cover
@@ -748,6 +752,7 @@ class HarvestersCamera:
 
         Raises:
             ConnectionError: If the instance is not connected to the camera hardware.
+            AttributeError: If the named node does not exist on the camera's node map.
             ValueError: If the named node does not have ReadWrite access or the value cannot be coerced.
             RuntimeError: If the write operation fails.
         """
@@ -937,9 +942,12 @@ class MockCamera:
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
-        frame_rate: The simulated frame acquisition rate of the camera, in frames per second.
-        frame_width: The simulated camera frame width, in pixels.
-        frame_height: The simulated camera frame height, in pixels.
+        frame_rate: The simulated frame acquisition rate of the camera, in frames per second. If this argument is not
+            explicitly provided, the instance simulates 30 frames per second.
+        frame_width: The simulated camera frame width, in pixels. If this argument is not explicitly provided, the
+            instance simulates a width of 600 pixels.
+        frame_height: The simulated camera frame height, in pixels. If this argument is not explicitly provided, the
+            instance simulates a height of 400 pixels.
         color: The simulated camera frame color mode. If True, the frames are generated using the BGR color mode. If
             False, the frames are generated using the grayscale (monochrome) color mode.
 
@@ -1387,10 +1395,11 @@ def _get_cti_path() -> Path:
 
 @contextmanager
 def _suppress_output() -> Generator[None, None, None]:
-    """Silences verbose outputs from the Harvesters library by redirecting stdout and stderr to os.devnull.
+    """Silences verbose subprocess and driver output by redirecting stdout and stderr to os.devnull.
 
-    The Harvesters library prints messages about missing features in the CTI file when calling update(). This context
-    manager suppresses those printouts by temporarily redirecting stdout and stderr at the file descriptor level.
+    The redirection happens at the file descriptor level, so it covers output written by native libraries that bypass
+    the Python streams. The Harvesters library prints messages about missing features in the CTI file when calling
+    update(), and the kernel driver emits V4L2 ioctl warnings while OpenCV probes camera indices.
     """
     # Redirects stdout (fd 1) and stderr (fd 2) to devnull.
     devnull = os.open(os.devnull, os.O_WRONLY)

@@ -320,8 +320,9 @@ def _reap_finished_jobs(state: JobExecutionState) -> None:
         reached the future.
 
         A break of the shared pool is recognized by two facts together. The exception is a BrokenProcessPool, which
-        a job body cannot produce because the extraction pool re-raises its own break under a name of its own, and
-        the job's tracker entry still reads running.
+        a job body also raises when its own extraction pool breaks, and the job's tracker entry has not reached a
+        terminal outcome. The tracker entry is the deciding fact, because a body that lost its extraction pool has
+        already recorded FAILED through its own run_job() context and is reconciled rather than requeued.
 
     Args:
         state: The active job execution state, mutated in place.
@@ -503,7 +504,9 @@ def _abandon_batch(
 
 
 def _job_is_unrecorded(job: JobDescriptor) -> bool:
-    """Returns True when the target job's tracker entry still reads running rather than a terminal outcome."""
+    """Returns True when the target job's tracker entry has not reached a terminal outcome, whether it still reads
+    scheduled or running.
+    """
     try:
         snapshot = ProcessingTracker(file_path=job.tracker_path).snapshot()
     except Exception:

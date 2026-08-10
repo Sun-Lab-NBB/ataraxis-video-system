@@ -71,10 +71,12 @@ def prepare_log_processing_batch_tool(
             the processing tracker and feather output files.
 
     Returns:
-        A dictionary containing per-log-directory manifests in 'log_directories', each carrying the tracker path,
-        the output directory, the resolved source IDs, a 'jobs' list of dispatchable descriptors annotated with
-        their sized cores and memory and their live tracker status, a 'summary' of status counts, and the sources
-        the sizing skipped with their reasons. Also reports total counts and any invalid paths.
+        A dictionary containing a 'success' flag and per-log-directory manifests in 'log_directories', each carrying
+        the tracker path, the output directory, the resolved source IDs, a 'jobs' list of dispatchable descriptors
+        annotated with their sized cores and memory, the archive figures 'message_count', 'archive_bytes', and
+        'modeled' that the execution tool requires, and their live tracker status, a 'summary' of status counts, and
+        the sources the sizing skipped with their reasons. Also reports total counts and any invalid paths. Returns
+        an error dictionary when the log directory and output directory lists differ in length.
     """
     if len(output_directories) != len(log_directories):
         return {
@@ -188,8 +190,9 @@ def execute_log_processing_jobs_tool(
 
     Returns:
         A dictionary containing a 'started' flag, 'total_jobs', the resolved 'core_budget', 'memory_budget_mb', and
-        'pool_size', a 'job_allocations' entry per job naming its resolved cores, memory, and archive message count,
-        and any invalid jobs.
+        'pool_size', a 'job_allocations' entry per job carrying its 'job_id', 'source_id', 'cores', 'memory_mb',
+        'message_count', and 'modeled', and any invalid jobs. Returns an error dictionary when an execution session
+        is already active, and one carrying 'invalid_jobs' when no submitted job is valid.
     """
     # Enforces single-session constraint.
     existing_state = get_execution_state()
@@ -366,8 +369,9 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     timestamps from ProcessingTracker.
 
     Returns:
-        A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary with
-        total elapsed seconds and throughput.
+        A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary carrying
+        'total_elapsed_seconds', 'completed_count', 'failed_count', 'running_count', and 'pending_count', plus
+        'throughput_jobs_per_hour' once at least one job has completed.
     """
     state = get_execution_state()
     if state is None:
@@ -527,7 +531,8 @@ def reset_log_processing_jobs_tool(
         source_ids: An optional list of source IDs whose jobs should be reset. If not provided, all jobs are reset.
 
     Returns:
-        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses.
+        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses. Returns an error
+        dictionary when the tracker file is absent or cannot be read.
     """
     path = Path(tracker_path)
 
@@ -573,7 +578,8 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
         root_directory: The absolute path to the root directory to search for tracker files.
 
     Returns:
-        A dictionary containing per-log-directory status summaries and aggregate counts.
+        A dictionary containing per-log-directory status summaries and aggregate counts. Returns an error dictionary
+        when the root directory does not exist, is not a directory, or cannot be searched.
     """
     root_path = Path(root_directory)
 
@@ -693,8 +699,9 @@ def clean_log_processing_output_tool(output_directories: list[str]) -> dict[str,
     Returns:
         A dictionary containing a 'results' list with per-directory outcomes and the 'total_cleaned' and
         'total_directories' counts. Each outcome carries an 'output_directory' and a 'cleaned' flag, plus a
-        'timestamps_path' on a successful delete, a 'message' when there was nothing to clean, or both a
-        'timestamps_path' and an 'error' when the delete failed.
+        'timestamps_path' on a successful delete, a 'message' when there was nothing to clean, an 'error' alone when
+        the output directory does not exist or is not a directory, or both a 'timestamps_path' and an 'error' when
+        the delete failed.
     """
     results = [_clean_single_output(output_directory=directory) for directory in output_directories]
     total_cleaned = sum(1 for result in results if result.get("cleaned", False))
@@ -950,7 +957,9 @@ def _clean_single_output(output_directory: str) -> dict[str, Any]:
         output_directory: The absolute path to the output directory.
 
     Returns:
-        A dictionary containing 'output_directory', 'cleaned' flag, and either 'timestamps_path' or 'error'.
+        A dictionary containing an 'output_directory' and a 'cleaned' flag, plus a 'timestamps_path' on a successful
+        delete, a 'message' when there was nothing to clean, an 'error' alone when the directory is absent or is not
+        a directory, and both a 'timestamps_path' and an 'error' when the delete failed.
     """
     output_path = Path(output_directory)
 

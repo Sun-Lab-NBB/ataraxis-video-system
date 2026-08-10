@@ -71,7 +71,7 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 | `/log-processing`              | Orchestrate log archive processing workflow via MCP tools            |
 | `/log-processing-results`      | Reference for output data formats and frame statistics analysis      |
 
-### Automation plugin skills (ataraxis/plugins/automation/)
+### Automation plugin skills relevant to this Python-only project (ataraxis/plugins/automation/)
 
 | Skill                   | Description                                                                    |
 |-------------------------|--------------------------------------------------------------------------------|
@@ -166,7 +166,7 @@ video encoding using CPU or GPU.
 | `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs MCPServer                     |
 | `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and cross-tool helper functions                         |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
-| `tests/`                              | Test suite (camera, saver, video_system, configuration, manifest, orchestration)  |
+| `tests/`                              | Test suite mirroring the video and orchestration subpackages, plus shared helpers |
 | `docs/`                               | Sphinx API documentation source                                                   |
 
 ### Architecture

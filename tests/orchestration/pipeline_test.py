@@ -153,7 +153,7 @@ def test_run_log_processing_pipeline_local_mode_empty_source_ids(tmp_path):
 
 
 def test_run_log_processing_pipeline_missing_log_directory(tmp_path):
-    """Verifies that the pipeline reports the missing manifest kind when the log directory does not exist."""
+    """Verifies that the pipeline raises FileNotFoundError when the log directory does not exist."""
     missing_directory = tmp_path / "nonexistent"
     message = (
         f"Unable to resolve camera timestamp extraction jobs in '{missing_directory}'. The path does not exist or is "

@@ -29,12 +29,14 @@ CAMERA_EXTRACTION_JOB_CORES: int = 8
 
 Notes:
     Every worker opens the archive itself, so the fixed cost per worker holds as workers are added and the speedup
-    flattens well before the core count. A job reading a small archive resolves below this bound.
+    flattens well before the core count. A job reading a small archive resolves below this bound. Both the sizing pass
+    and the preparation stage bound their ceiling by this value, so no job is dispatched above it.
 """
 
 SPAWNED_CHILD_MEMORY_MB: int = 200
 """The resident memory one spawned child holds before it touches any data, covering the interpreter and the package's
-import graph. The term is charged once for a job's body and once for each core the job holds."""
+import graph. The term is charged once for a job's body and once more for each child of the extraction pool it opens,
+so a job holding a single core and therefore carrying no pool is charged once."""
 
 _MEMORY_ESTIMATE_TOLERANCE: float = 1.15
 """The margin applied to every memory estimate before it is reported. It covers the working sets the model does not
@@ -86,9 +88,9 @@ def resolve_archive_footprint(archive_path: Path, *, read_message_count: bool = 
 
     Args:
         archive_path: The path to the .npz log archive to read.
-        read_message_count: Determines whether to open the archive and count the messages it holds. Leaving this
-            unset yields a footprint whose message count is zero, which sizes memory correctly and resolves cores to
-            a single worker.
+        read_message_count: Determines whether to open the archive and count the messages it holds. Unsetting this
+            yields a footprint whose message count is zero, which sizes memory correctly and resolves cores to a
+            single worker.
 
     Returns:
         The footprint describing the archive.
@@ -144,7 +146,7 @@ def estimate_job_memory_mb(footprint: ArchiveFootprint, cores: int) -> int:
 
     Args:
         footprint: The footprint of the archive this job reads.
-        cores: The cores this job holds, which is how many extraction pool children it opens.
+        cores: The cores this job holds, which is how many extraction pool children it opens, or none when it is one.
 
     Returns:
         The memory this job holds, in megabytes, carrying the estimate tolerance and rounded up to a whole gigabyte.

@@ -6,8 +6,9 @@ from random import randint
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer
+from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
-from ataraxis_data_structures import DataLogger, assemble_log_archives
+from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, DataLogger, assemble_log_archives
 
 from ataraxis_video_system import (
     VideoSystem,
@@ -336,7 +337,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
     timer.delay(delay=2, allow_sleep=True, block=False)
     video_system_1.stop_frame_saving()
 
-    # Tests that system 2 (without a saver) ignores saving commands
+    # Ensures that the saving commands are harmless for system 2, which has no video saver configured.
     video_system_2.start_frame_saving()
     video_system_2.stop_frame_saving()
 
@@ -358,11 +359,10 @@ def test_start_stop(data_logger, tmp_path) -> None:
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts frame timestamps for system 1 (which saved frames)
-    log_path_1 = data_logger.output_directory / f"{data_logger._name}_101.npz"
-    if log_path_1.exists():
-        frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, workers=1)
-        # With fps of 10 and running for ~4 seconds total, should have acquired around 40 frames
-        assert 35 <= len(frame_timestamps_1) <= 45
+    log_path_1 = data_logger.output_directory / "101_log.npz"
+    frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, workers=1)
+    # With fps of 10 and running for ~4 seconds total, should have acquired around 40 frames
+    assert 35 <= len(frame_timestamps_1) <= 45
 
     # Tests the system without frame saving
     video_system_3 = VideoSystem(
@@ -603,20 +603,14 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
 
 
 def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
-    """Verifies that extract_logged_camera_timestamps returns an empty tuple for archives with no messages."""
-    # Creates a DataLogger that logs no frame data, producing an archive with only onset metadata.
-    logger = DataLogger(output_directory=tmp_path, instance_name="empty_archive_test")
-    logger.start()
-    logger.stop()
+    """Verifies that extract_logged_camera_timestamps returns an empty array for archives with no messages."""
+    # Builds an archive holding the onset message alone, which is what a recording that acquired no frame produces.
+    archive_path = tmp_path / f"101{LOG_ARCHIVE_SUFFIX}"
+    create_test_archive(archive_path=archive_path, source_id=101, onset_us=1700000000000000, frame_timestamps_us=[])
 
-    # Assembles the log archives.
-    assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, memory_mapping=False)
+    timestamps = extract_logged_camera_timestamps(log_path=archive_path, workers=1)
 
-    # Finds the generated .npz archive.
-    npz_files = list(logger.output_directory.glob("*.npz"))
-    if npz_files:
-        timestamps = extract_logged_camera_timestamps(log_path=npz_files[0], workers=1)
-        assert timestamps.size == 0
+    assert timestamps.size == 0
 
 
 def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> None:

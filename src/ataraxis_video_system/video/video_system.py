@@ -1,7 +1,8 @@
 """Provides the main VideoSystem class that contains methods for setting up, running, and tearing down interactions
 between camera interfaces and video saver instances.
 
-All user-oriented functionality of this library is available through the public methods of the VideoSystem class.
+The camera acquisition and video saving functionality of this library is available through the public methods of the
+VideoSystem class.
 """
 
 from __future__ import annotations

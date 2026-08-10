@@ -1,4 +1,6 @@
-"""Contains tests for the classes and functions provided by the execution.py module."""
+"""Contains tests for the classes and functions provided by the execution.py module, and for the pool sizing a batch
+is built with.
+"""
 
 from pathlib import Path
 from threading import Thread
@@ -468,7 +470,7 @@ def test_admit_pending_jobs_requeues_a_job_a_broken_pool_rejected(tmp_path):
 
 @pytest.mark.xdist_group(name="orchestration")
 def test_job_is_unrecorded_running_entry(tmp_path):
-    """Verifies that a job whose tracker entry still reads running is reported as unrecorded."""
+    """Verifies that a job whose tracker entry still reads scheduled or running is reported as unrecorded."""
     job = _register_job(directory=tmp_path, source_id="1")
 
     assert _job_is_unrecorded(job=job)

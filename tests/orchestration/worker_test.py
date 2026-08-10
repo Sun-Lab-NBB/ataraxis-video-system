@@ -329,7 +329,7 @@ def test_run_extraction_job_runs_the_job_from_its_descriptor(tmp_path):
     output_directory = tmp_path / "output" / OutputLayout.DIRECTORY_NAME
     job = _build_descriptor(log_directory=log_directory, output_directory=output_directory)
 
-    # The tracker is aligned by the caller that prepared the job, exactly as the preparation stage does it.
+    # The tracker already registers the job before the runner runs, as the preparation stage registers it.
     _initialize_tracker(tracker_path=job.tracker_path)
 
     run_extraction_job(job=job)

@@ -80,7 +80,8 @@ dependencies = [
 Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
 Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
 
-# Exposes a CLI interface to query available camera IDs and interactively interface with the available cameras.
+# Exposes the 'axvs' CLI, which covers camera discovery and runtime checks, CTI file management, interactive
+# recording, GenICam node configuration, log processing, and the MCP server.
 [project.scripts]
 axvs = "ataraxis_video_system.interfaces.cli:axvs_cli"
 
@@ -209,7 +210,7 @@ extra_checks = true
 pretty = true
 
 exclude = [
-    "ataraxis-video-system-\\d+",  # The temporary folder created when building the sdist
+    "ataraxis_video_system-\\d+",  # The temporary folder created when building the sdist
     "venv.*/",
     "build/",
     "dist/",
@@ -238,8 +239,9 @@ pythonpath = ["."]
 
 # Lists the source files excluded from coverage measurement in full. The interfaces subpackage holds the CLI and the
 # MCP server tools, which are covered by the tests written for the library functions they wrap. The 'parallel' and
-# 'concurrency' keys extend measurement to the spawned producer and consumer processes and to the stderr drain thread,
-# giving each worker its own data file for the 'coverage' task to combine.
+# 'concurrency' keys extend measurement to the spawned producer and consumer processes, to the log processing pool
+# workers that run run_extraction_job, and to the watchdog, frame display, and stderr drain threads, giving each worker
+# its own data file for the 'coverage' task to combine.
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
