@@ -28,7 +28,8 @@ def read_camera_manifest_tool(manifest_path: str) -> dict[str, Any]:
         manifest_path: The absolute path to the camera_manifest.yaml file to read.
 
     Returns:
-        A dictionary containing the list of sources with their IDs and names, or an error message.
+        A dictionary containing the 'manifest_path', a 'sources' list whose entries each carry an 'id' and a 'name',
+        and a 'total_sources' count, or an error message.
     """
     path = Path(manifest_path)
 
@@ -112,7 +113,8 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
         A dictionary containing a 'sources' list where each entry has 'recording_root', 'source_id', 'name',
         'log_archive', 'video_file', 'timestamps_file', and 'log_directory' keys, a flat 'log_directories'
         list for batch processing, and aggregate counts. Video and timestamp paths are None when the
-        corresponding file cannot be found.
+        corresponding file cannot be found. Returns an error dictionary when the root directory does not exist, is
+        not a directory, or cannot be searched.
     """
     root_path = Path(root_directory)
 
@@ -211,8 +213,10 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
         video_file: The absolute path to the video file to validate. Must be provided by the user.
 
     Returns:
-        A dictionary containing video metadata (duration, frame count, codec, resolution, file size, bit rate)
-        on success, or an error dictionary if the file cannot be read or ffprobe is not available.
+        A dictionary containing 'file', 'valid', 'codec', 'codec_long_name', 'width', 'height', 'frame_count',
+        'duration_seconds', 'bit_rate_bps', 'file_size_bytes', 'pixel_format', and 'frame_rate' on success, where
+        the frame count, duration, and bit rate are None when ffprobe does not report them. Returns an error
+        dictionary if the file cannot be read or ffprobe is not available.
     """
     file_path = Path(video_file)
 
@@ -331,8 +335,8 @@ def assemble_log_archives_tool(
 
     Returns:
         A dictionary containing the assembly status, directory path, list of created archive filenames, extracted
-        source IDs, and archive count. Returns an error dictionary if the directory does not exist or assembly
-        fails.
+        source IDs, and archive count. Returns an error dictionary if the directory does not exist, if it holds no
+        .npy log entries of its own while its subdirectories do, or if assembly fails.
     """
     directory_path = Path(log_directory)
 

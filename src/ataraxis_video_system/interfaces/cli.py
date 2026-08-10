@@ -400,7 +400,8 @@ def live_run(
     default=-1,
     show_default=True,
     help="The ceiling on the worker processes any single job receives. Each job is sized from the archive it reads "
-    "and never exceeds this ceiling. Set to a value below 1 (default -1) to resolve the ceiling from the host.",
+    "and never exceeds this ceiling, which is itself bounded by the stage's own core cap. Set to a value below 1 "
+    "(default -1) to resolve the ceiling from the host.",
 )
 @click.option(
     "-p",

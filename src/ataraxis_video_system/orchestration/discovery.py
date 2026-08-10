@@ -24,7 +24,13 @@ from .jobs import (
     resolve_output_directory,
 )
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
-from .allocation import resolve_core_budget, resolve_job_workers, estimate_job_memory_mb, resolve_archive_footprint
+from .allocation import (
+    CAMERA_EXTRACTION_JOB_CORES,
+    resolve_core_budget,
+    resolve_job_workers,
+    estimate_job_memory_mb,
+    resolve_archive_footprint,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -231,7 +237,8 @@ def prepare_jobs(
 
         Reads no archive. Every job carries the core ceiling as its width, and the extraction narrows that to what
         its own archive repays, so a caller that only runs jobs pays nothing to prepare them. A caller that weighs
-        jobs against a budget sizes each one through size_job.
+        jobs against a budget sizes each one through size_job. The ceiling is bounded by CAMERA_EXTRACTION_JOB_CORES,
+        so a job prepared without sizing holds no more cores than the sizing pass would grant it.
 
         The tracker is aligned against the whole manifest universe whichever subset this call prepares, so several
         invocations naming different jobs share one tracker without resetting each other's recorded outcomes.
@@ -244,6 +251,7 @@ def prepare_jobs(
         job_id: The hexadecimal identifier of the single job to prepare. Leaving this unset prepares every requested
             source.
         core_ceiling: The cores any single job may receive. A non-positive value resolves the ceiling from the host.
+            The resolved ceiling is bounded by CAMERA_EXTRACTION_JOB_CORES.
         strict_sources: Determines whether a source that cannot be prepared stops the call. When set, a requested
             source the manifest does not register, or one whose archive does not resolve to exactly one file, raises.
             When unset, such a source is recorded in the returned set's skipped sources with its reason.
@@ -330,7 +338,7 @@ def prepare_jobs(
 
     resolved_output = resolve_output_directory(output_directory=output_directory)
     tracker_path = resolve_tracker_path(output_directory=resolved_output)
-    ceiling = resolve_core_budget(requested_budget=core_ceiling)
+    ceiling = min(CAMERA_EXTRACTION_JOB_CORES, resolve_core_budget(requested_budget=core_ceiling))
 
     # Creates the output layout only once a job is going to be written into it, so a lenient request that prepared
     # nothing leaves the caller's output path as it found it.

@@ -33,7 +33,8 @@ def read_genicam_node_tool(
             ReadWrite access but reject writes at the hardware level. Pass an empty list to disable blacklisting.
 
     Returns:
-        Detailed node information for a single node, or a newline-separated summary of all nodes.
+        Detailed node information for a single node, a newline-separated summary of all nodes, or an error
+        description.
     """
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
@@ -113,7 +114,7 @@ def dump_genicam_config_tool(
 
     try:
         with harvester_connection(camera_index=camera_index) as camera:
-            # Reads every accessible node from the camera's GenICam node map and packages them into a
+            # Reads every writable (ReadWrite) value node from the camera's GenICam node map and packages them into a
             # GenicamConfiguration object that stores the camera's model and serial number along with the name and
             # current value of each node.
             config = camera.get_configuration(blacklisted_nodes=blacklist)
@@ -150,7 +151,7 @@ def load_genicam_config_tool(
             empty list to disable blacklisting.
 
     Returns:
-        The number of nodes applied and any errors encountered, or an error description.
+        A confirmation that the configuration was applied, or an error description.
     """
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 

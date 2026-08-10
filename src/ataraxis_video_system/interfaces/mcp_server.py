@@ -38,12 +38,3 @@ def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") 
         return
 
     mcp.run(transport=transport)
-
-
-def run_mcp_server() -> None:
-    """Starts the MCP server with stdio transport.
-
-    Serves as a CLI entry point, launching the MCP server using the stdio transport protocol recommended for Claude
-    Desktop integration.
-    """
-    run_server(transport="stdio")

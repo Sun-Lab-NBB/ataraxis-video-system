@@ -1,4 +1,6 @@
-"""Contains tests for the classes and functions provided by the discovery.py module."""
+"""Contains tests for the classes and functions provided by the discovery.py module, and for the descriptor mapping
+round trip a prepared job set exercises.
+"""
 
 from pathlib import Path
 
@@ -46,10 +48,12 @@ from ataraxis_video_system.orchestration.allocation import (
 )
 
 _ONSET_US: int = 1700000000000000
-"""Stores the UTC epoch onset, in microseconds, written into every synthetic log archive built by this module."""
+"""Stores the UTC epoch onset, in microseconds, written into every synthetic log archive built through
+_build_archive().
+"""
 
-_HOST_CORE_BUDGET: int = resolve_core_budget(requested_budget=-1)
-"""Stores the core ceiling the host resolves for a caller that requests none."""
+_HOST_CORE_BUDGET: int = min(CAMERA_EXTRACTION_JOB_CORES, resolve_core_budget(requested_budget=-1))
+"""Stores the core ceiling a caller that requests none receives, which is the host budget bounded by the stage cap."""
 
 _WIDE_ARCHIVE_MESSAGES: int = PARALLEL_PROCESSING_THRESHOLD * 3
 """Stores the message count of the archive used to exercise the multi-core branch of the sizing model."""
@@ -203,7 +207,7 @@ def test_resolve_jobs_writes_nothing(tmp_path):
 
 
 def test_resolve_jobs_missing_directory(tmp_path):
-    """Verifies that resolve_jobs reports the missing manifest kind when the log directory does not exist."""
+    """Verifies that resolve_jobs raises FileNotFoundError when the log directory does not exist."""
     missing_directory = tmp_path / "nonexistent"
     message = (
         f"Unable to resolve camera timestamp extraction jobs in '{missing_directory}'. The path does not exist or is "
@@ -215,7 +219,7 @@ def test_resolve_jobs_missing_directory(tmp_path):
 
 
 def test_resolve_jobs_not_a_directory(tmp_path):
-    """Verifies that resolve_jobs reports the missing manifest kind when the log path points to a file."""
+    """Verifies that resolve_jobs raises FileNotFoundError when the log path points to a file."""
     file_path = tmp_path / "logs.txt"
     file_path.write_text("not a directory")
     message = (
@@ -241,7 +245,7 @@ def test_resolve_jobs_returns_an_empty_universe_when_the_tree_holds_no_manifest(
 
 
 def test_resolve_jobs_empty_manifest(tmp_path):
-    """Verifies that resolve_jobs reports the empty manifest kind when the manifest registers no sources."""
+    """Verifies that resolve_jobs raises ValueError when the manifest registers no sources."""
     manifest_path = tmp_path / CAMERA_MANIFEST_FILENAME
     CameraManifest(sources=[]).to_yaml(file_path=manifest_path)
     message = (
@@ -345,7 +349,7 @@ def test_prepare_jobs_accepts_unreadable_archive(tmp_path):
 
 
 def test_prepare_jobs_resolves_ceiling_from_host(tmp_path):
-    """Verifies that prepare_jobs resolves a non-positive core ceiling from the host rather than yielding one core."""
+    """Verifies that prepare_jobs resolves a non-positive core ceiling from the host, bounded by the stage cap."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
@@ -427,7 +431,7 @@ def test_prepare_jobs_job_id_survives_missing_sibling_archive(tmp_path):
 
 
 def test_prepare_jobs_unknown_job_id(tmp_path):
-    """Verifies that prepare_jobs reports the unknown job identifier kind for an identifier the manifest omits."""
+    """Verifies that prepare_jobs raises ValueError for a job identifier the manifest omits."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
@@ -442,7 +446,7 @@ def test_prepare_jobs_unknown_job_id(tmp_path):
 
 
 def test_prepare_jobs_unknown_source_under_strict_sourcing(tmp_path):
-    """Verifies that prepare_jobs reports the unknown job source kind for a source the manifest does not register."""
+    """Verifies that prepare_jobs raises ValueError for a source the manifest does not register."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
@@ -457,7 +461,7 @@ def test_prepare_jobs_unknown_source_under_strict_sourcing(tmp_path):
 
 
 def test_prepare_jobs_missing_archive_under_strict_sourcing(tmp_path):
-    """Verifies that prepare_jobs reports the unresolved archive kind for a registered source holding no archive."""
+    """Verifies that prepare_jobs raises FileNotFoundError for a registered source holding no archive."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
     write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
@@ -467,7 +471,7 @@ def test_prepare_jobs_missing_archive_under_strict_sourcing(tmp_path):
 
 
 def test_prepare_jobs_ambiguous_archive_under_strict_sourcing(tmp_path):
-    """Verifies that prepare_jobs reports the unresolved archive kind when a source matches several archives."""
+    """Verifies that prepare_jobs raises FileNotFoundError when a source matches several archives."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
@@ -501,7 +505,7 @@ def test_prepare_jobs_records_skipped_sources_without_strict_sourcing(tmp_path):
 
 
 def test_prepare_jobs_split_logger_output(tmp_path):
-    """Verifies that prepare_jobs reports the split logger output kind when the archives span several directories."""
+    """Verifies that prepare_jobs raises ValueError when the archives span several directories."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
@@ -658,7 +662,7 @@ def test_size_job_narrows_cores_to_the_repaid_workers(tmp_path):
     # Three thresholds' worth of messages repay three workers, which is below both the ceiling and the declared width.
     assert sized_job.core_weight == _WIDE_ARCHIVE_MESSAGES // PARALLEL_PROCESSING_THRESHOLD
     assert sized_job.core_weight == 3
-    assert job_set.jobs[0].core_weight == 64
+    assert job_set.jobs[0].core_weight == CAMERA_EXTRACTION_JOB_CORES
 
 
 def test_size_job_default_ceiling_resolves_from_the_host(tmp_path):
@@ -738,7 +742,7 @@ def test_job_set_resolve_job(tmp_path):
 
 
 def test_job_set_resolve_job_unknown_id(tmp_path):
-    """Verifies that JobSet.resolve_job reports the unknown job identifier kind and names the jobs it does hold."""
+    """Verifies that JobSet.resolve_job raises ValueError for an unknown identifier and names the jobs it holds."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
@@ -753,7 +757,7 @@ def test_job_set_resolve_job_unknown_id(tmp_path):
 
 
 def test_job_set_resolve_job_empty_set(tmp_path):
-    """Verifies that JobSet.resolve_job reports the unknown job identifier kind when the set holds no job at all."""
+    """Verifies that JobSet.resolve_job raises ValueError for an unknown identifier when the set holds no job."""
     job_set = JobSet(
         log_directory=tmp_path,
         output_directory=tmp_path / OutputLayout.DIRECTORY_NAME,
@@ -774,7 +778,7 @@ def test_job_set_resolve_job_empty_set(tmp_path):
 
 
 def test_job_descriptor_from_mapping_missing_key(tmp_path):
-    """Verifies that JobDescriptor.from_mapping reports the malformed descriptor kind for an incomplete mapping."""
+    """Verifies that JobDescriptor.from_mapping raises ValueError for an incomplete mapping."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
@@ -791,7 +795,7 @@ def test_job_descriptor_from_mapping_missing_key(tmp_path):
 
 
 def test_job_descriptor_from_mapping_unreadable_value(tmp_path):
-    """Verifies that JobDescriptor.from_mapping reports the malformed descriptor kind for an unreadable value."""
+    """Verifies that JobDescriptor.from_mapping raises ValueError for an unreadable value."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")

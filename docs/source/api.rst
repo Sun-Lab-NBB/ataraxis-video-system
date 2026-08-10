@@ -15,6 +15,8 @@ Video
 
 .. autodata:: ataraxis_video_system.video.video_system.MAXIMUM_QUANTIZATION_VALUE
 
+.. autodata:: ataraxis_video_system.video.camera.GENICAM_UNAVAILABLE_REASON
+
 Orchestration
 =============
 

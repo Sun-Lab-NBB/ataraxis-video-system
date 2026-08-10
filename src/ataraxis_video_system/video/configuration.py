@@ -374,7 +374,8 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
 
     Raises:
         AttributeError: If the named node does not exist on the node map.
-        ValueError: If the node is not readable (must be ReadWrite or ReadOnly).
+        ValueError: If the node is not a value type (Integer, Float, Boolean, String, or Enumeration), or is not
+            readable (must be ReadWrite or ReadOnly).
     """
     # Accesses the named feature and its underlying GenICam node descriptor.
     feature = getattr(node_map, name)
@@ -461,6 +462,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
         value: The string representation of the value to write. Coerced to the node's native type automatically.
 
     Raises:
+        AttributeError: If the named node does not exist on the node map.
         ValueError: If the named node does not have ReadWrite access or the value cannot be coerced.
         RuntimeError: If the write operation fails.
     """

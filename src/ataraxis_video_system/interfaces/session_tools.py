@@ -260,8 +260,8 @@ def start_frame_saving_tool() -> str:
     if _active_session is None:
         return "Error: No active session"
 
-    # Signals the VideoSystem's saver process to begin writing acquired frames to a new MP4 file. Frames acquired
-    # before this call are discarded; only frames captured after this point are saved.
+    # Signals the VideoSystem's saver process to begin writing acquired frames to the session's MP4 file. Frames
+    # acquired before this call are discarded, so only frames captured after this point are saved.
     try:
         _active_session.start_frame_saving()
     except Exception as error:
@@ -282,8 +282,9 @@ def stop_frame_saving_tool() -> str:
     if _active_session is None:
         return "Error: No active session"
 
-    # Signals the saver process to stop accepting new frames and finalize the current video file. The camera
-    # continues acquiring frames, so a subsequent start_frame_saving_tool call will create a new video file.
+    # Signals the saver process to stop accepting new frames. The camera continues acquiring frames, and the session
+    # writes one MP4 file for its whole lifetime, so a subsequent start_frame_saving_tool call resumes appending to
+    # that same file. The file is finalized when the session stops.
     try:
         _active_session.stop_frame_saving()
     except Exception as error:
@@ -297,8 +298,9 @@ def get_session_status_tool() -> dict[str, Any]:
     """Returns detailed status information about the current video session.
 
     Reports whether a session is active. When active, the response includes the session configuration captured at
-    creation time (camera name, interface, resolution, frame rate, encoding parameters, output directory, and
-    display frame rate) together with the runtime video file path and log directory.
+    creation time (camera name, interface, camera index, resolution, frame rate, monochrome flag, encoding
+    parameters, output directory, and display frame rate) together with the runtime video file path and log
+    directory.
 
     Returns:
         A dictionary containing session status and configuration details. Returns ``{"status": "inactive"}``

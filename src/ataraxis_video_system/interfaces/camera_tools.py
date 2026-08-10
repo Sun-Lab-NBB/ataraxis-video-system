@@ -22,8 +22,8 @@ def list_cameras_tool() -> str:
     Returns:
         A newline-separated list of discovered cameras, each showing interface type, index, frame dimensions, and
         frame rate. Harvesters cameras also include model and serial number. Returns a "No cameras discovered"
-        message if no cameras are found. A trailing note reports the skipped Harvesters discovery on a platform that
-        does not support the GenICam interface.
+        message if no cameras are found. A trailing note reports the skipped Harvesters discovery when the GenICam
+        camera runtime is unavailable.
     """
     # Runs the discovery procedure across both OpenCV and Harvesters interfaces. OpenCV cameras are probed by
     # iterating over positional indices, while Harvesters cameras are enumerated through the GenTL Producer.
@@ -64,11 +64,11 @@ def get_cti_status_tool() -> str:
 
     Returns:
         The configuration status and the path to the configured CTI file, or a "Not configured" message if no valid
-        CTI file is set. Reports the unavailable interface instead on a platform that does not support GenICam.
+        CTI file is set. Reports the unavailable interface instead when the GenICam camera runtime is unavailable.
     """
     # Reports the unavailable interface before the configuration, since check_cti_file() reports None for both an
-    # unconfigured Producer and an unsupported platform, and directing the caller to configure a Producer it can never
-    # load would send it down a dead end.
+    # unconfigured Producer and an absent runtime, and directing the caller to configure a Producer it can never load
+    # would send it down a dead end.
     if not genicam_runtime_available():
         return f"CTI: Unavailable. {GENICAM_UNAVAILABLE_REASON}"
 
@@ -86,7 +86,8 @@ def set_cti_file_tool(file_path: str) -> str:
     """Configures the library to use the specified CTI file for all future runtimes involving GenICam cameras.
 
     The Harvesters library requires the GenTL Producer interface (.cti) file to discover and interface with compatible
-    cameras. This tool must be called at least once before using the Harvesters interface.
+    cameras. This tool must be called at least once before using the Harvesters interface, unless the ``AXVS_CTI_PATH``
+    environment variable supplies the Producer path for the runtime.
 
     Args:
         file_path: The absolute path to the CTI file that provides the GenTL Producer interface. It is recommended to
@@ -125,7 +126,7 @@ def check_runtime_requirements_tool() -> str:
 
     Returns:
         A pipe-separated status line showing FFMPEG, GPU, and CTI availability, each marked as "OK", "Missing", or
-        "None". The CTI field instead reads "Unsupported" on a platform that does not support the GenICam interface.
+        "None". The CTI field instead reads "Unsupported" when the GenICam camera runtime is unavailable.
     """
     # Probes the system for each runtime dependency independently. FFMPEG is required for any video encoding, GPU is
     # optional (enables hardware-accelerated H.264/H.265 encoding via NVENC), and the CTI file is only needed for
@@ -138,8 +139,8 @@ def check_runtime_requirements_tool() -> str:
     ffmpeg_status = "OK" if ffmpeg_available else "Missing"
     gpu_status = "OK" if gpu_available else "None"
 
-    # Distinguishes an unsupported platform from a missing configuration, since check_cti_file() reports None for both
-    # and telling the agent to configure a Producer it can never use would send it down a dead end.
+    # Distinguishes an absent runtime from a missing configuration, since check_cti_file() reports None for both and
+    # telling the agent to configure a Producer it can never use would send it down a dead end.
     if not genicam_runtime_available():
         cti_status = "Unsupported"
     elif cti_path is not None:

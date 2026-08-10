@@ -72,7 +72,7 @@ def test_mock_camera_grab_frame() -> None:
     # Accesses the frame pool generated at class initialization. All 'grabbed' frames are sampled from the frame pool.
     frame_pool = camera.frame_pool
 
-    # Acquires 11 frames. Note, the code below will STOP working unless the tested number of frames is below 20.
+    # Acquires 11 frames.
     for frame_number in range(11):
         frame = camera.grab_frame()
 
