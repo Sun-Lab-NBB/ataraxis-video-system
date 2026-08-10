@@ -1,100 +1,151 @@
 """Contains tests for the classes and functions provided by the jobs.py module."""
 
+import pickle
+from dataclasses import fields, replace
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+
 import pytest
 from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, ProcessingTracker
 
-from ataraxis_video_system.video.manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, write_camera_manifest
 from ataraxis_video_system.orchestration.jobs import (
-    TIMESTAMP_JOB_NAME,
-    CAMERA_TIMESTAMPS_PREFIX,
-    CAMERA_TIMESTAMPS_SUFFIX,
-    PendingJob,
+    CAMERA_EXTRACTION_JOB_NAME,
+    JobSizing,
+    OutputLayout,
+    JobDescriptor,
     generate_job_ids,
-    discover_camera_jobs,
-    resolve_camera_timestamps_path,
+    resolve_tracker_path,
+    resolve_timestamps_path,
+    resolve_output_directory,
 )
 
+_ONSET_US = 1700000000000000
+"""The UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
 
-def _write_archive(directory, source_id):
-    """Writes a synthetic log archive for the target source into the specified directory."""
+_SPAWN_TIMEOUT_SECONDS = 180
+"""The time the spawned worker round-trip test waits for its single submitted call before failing."""
+
+
+def _create_archive(directory, source_id):
+    """Writes a synthetic camera log archive for the target source into the requested directory."""
     directory.mkdir(parents=True, exist_ok=True)
+    archive_path = directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
     create_test_archive(
-        archive_path=directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+        archive_path=archive_path,
         source_id=source_id,
-        onset_us=1_000_000,
-        frame_timestamps_us=[100, 200],
+        onset_us=_ONSET_US,
+        frame_timestamps_us=[1000, 2000],
+    )
+    return archive_path
+
+
+def _build_descriptor(tmp_path, source_id=1, core_weight=1):
+    """Builds a descriptor addressing a real synthetic archive written under the requested temporary directory."""
+    log_directory = tmp_path / "logs"
+    archive_path = _create_archive(directory=log_directory, source_id=source_id)
+    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
+
+    return JobDescriptor.for_archive(
+        archive_path=archive_path,
+        output_directory=output_directory,
+        tracker_path=resolve_tracker_path(output_directory=output_directory),
+        source_id=str(source_id),
+        log_directory=log_directory,
+        core_weight=core_weight,
     )
 
 
-def test_pending_job_creation():
-    """Verifies that PendingJob stores every supplied field and applies the documented weight defaults."""
-    job = PendingJob(
-        log_directory="/logs",
-        output_directory="/output",
-        tracker_path="/output/camera_processing_tracker.yaml",
-        job_id="abc123",
-        source_id="1",
-    )
-
-    assert job.log_directory == "/logs"
-    assert job.output_directory == "/output"
-    assert job.tracker_path == "/output/camera_processing_tracker.yaml"
-    assert job.job_id == "abc123"
-    assert job.source_id == "1"
-    assert job.core_weight == 1
-    assert job.memory_mb == 0
+def _normalize(text):
+    """Collapses the line wrapping the console applies, so a message fragment matches the raised error's text."""
+    return " ".join(str(text).split())
 
 
-def test_pending_job_weight_overrides():
-    """Verifies that PendingJob honors explicitly supplied core and memory weights."""
-    job = PendingJob(
-        log_directory="/logs",
-        output_directory="/output",
-        tracker_path="/output/camera_processing_tracker.yaml",
-        job_id="abc123",
-        source_id="1",
-        core_weight=5,
-        memory_mb=2048,
-    )
-
-    assert job.core_weight == 5
-    assert job.memory_mb == 2048
+def test_camera_extraction_job_name():
+    """Verifies that the extraction job name keeps the value every persisted job identifier is derived from."""
+    assert CAMERA_EXTRACTION_JOB_NAME == "camera_timestamp_extraction"
 
 
-def test_pending_job_dispatch_key(tmp_path):
-    """Verifies that dispatch_key pairs the stringified tracker path with the job identifier."""
-    tracker_path = tmp_path / "camera_timestamps" / "camera_processing_tracker.yaml"
-    job = PendingJob(
-        log_directory=tmp_path,
-        output_directory=tmp_path / "output",
-        tracker_path=tracker_path,
-        job_id="deadbeef",
-        source_id="7",
-    )
-
-    assert job.dispatch_key == (str(tracker_path), "deadbeef")
+def test_output_layout_values():
+    """Verifies that OutputLayout declares the filesystem names the extraction output layout is built from."""
+    assert OutputLayout.DIRECTORY_NAME == "camera_timestamps"
+    assert OutputLayout.TRACKER_FILENAME == "camera_processing_tracker.yaml"
+    assert OutputLayout.FILE_PREFIX == "camera_"
+    assert OutputLayout.TIMESTAMPS_INFIX == "_timestamps"
+    assert OutputLayout.FILE_SUFFIX == ".feather"
 
 
-def test_pending_job_dispatch_key_separates_trackers(tmp_path):
-    """Verifies that dispatch_key distinguishes identical job identifiers stored under different trackers."""
-    first = PendingJob(
-        log_directory=tmp_path,
-        output_directory=tmp_path / "first",
-        tracker_path=tmp_path / "first" / "camera_processing_tracker.yaml",
-        job_id="shared",
-        source_id="1",
-    )
-    second = PendingJob(
-        log_directory=tmp_path,
-        output_directory=tmp_path / "second",
-        tracker_path=tmp_path / "second" / "camera_processing_tracker.yaml",
-        job_id="shared",
-        source_id="1",
-    )
+def test_output_layout_members_interpolate_as_raw_strings():
+    """Verifies that every OutputLayout member is a string that interpolates as its bare value."""
+    for member in OutputLayout:
+        assert isinstance(member, str)
+        assert f"{member}" == member.value
+        assert str(member) == member.value
 
-    assert first.dispatch_key != second.dispatch_key
+
+def test_resolve_output_directory(tmp_path):
+    """Verifies that resolve_output_directory nests the library's own subdirectory under the nominated root."""
+    resolved = resolve_output_directory(output_directory=tmp_path)
+
+    assert resolved == tmp_path / "camera_timestamps"
+    assert resolved.parent == tmp_path
+    assert resolved.name == OutputLayout.DIRECTORY_NAME
+
+
+def test_resolve_output_directory_creates_nothing(tmp_path):
+    """Verifies that resolve_output_directory only composes a path and leaves the filesystem untouched."""
+    resolved = resolve_output_directory(output_directory=tmp_path / "missing")
+
+    assert not resolved.exists()
+    assert not resolved.parent.exists()
+
+
+def test_resolve_tracker_path(tmp_path):
+    """Verifies that resolve_tracker_path names the tracker file inside the requested output directory."""
+    tracker_path = resolve_tracker_path(output_directory=tmp_path)
+
+    assert tracker_path == tmp_path / "camera_processing_tracker.yaml"
+    assert tracker_path.parent == tmp_path
+    assert tracker_path.name == OutputLayout.TRACKER_FILENAME
+
+
+def test_resolve_timestamps_path(tmp_path):
+    """Verifies that resolve_timestamps_path builds the feather path inside the requested directory."""
+    path = resolve_timestamps_path(output_directory=tmp_path, source_id="1")
+
+    assert path == tmp_path / "camera_1_timestamps.feather"
+    assert path.parent == tmp_path
+    assert path.name == "camera_1_timestamps.feather"
+
+
+def test_resolve_timestamps_path_composition(tmp_path):
+    """Verifies that resolve_timestamps_path composes the filename from the layout prefix, infix, and suffix."""
+    path = resolve_timestamps_path(output_directory=tmp_path, source_id="42")
+
+    assert path.name == f"{OutputLayout.FILE_PREFIX}42{OutputLayout.TIMESTAMPS_INFIX}{OutputLayout.FILE_SUFFIX}"
+    assert path.name.startswith(OutputLayout.FILE_PREFIX)
+    assert path.name.endswith(OutputLayout.FILE_SUFFIX)
+
+
+def test_resolve_timestamps_path_separates_sources(tmp_path):
+    """Verifies that resolve_timestamps_path gives every source its own output file in one directory."""
+    first = resolve_timestamps_path(output_directory=tmp_path, source_id="1")
+    second = resolve_timestamps_path(output_directory=tmp_path, source_id="2")
+
+    assert first != second
+    assert first.parent == second.parent
+
+
+def test_output_layout_resolvers_compose(tmp_path):
+    """Verifies that the tracker and the timestamp files of one batch sit inside the resolved output subdirectory."""
+    resolved = resolve_output_directory(output_directory=tmp_path)
+    tracker_path = resolve_tracker_path(output_directory=resolved)
+    timestamps_path = resolve_timestamps_path(output_directory=resolved, source_id="1")
+
+    assert tracker_path.parent == resolved
+    assert timestamps_path.parent == resolved
+    assert tracker_path != timestamps_path
 
 
 def test_generate_job_ids():
@@ -103,7 +154,7 @@ def test_generate_job_ids():
 
     assert set(job_ids) == {"1", "2", "10"}
     for source_id in ("1", "2", "10"):
-        expected_id = ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier=source_id)
+        expected_id = ProcessingTracker.generate_job_id(job_name=CAMERA_EXTRACTION_JOB_NAME, specifier=source_id)
         assert job_ids[source_id] == expected_id
 
 
@@ -124,134 +175,305 @@ def test_generate_job_ids_empty_input():
     assert generate_job_ids(source_ids=[]) == {}
 
 
-def test_resolve_camera_timestamps_path(tmp_path):
-    """Verifies that resolve_camera_timestamps_path builds the feather path inside the requested directory."""
-    path = resolve_camera_timestamps_path(output_directory=tmp_path, source_id="1")
-
-    assert path == tmp_path / "camera_1_timestamps.feather"
-    assert path.parent == tmp_path
-    assert path.name == "camera_1_timestamps.feather"
-
-
-def test_resolve_camera_timestamps_path_composition(tmp_path):
-    """Verifies that resolve_camera_timestamps_path composes the filename from the prefix and suffix constants."""
-    path = resolve_camera_timestamps_path(output_directory=tmp_path, source_id="42")
-
-    assert path.name == f"{CAMERA_TIMESTAMPS_PREFIX}42{CAMERA_TIMESTAMPS_SUFFIX}"
-    assert path.name.startswith(CAMERA_TIMESTAMPS_PREFIX)
-    assert path.name.endswith(CAMERA_TIMESTAMPS_SUFFIX)
-
-
-def test_discover_camera_jobs_missing_directory(tmp_path):
-    """Verifies that discover_camera_jobs raises FileNotFoundError when the log directory does not exist."""
-    missing_directory = tmp_path / "nonexistent"
-    message = (
-        f"Unable to discover camera timestamp extraction jobs in '{missing_directory}'. The path does not exist or "
-        f"is not a directory."
+def test_job_descriptor_stores_every_field(tmp_path):
+    """Verifies that JobDescriptor stores every supplied field verbatim."""
+    job = JobDescriptor(
+        log_directory=tmp_path / "logs",
+        archive_path=tmp_path / "logs" / f"1{LOG_ARCHIVE_SUFFIX}",
+        output_directory=tmp_path / "output",
+        tracker_path=tmp_path / "output" / "camera_processing_tracker.yaml",
+        job_name=CAMERA_EXTRACTION_JOB_NAME,
+        job_id="abc123",
+        source_id="1",
+        core_weight=4,
     )
 
-    with pytest.raises(FileNotFoundError, match=error_format(message)):
-        discover_camera_jobs(log_directory=missing_directory)
+    assert job.log_directory == tmp_path / "logs"
+    assert job.archive_path == tmp_path / "logs" / f"1{LOG_ARCHIVE_SUFFIX}"
+    assert job.output_directory == tmp_path / "output"
+    assert job.tracker_path == tmp_path / "output" / "camera_processing_tracker.yaml"
+    assert job.job_name == CAMERA_EXTRACTION_JOB_NAME
+    assert job.job_id == "abc123"
+    assert job.source_id == "1"
+    assert job.core_weight == 4
 
 
-def test_discover_camera_jobs_not_a_directory(tmp_path):
-    """Verifies that discover_camera_jobs raises FileNotFoundError when the log path points to a file."""
-    file_path = tmp_path / "logs.txt"
-    file_path.write_text("not a directory")
-    message = (
-        f"Unable to discover camera timestamp extraction jobs in '{file_path}'. The path does not exist or "
-        f"is not a directory."
+def test_job_descriptor_is_frozen(tmp_path):
+    """Verifies that a dispatched descriptor cannot drift after a scheduler receives it."""
+    job = _build_descriptor(tmp_path=tmp_path)
+
+    with pytest.raises(AttributeError):
+        job.core_weight = 8
+
+
+def test_for_archive_builds_descriptor(tmp_path):
+    """Verifies that for_archive fills every descriptor field from the archive a scheduler already resolved."""
+    log_directory = tmp_path / "logs"
+    archive_path = _create_archive(directory=log_directory, source_id=1)
+    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
+    tracker_path = resolve_tracker_path(output_directory=output_directory)
+
+    job = JobDescriptor.for_archive(
+        archive_path=archive_path,
+        output_directory=output_directory,
+        tracker_path=tracker_path,
+        source_id="1",
+        log_directory=log_directory,
+        core_weight=8,
     )
 
-    with pytest.raises(FileNotFoundError, match=error_format(message)):
-        discover_camera_jobs(log_directory=file_path)
+    assert job.log_directory == log_directory
+    assert job.archive_path == archive_path
+    assert job.output_directory == output_directory
+    assert job.tracker_path == tracker_path
+    assert job.job_name == CAMERA_EXTRACTION_JOB_NAME
+    assert job.job_id == generate_job_ids(source_ids=["1"])["1"]
+    assert job.source_id == "1"
+    assert job.core_weight == 8
 
 
-def test_discover_camera_jobs_missing_manifest(tmp_path):
-    """Verifies that discover_camera_jobs raises FileNotFoundError when the tree holds no camera manifest."""
-    _write_archive(directory=tmp_path, source_id=1)
-    message = (
-        f"Unable to discover camera timestamp extraction jobs in '{tmp_path}'. No "
-        f"{CAMERA_MANIFEST_FILENAME} was found. A camera manifest is required to identify which log archives "
-        f"were produced by ataraxis-video-system."
+def test_for_archive_applies_defaults(tmp_path):
+    """Verifies that for_archive defaults the log directory to the archive's parent and the width to one core."""
+    archive_path = _create_archive(directory=tmp_path / "logs", source_id=1)
+    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
+
+    job = JobDescriptor.for_archive(
+        archive_path=archive_path,
+        output_directory=output_directory,
+        tracker_path=resolve_tracker_path(output_directory=output_directory),
+        source_id="1",
     )
 
-    with pytest.raises(FileNotFoundError, match=error_format(message)):
-        discover_camera_jobs(log_directory=tmp_path)
+    assert job.log_directory == archive_path.parent
+    assert job.core_weight == 1
 
 
-def test_discover_camera_jobs_empty_manifest(tmp_path):
-    """Verifies that discover_camera_jobs raises ValueError when the camera manifest registers no sources."""
-    manifest_path = tmp_path / CAMERA_MANIFEST_FILENAME
-    CameraManifest(sources=[]).to_yaml(file_path=manifest_path)
+def test_for_archive_matches_generated_job_ids(tmp_path):
+    """Verifies that a descriptor built for an archive addresses the same tracker entry a prepared job would."""
+    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
+    tracker_path = resolve_tracker_path(output_directory=output_directory)
+    identifiers = generate_job_ids(source_ids=["1", "2", "10"])
+
+    for source_id in ("1", "2", "10"):
+        job = JobDescriptor.for_archive(
+            archive_path=_create_archive(directory=tmp_path / "logs", source_id=int(source_id)),
+            output_directory=output_directory,
+            tracker_path=tracker_path,
+            source_id=source_id,
+        )
+        assert job.job_id == identifiers[source_id]
+
+    assert len({identifiers[source_id] for source_id in identifiers}) == 3
+
+
+def test_dispatch_key(tmp_path):
+    """Verifies that dispatch_key pairs the stringified tracker path with the job identifier."""
+    job = _build_descriptor(tmp_path=tmp_path)
+
+    assert job.dispatch_key == (str(job.tracker_path), job.job_id)
+
+
+def test_dispatch_key_separates_trackers(tmp_path):
+    """Verifies that dispatch_key distinguishes identical jobs recorded under different trackers."""
+    first = _build_descriptor(tmp_path=tmp_path / "first")
+    second = _build_descriptor(tmp_path=tmp_path / "second")
+
+    assert first.job_id == second.job_id
+    assert first.dispatch_key != second.dispatch_key
+
+
+def test_dispatch_key_separates_sources(tmp_path):
+    """Verifies that dispatch_key distinguishes different sources recorded under one tracker."""
+    first = _build_descriptor(tmp_path=tmp_path, source_id=1)
+    second = _build_descriptor(tmp_path=tmp_path, source_id=2)
+
+    assert first.tracker_path == second.tracker_path
+    assert first.dispatch_key != second.dispatch_key
+
+
+def test_dispatch_key_survives_resizing(tmp_path):
+    """Verifies that re-sizing a job's width leaves the key the batch addresses it by unchanged."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=1)
+    resized = replace(job, core_weight=8)
+
+    assert resized.core_weight == 8
+    assert resized.dispatch_key == job.dispatch_key
+    assert resized.archive_path == job.archive_path
+    assert resized.source_id == job.source_id
+
+
+def test_to_mapping(tmp_path):
+    """Verifies that to_mapping renders every descriptor field as a flat string or integer value."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=4)
+    mapping = job.to_mapping()
+
+    assert set(mapping) == {field.name for field in fields(JobDescriptor)}
+    assert mapping["log_directory"] == str(job.log_directory)
+    assert mapping["archive_path"] == str(job.archive_path)
+    assert mapping["output_directory"] == str(job.output_directory)
+    assert mapping["tracker_path"] == str(job.tracker_path)
+    assert mapping["job_name"] == CAMERA_EXTRACTION_JOB_NAME
+    assert mapping["job_id"] == job.job_id
+    assert mapping["source_id"] == "1"
+    assert mapping["core_weight"] == 4
+    assert all(isinstance(value, (str, int)) for value in mapping.values())
+
+
+def test_from_mapping_round_trip(tmp_path):
+    """Verifies that a descriptor rendered as a mapping reconstructs without loss."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=4)
+
+    assert JobDescriptor.from_mapping(mapping=job.to_mapping()) == job
+
+
+def test_from_mapping_reads_stringified_values(tmp_path):
+    """Verifies that from_mapping restores the declared field types from an all-string payload."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=4)
+    payload = {key: str(value) for key, value in job.to_mapping().items()}
+
+    restored = JobDescriptor.from_mapping(mapping=payload)
+
+    assert restored == job
+    assert restored.core_weight == 4
+    assert isinstance(restored.core_weight, int)
+
+
+def test_from_mapping_ignores_extra_keys(tmp_path):
+    """Verifies that from_mapping reads the fields it declares and tolerates unrelated payload keys."""
+    job = _build_descriptor(tmp_path=tmp_path)
+    payload = {**job.to_mapping(), "unrelated_key": "ignored"}
+
+    assert JobDescriptor.from_mapping(mapping=payload) == job
+
+
+def test_from_mapping_missing_key(tmp_path):
+    """Verifies that from_mapping raises the malformed descriptor error when a required key is absent."""
+    job = _build_descriptor(tmp_path=tmp_path)
+    payload = job.to_mapping()
+    del payload["archive_path"]
+
+    field_names = ", ".join(field.name for field in fields(JobDescriptor))
     message = (
-        f"Unable to discover camera timestamp extraction jobs in '{tmp_path}'. The "
-        f"{CAMERA_MANIFEST_FILENAME} at '{manifest_path}' contains no source entries."
+        f"Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        f"required keys are absent: archive_path. A descriptor mapping carries every key the descriptor writes: "
+        f"{field_names}."
     )
 
     with pytest.raises(ValueError, match=error_format(message)):
-        discover_camera_jobs(log_directory=tmp_path)
+        JobDescriptor.from_mapping(mapping=payload)
 
 
-def test_discover_camera_jobs_resolves_manifest_sources(tmp_path):
-    """Verifies that discover_camera_jobs returns one sorted string-specified entry per registered source."""
-    for source_id in (1, 10, 2):
-        write_camera_manifest(log_directory=tmp_path, source_id=source_id, name=f"cam{source_id}")
-        _write_archive(directory=tmp_path, source_id=source_id)
+def test_from_mapping_missing_key_reports_every_absent_key(tmp_path):
+    """Verifies that from_mapping names every absent key in sorted order rather than only the first one."""
+    job = _build_descriptor(tmp_path=tmp_path)
+    payload = job.to_mapping()
+    del payload["source_id"]
+    del payload["job_name"]
 
-    universe, possible = discover_camera_jobs(log_directory=tmp_path)
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        "required keys are absent: job_name, source_id."
+    )
 
-    assert universe == [(TIMESTAMP_JOB_NAME, "1"), (TIMESTAMP_JOB_NAME, "10"), (TIMESTAMP_JOB_NAME, "2")]
-    assert possible == universe
-    assert all(isinstance(specifier, str) for _, specifier in universe)
-
-
-def test_discover_camera_jobs_deduplicates_repeated_sources(tmp_path):
-    """Verifies that discover_camera_jobs collapses repeated manifest entries for the same source into one job."""
-    write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1")
-    write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1_again")
-    _write_archive(directory=tmp_path, source_id=1)
-
-    universe, possible = discover_camera_jobs(log_directory=tmp_path)
-
-    assert universe == [(TIMESTAMP_JOB_NAME, "1")]
-    assert possible == [(TIMESTAMP_JOB_NAME, "1")]
+    with pytest.raises(ValueError, match=error_format(message)):
+        JobDescriptor.from_mapping(mapping=payload)
 
 
-def test_discover_camera_jobs_finds_manifest_and_archives_in_subdirectories(tmp_path):
-    """Verifies that discover_camera_jobs searches the whole tree for the manifest and the log archives."""
-    logger_directory = tmp_path / "logger"
-    logger_directory.mkdir()
-    write_camera_manifest(log_directory=logger_directory, source_id=3, name="cam3")
-    _write_archive(directory=logger_directory / "archives", source_id=3)
+def test_from_mapping_empty_mapping():
+    """Verifies that from_mapping rejects an empty payload instead of building a descriptor from defaults."""
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        "required keys are absent:"
+    )
 
-    universe, possible = discover_camera_jobs(log_directory=tmp_path)
-
-    assert universe == [(TIMESTAMP_JOB_NAME, "3")]
-    assert possible == [(TIMESTAMP_JOB_NAME, "3")]
-
-
-def test_discover_camera_jobs_excludes_source_without_archive(tmp_path):
-    """Verifies that a source registered without an archive stays in the universe but not in the possible set."""
-    write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1")
-    write_camera_manifest(log_directory=tmp_path, source_id=2, name="cam2")
-    _write_archive(directory=tmp_path, source_id=1)
-
-    universe, possible = discover_camera_jobs(log_directory=tmp_path)
-
-    assert universe == [(TIMESTAMP_JOB_NAME, "1"), (TIMESTAMP_JOB_NAME, "2")]
-    assert possible == [(TIMESTAMP_JOB_NAME, "1")]
+    with pytest.raises(ValueError, match=error_format(message)) as error:
+        JobDescriptor.from_mapping(mapping={})
+    for field in fields(JobDescriptor):
+        assert field.name in _normalize(text=error.value)
 
 
-def test_discover_camera_jobs_excludes_ambiguous_source(tmp_path):
-    """Verifies that a source whose archive name resolves to several files is excluded from the possible set."""
-    write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1")
-    write_camera_manifest(log_directory=tmp_path, source_id=2, name="cam2")
-    _write_archive(directory=tmp_path / "logger_one", source_id=1)
-    _write_archive(directory=tmp_path / "logger_one", source_id=2)
-    _write_archive(directory=tmp_path / "logger_two", source_id=2)
+def test_from_mapping_unreadable_value(tmp_path):
+    """Verifies that from_mapping raises the malformed descriptor error when a value has the wrong type."""
+    job = _build_descriptor(tmp_path=tmp_path)
+    payload = {**job.to_mapping(), "core_weight": "eight"}
 
-    universe, possible = discover_camera_jobs(log_directory=tmp_path)
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its values "
+        "cannot be read as the type its field declares:"
+    )
 
-    assert universe == [(TIMESTAMP_JOB_NAME, "1"), (TIMESTAMP_JOB_NAME, "2")]
-    assert possible == [(TIMESTAMP_JOB_NAME, "1")]
+    with pytest.raises(ValueError, match=error_format(message)):
+        JobDescriptor.from_mapping(mapping=payload)
+
+
+def test_from_mapping_unreadable_path(tmp_path):
+    """Verifies that from_mapping rejects a payload whose path value is not a path-like object."""
+    job = _build_descriptor(tmp_path=tmp_path)
+    payload = {**job.to_mapping(), "log_directory": None}
+
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its values "
+        "cannot be read as the type its field declares:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
+        JobDescriptor.from_mapping(mapping=payload)
+
+
+def test_job_descriptor_pickle_round_trip(tmp_path):
+    """Verifies that a descriptor pickles and unpickles unchanged, as a pool submission requires."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=4)
+    restored = pickle.loads(pickle.dumps(job))  # noqa: S301  # The payload is the descriptor built one line above.
+
+    assert restored == job
+    assert restored.dispatch_key == job.dispatch_key
+    assert restored.archive_path == job.archive_path
+
+
+def test_job_descriptor_crosses_spawned_worker(tmp_path):
+    """Verifies that a descriptor reaches a spawned worker intact and reconstructs from the mapping it returns."""
+    job = _build_descriptor(tmp_path=tmp_path, core_weight=2)
+
+    # Submits the descriptor's own rendering method, so the mapping under test is built inside the spawned child from
+    # the copy that crossed the process boundary. The pool is kept to one worker, since a single call proves the round
+    # trip.
+    with ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context("spawn")) as executor:
+        mapping = executor.submit(JobDescriptor.to_mapping, job).result(timeout=_SPAWN_TIMEOUT_SECONDS)
+
+    assert mapping == job.to_mapping()
+    assert JobDescriptor.from_mapping(mapping=mapping) == job
+
+
+def test_job_sizing_stores_every_field():
+    """Verifies that JobSizing stores the figures one archive sizing pass resolved."""
+    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+
+    assert sizing.memory_mb == 2048
+    assert sizing.message_count == 1500
+    assert sizing.archive_bytes == 4096
+    assert sizing.modeled
+
+
+def test_job_sizing_baseline_figures():
+    """Verifies that JobSizing carries the unmodeled flag when the figures fall back to the job baseline."""
+    sizing = JobSizing(memory_mb=230, message_count=0, archive_bytes=0, modeled=False)
+
+    assert not sizing.modeled
+    assert sizing.message_count == 0
+    assert sizing.archive_bytes == 0
+
+
+def test_job_sizing_is_frozen():
+    """Verifies that the resolved sizing figures cannot drift after a scheduler receives them."""
+    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+
+    with pytest.raises(AttributeError):
+        sizing.memory_mb = 10
+
+
+def test_job_sizing_pickle_round_trip():
+    """Verifies that a sizing record pickles unchanged, as a cross-process scheduler payload requires."""
+    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+
+    # The payload is the record built one line above, so the round trip deserializes nothing untrusted.
+    assert pickle.loads(pickle.dumps(sizing)) == sizing  # noqa: S301

@@ -14,7 +14,7 @@ from ataraxis_data_structures import (
 
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest, write_camera_manifest
 from .mcp_instance import mcp, scan_archive_source_ids
-from ..orchestration import CAMERA_TIMESTAMPS_DIRECTORY, resolve_camera_timestamps_path
+from ..orchestration import OutputLayout, resolve_timestamps_path
 
 
 @mcp.tool()
@@ -160,7 +160,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     # Avoids redundant filesystem walks when resolving multiple sources.
     all_video_files = tuple(sorted(root_path.rglob("*.mp4")))
     timestamps_dirs = tuple(
-        candidate for candidate in sorted(root_path.rglob(CAMERA_TIMESTAMPS_DIRECTORY)) if candidate.is_dir()
+        candidate for candidate in sorted(root_path.rglob(OutputLayout.DIRECTORY_NAME)) if candidate.is_dir()
     )
 
     # Resolves recording roots and builds the log-directory-to-root mapping.
@@ -472,7 +472,7 @@ def _find_feather_file(timestamps_dirs: tuple[Path, ...], source_id: int) -> Pat
         The path to the feather file, or None if not found.
     """
     for timestamps_dir in timestamps_dirs:
-        candidate = resolve_camera_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))
+        candidate = resolve_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))
         if candidate.is_file():
             return candidate
     return None

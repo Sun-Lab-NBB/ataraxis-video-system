@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 from contextlib import ExitStack
 from multiprocessing import get_context
@@ -28,6 +29,13 @@ _WORKER_THREAD_CEILING: int = 1
 _MULTIPROCESSING_CONTEXT: SpawnContext = get_context("spawn")
 """The spawn-based multiprocessing context used to create the process pool that extracts frame timestamps, ensuring
 identical cross-platform behavior on all supported platforms."""
+
+
+class ExtractedDataColumns(StrEnum):
+    """Defines the columns the extracted camera timestamp table carries, in the order it stores them."""
+
+    FRAME_TIME = "frame_time_us"
+    """The frame acquisition timestamps, in microseconds elapsed since the UTC epoch onset."""
 
 
 def extract_logged_camera_timestamps(

@@ -1,26 +1,21 @@
-"""Provides the job identity constants, the batch job descriptor, and the manifest-derived job discovery shared by
-every consumer that schedules camera timestamp extraction.
+"""Provides the job identity constants, the output layout names and resolvers, and the descriptor and sizing records
+every consumer that schedules camera timestamp extraction exchanges.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from dataclasses import fields, dataclass
 
 from ataraxis_base_utilities import console
-from ataraxis_data_structures import (
-    LOG_ARCHIVE_SUFFIX,
-    ProcessingTracker,
-    index_marker_files,
-    discover_marker_files,
-)
-
-from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
+from ataraxis_data_structures import ProcessingTracker
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Mapping, Sequence
 
-TIMESTAMP_JOB_NAME: str = "camera_timestamp_extraction"
+CAMERA_EXTRACTION_JOB_NAME: str = "camera_timestamp_extraction"
 """The job name under which camera timestamp extraction is registered in a ProcessingTracker.
 
 Notes:
@@ -28,119 +23,176 @@ Notes:
     tracker already holds and every identifier a scheduler derived independently.
 """
 
-TRACKER_FILENAME: str = "camera_processing_tracker.yaml"
-"""The name of the processing tracker file the pipeline places in its output directory."""
 
-CAMERA_TIMESTAMPS_DIRECTORY: str = "camera_timestamps"
-"""The name of the subdirectory the pipeline creates under its output path for tracker and feather files."""
+class OutputLayout(StrEnum):
+    """Defines the filesystem names an extraction job writes its tracker and its output files under."""
 
-CAMERA_TIMESTAMPS_PREFIX: str = "camera_"
-"""The prefix of the feather file each extraction job writes."""
+    DIRECTORY_NAME = "camera_timestamps"
+    """The subdirectory created under a caller's output path for the tracker and the extracted files."""
+    TRACKER_FILENAME = "camera_processing_tracker.yaml"
+    """The processing tracker file recording the outcome of every job writing to one directory."""
+    FILE_PREFIX = "camera_"
+    """The prefix of every output file an extraction job writes."""
+    TIMESTAMPS_INFIX = "_timestamps"
+    """The infix marking an output file as holding frame acquisition timestamps."""
+    FILE_SUFFIX = ".feather"
+    """The filename suffix of every output (Arrow IPC) file an extraction job writes."""
 
-CAMERA_TIMESTAMPS_SUFFIX: str = "_timestamps.feather"
-"""The suffix of the feather file each extraction job writes."""
 
-FRAME_TIME_COLUMN: str = "frame_time_us"
-"""The name of the feather column holding the frame acquisition timestamps, in microseconds since the UTC epoch."""
-
-
-@dataclass(slots=True)
-class PendingJob:
-    """Describes a single timestamp extraction job queued for batch execution.
+@dataclass(frozen=True, slots=True)
+class JobDescriptor:
+    """Describes one camera timestamp extraction job, addressed by the single log archive it reads.
 
     Notes:
-        The core and memory weights are resolved from the job's own archive before dispatch, so admission weighs each
-        job against the budgets at the size that archive actually demands.
+        Every field is a path, a string, or an integer, so an instance pickles into a spawned worker and crosses a
+        scheduler boundary or a tool payload unchanged.
+
+        The archive path is resolved rather than optional, so a dispatched job never searches the tree.
+
+        The figures a sizing pass produces live in the paired JobSizing record, which a worker never sees.
     """
 
     log_directory: Path
     """The path to the DataLogger output directory whose tree holds the log archive."""
+    archive_path: Path
+    """The path to the .npz log archive this job reads."""
     output_directory: Path
-    """The path to the directory the extracted feather file is written to."""
+    """The path to the directory this job writes its output file into."""
     tracker_path: Path
     """The path to the ProcessingTracker file that records this job's outcome."""
+    job_name: str
+    """The tracker job name this job is registered under."""
     job_id: str
-    """The unique hexadecimal identifier for this job in the tracker."""
+    """The unique hexadecimal identifier of this job in its tracker."""
     source_id: str
     """The identifier of the camera source whose archive this job reads."""
-    core_weight: int = 1
-    """The cores this job occupies while it runs."""
-    memory_mb: int = 0
-    """The memory this job occupies while it runs, estimated from the archive it reads."""
-    archive_path: Path | None = None
-    """The path to the archive this job reads, resolved while the job is sized, or None when it did not resolve."""
+    core_weight: int
+    """The cores this job occupies while it runs, which is the width of the extraction pool its body opens."""
+
+    @classmethod
+    def for_archive(
+        cls,
+        archive_path: Path,
+        output_directory: Path,
+        tracker_path: Path,
+        source_id: str,
+        log_directory: Path | None = None,
+        core_weight: int = 1,
+    ) -> JobDescriptor:
+        """Builds a descriptor for one archive an external scheduler has already resolved.
+
+        Notes:
+            Derives the job identifier as this library's own preparation does, so one built here addresses the same
+            tracker entry.
+
+        Args:
+            archive_path: The path to the .npz log archive the job reads.
+            output_directory: The path to the directory the job writes its output file into.
+            tracker_path: The path to the ProcessingTracker file that records the job's outcome.
+            source_id: The identifier of the camera source whose archive the job reads.
+            log_directory: The path to the DataLogger output directory holding the archive. Leaving this unset uses
+                the archive's own parent directory.
+            core_weight: The cores the job occupies while it runs.
+
+        Returns:
+            The built descriptor.
+        """
+        return cls(
+            log_directory=log_directory if log_directory is not None else archive_path.parent,
+            archive_path=archive_path,
+            output_directory=output_directory,
+            tracker_path=tracker_path,
+            job_name=CAMERA_EXTRACTION_JOB_NAME,
+            job_id=ProcessingTracker.generate_job_id(job_name=CAMERA_EXTRACTION_JOB_NAME, specifier=source_id),
+            source_id=source_id,
+            core_weight=core_weight,
+        )
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> JobDescriptor:
+        """Reconstructs a descriptor from the mapping a caller received across a tool boundary.
+
+        Args:
+            mapping: The mapping to read, carrying every field name to_mapping writes.
+
+        Returns:
+            The reconstructed descriptor.
+
+        Raises:
+            ValueError: If a required key is absent, or if a value cannot be read as the type its field
+                declares.
+        """
+        field_names = tuple(field.name for field in fields(cls))
+        missing_keys = [name for name in field_names if name not in mapping]
+
+        if missing_keys:
+            message = (
+                f"Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The "
+                f"following required keys are absent: {', '.join(sorted(missing_keys))}. A descriptor mapping "
+                f"carries every key the descriptor writes: {', '.join(field_names)}."
+            )
+            console.error(message=message, error=ValueError)
+
+        try:
+            return cls(
+                log_directory=Path(mapping["log_directory"]),
+                archive_path=Path(mapping["archive_path"]),
+                output_directory=Path(mapping["output_directory"]),
+                tracker_path=Path(mapping["tracker_path"]),
+                job_name=str(mapping["job_name"]),
+                job_id=str(mapping["job_id"]),
+                source_id=str(mapping["source_id"]),
+                core_weight=int(mapping["core_weight"]),
+            )
+        except (TypeError, ValueError) as error:
+            message = (
+                f"Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its "
+                f"values cannot be read as the type its field declares: {error}."
+            )
+            console.error(message=message, error=ValueError)
+            raise  # pragma: no cover - console.error always raises, this satisfies the linter's return analysis.
 
     @property
     def dispatch_key(self) -> tuple[str, str]:
-        """Returns the composite tracker path and job identifier pair that identifies this job across the batch."""
+        """Returns the tracker path and job identifier pair that identifies this job across the batch."""
         return str(self.tracker_path), self.job_id
 
+    def to_mapping(self) -> dict[str, str | int]:
+        """Renders this descriptor as the flat mapping the interface layer exchanges.
 
-def discover_camera_jobs(log_directory: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """Resolves the timestamp extraction job universe and the subset backed by an archive on disk.
+        Notes:
+            Every value is a string or an integer, so the mapping reconstructs through from_mapping without loss.
 
-    Notes:
-        The universe is a manifest fingerprint rather than an invocation fingerprint, so every invocation aligns a
-        tracker against the same set and no invocation resets the jobs it did not request. The camera manifest also
-        gates the discovery, which keeps archives written by other libraries out of the resolved set.
-
-    Args:
-        log_directory: The root directory whose tree is searched for the camera manifest and the log archives.
-
-    Returns:
-        The full job universe the manifest defines and the subset whose archives resolve to exactly one file, each as
-        a list of job name and source identifier pairs.
-
-    Raises:
-        FileNotFoundError: If the log directory does not exist, is not a directory, or holds no camera manifest.
-        OSError: If any directory beneath the log directory cannot be read.
-        ValueError: If the camera manifest registers no sources.
-    """
-    if not log_directory.is_dir():
-        message = (
-            f"Unable to discover camera timestamp extraction jobs in '{log_directory}'. The path does not exist or "
-            f"is not a directory."
-        )
-        console.error(message=message, error=FileNotFoundError)
-
-    candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
-    if not candidates:
-        message = (
-            f"Unable to discover camera timestamp extraction jobs in '{log_directory}'. No "
-            f"{CAMERA_MANIFEST_FILENAME} was found. A camera manifest is required to identify which log archives "
-            f"were produced by ataraxis-video-system."
-        )
-        console.error(message=message, error=FileNotFoundError)
-
-    manifest = CameraManifest.from_yaml(file_path=candidates[0])
-    source_ids = sorted({str(source.id) for source in manifest.sources})
-
-    if not source_ids:
-        message = (
-            f"Unable to discover camera timestamp extraction jobs in '{log_directory}'. The "
-            f"{CAMERA_MANIFEST_FILENAME} at '{candidates[0]}' contains no source entries."
-        )
-        console.error(message=message, error=ValueError)
-
-    universe = [(TIMESTAMP_JOB_NAME, source_id) for source_id in source_ids]
-
-    # Indexes every source's archive in one pass, since the archive names are known once the manifest resolves. A
-    # source whose name resolves to several archives spans several loggers, which is ambiguous rather than redundant,
-    # so it is left out of the possible set alongside the sources holding no archive at all.
-    archives = index_marker_files(
-        directory=log_directory,
-        marker_names=[f"{source_id}{LOG_ARCHIVE_SUFFIX}" for source_id in source_ids],
-    )
-    possible = [
-        (TIMESTAMP_JOB_NAME, source_id)
-        for source_id in source_ids
-        if len(archives[f"{source_id}{LOG_ARCHIVE_SUFFIX}"]) == 1
-    ]
-
-    return universe, possible
+        Returns:
+            The descriptor's fields keyed by their field names, with every path rendered as a string.
+        """
+        return {
+            "log_directory": str(self.log_directory),
+            "archive_path": str(self.archive_path),
+            "output_directory": str(self.output_directory),
+            "tracker_path": str(self.tracker_path),
+            "job_name": self.job_name,
+            "job_id": self.job_id,
+            "source_id": self.source_id,
+            "core_weight": self.core_weight,
+        }
 
 
-def generate_job_ids(source_ids: list[str]) -> dict[str, str]:
+@dataclass(frozen=True, slots=True)
+class JobSizing:
+    """Describes the resource figures one sizing pass resolved for a single extraction job."""
+
+    memory_mb: int
+    """The memory the job occupies while it runs, estimated from the archive it reads."""
+    message_count: int
+    """The data messages the archive holds, as the sizing pass read them."""
+    archive_bytes: int
+    """The size of the archive on disk, in bytes, as the sizing pass read it."""
+    modeled: bool
+    """Determines whether the figures follow from the archive's own properties rather than from the job baseline."""
+
+
+def generate_job_ids(source_ids: Sequence[str]) -> dict[str, str]:
     """Generates the processing job identifier of every requested camera source.
 
     Args:
@@ -150,19 +202,44 @@ def generate_job_ids(source_ids: list[str]) -> dict[str, str]:
         The generated hexadecimal job identifier of each source, keyed by that source identifier.
     """
     return {
-        source_id: ProcessingTracker.generate_job_id(job_name=TIMESTAMP_JOB_NAME, specifier=source_id)
+        source_id: ProcessingTracker.generate_job_id(job_name=CAMERA_EXTRACTION_JOB_NAME, specifier=source_id)
         for source_id in source_ids
     }
 
 
-def resolve_camera_timestamps_path(output_directory: Path, source_id: str) -> Path:
-    """Resolves the path of the feather file holding the target source's extracted timestamps.
+def resolve_output_directory(output_directory: Path) -> Path:
+    """Resolves the subdirectory the extraction output and its tracker are written into.
 
     Args:
-        output_directory: The directory the extraction job writes its output into.
+        output_directory: The root output directory the caller nominated.
+
+    Returns:
+        The path to the library's own subdirectory under the nominated root.
+    """
+    return output_directory / OutputLayout.DIRECTORY_NAME
+
+
+def resolve_tracker_path(output_directory: Path) -> Path:
+    """Resolves the path of the processing tracker recording the outcome of every job writing to a directory.
+
+    Args:
+        output_directory: The directory the extraction jobs write their output into.
+
+    Returns:
+        The path to the tracker file.
+    """
+    return output_directory / OutputLayout.TRACKER_FILENAME
+
+
+def resolve_timestamps_path(output_directory: Path, source_id: str) -> Path:
+    """Resolves the path of the file holding the target source's extracted timestamps.
+
+    Args:
+        output_directory: The directory the extraction jobs write their output into.
         source_id: The identifier of the camera source whose output path is resolved.
 
     Returns:
-        The path to the source's timestamp feather file.
+        The path to the source's timestamp file.
     """
-    return output_directory / f"{CAMERA_TIMESTAMPS_PREFIX}{source_id}{CAMERA_TIMESTAMPS_SUFFIX}"
+    filename = f"{OutputLayout.FILE_PREFIX}{source_id}{OutputLayout.TIMESTAMPS_INFIX}{OutputLayout.FILE_SUFFIX}"
+    return output_directory / filename

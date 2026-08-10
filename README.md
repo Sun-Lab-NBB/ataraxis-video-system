@@ -218,7 +218,7 @@ if __name__ == "__main__":
     run_log_processing_pipeline(
         log_directory=logger.output_directory,
         output_directory=processed_directory,
-        log_ids=["101"],
+        source_ids=["101"],
     )
 
     # Reads the processed timestamps from the output Feather file and computes the camera frame rate. The pipeline
@@ -304,20 +304,23 @@ When source IDs are not explicitly provided, the pipeline resolves all registere
 automatically. When source IDs are provided explicitly, they are validated against the manifest to prevent accidental
 processing of non-video log archives.
 
-The processing pipeline supports two execution modes. In **local mode**, all requested log archives are processed
-sequentially with automatic job tracking. In **remote mode**, a single job is executed by its unique identifier,
-enabling distributed processing across multiple compute nodes. Both modes use a YAML-based processing tracker to
-manage job lifecycle (scheduled, running, succeeded, or failed). All output files (tracker and Feather) are written
-into a `camera_timestamps/` subdirectory under the specified output directory.
+One recording writes one VideoSystem to one DataLogger, so exactly one camera manifest is supported per invocation. A
+log directory tree holding several manifests, or archives written by several DataLogger instances, spans several
+recordings and is rejected with a diagnostic naming the topology it detected rather than processed in part.
 
-Each job is sized from the archive it reads rather than from a single width chosen for the whole run. An archive below
-the parallel processing threshold takes one worker, and a larger archive takes the declared stage width narrowed to the
-workers its own message count repays and to the cores the host supplies.
+Processing is split across two entry points that share their job resolution and sizing but not their execution. The
+`axvs process` CLI command and the `run_log_processing_pipeline()` function target a single recording and run its
+archives one at a time in the calling process, which suits manual runs and small recordings. The
+[MCP server](#mcp-server) log processing tools orchestrate batches spanning many recordings, admitting jobs against a
+core budget and a memory budget and running them in one shared process pool. Both write a YAML-based processing
+tracker that manages job lifecycle (scheduled, running, succeeded, or failed), and both write every output file into
+a `camera_timestamps/` subdirectory under the specified output directory.
 
-For single-directory processing, use the `axvs process` CLI command or the `run_log_processing_pipeline()` function
-directly. For multi-directory batch workflows, use the [MCP server](#mcp-server) log processing tools, which handle
-archive discovery, batch preparation, concurrent execution, and status monitoring across multiple recording
-directories.
+Each job targets exactly one log archive and is sized from that archive rather than from a single width chosen for the
+whole run. An archive below the parallel processing threshold takes one worker, and a larger archive takes the declared
+stage width narrowed to the workers its own message count repays and to the cores the host supplies. The job resolution
+and the sizing model are exported as callable functions, so an external scheduler derives the same figures this library
+dispatches with instead of re-deriving them.
 
 ### CLI
 
@@ -330,7 +333,7 @@ This library provides the `axvs` CLI that exposes the following commands:
 | `check devices`       | Discovers all compatible cameras on the system                       |
 | `check compatibility` | Verifies FFMPEG and GPU availability for video encoding              |
 | `run`                 | Starts an interactive video capture session                          |
-| `process`             | Processes log archives to extract frame acquisition timestamps       |
+| `process`             | Processes one recording's log archives to extract frame acquisition timestamps |
 | `mcp`                 | Starts the MCP server for AI agent integration                       |
 | `configure read`      | Reads a GenICam node value from a connected camera                   |
 | `configure write`     | Writes a value to a GenICam node on a connected camera               |
