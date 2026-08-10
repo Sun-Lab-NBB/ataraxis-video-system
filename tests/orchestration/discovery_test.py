@@ -13,7 +13,12 @@ from ataraxis_data_structures import (
 )
 
 from ataraxis_video_system.orchestration import discovery
-from ataraxis_video_system.video.manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, write_camera_manifest
+from ataraxis_video_system.video.manifest import (
+    CAMERA_MANIFEST_FILENAME,
+    CameraManifest,
+    CameraSourceData,
+    write_camera_manifest,
+)
 from ataraxis_video_system.orchestration.jobs import (
     CAMERA_EXTRACTION_JOB_NAME,
     OutputLayout,
@@ -227,18 +232,17 @@ def test_resolve_jobs_not_a_directory(tmp_path):
     assert failure.value.kind is OrchestrationErrors.MISSING_LOG_MANIFEST
 
 
-def test_resolve_jobs_missing_manifest(tmp_path):
-    """Verifies that resolve_jobs reports the missing manifest kind when the tree holds no camera manifest."""
+def test_resolve_jobs_returns_an_empty_universe_when_the_tree_holds_no_manifest(tmp_path):
+    """Verifies that resolve_jobs reports a tree holding no camera manifest as holding no camera jobs."""
     _build_archive(directory=tmp_path, source_id=1)
-    message = (
-        f"Unable to resolve camera timestamp extraction jobs in '{tmp_path}'. No {CAMERA_MANIFEST_FILENAME} was "
-        f"found. A camera manifest is required to identify which log archives were produced by ataraxis-video-system."
-    )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
-        resolve_jobs(log_directory=tmp_path)
+    universe = resolve_jobs(log_directory=tmp_path)
 
-    assert failure.value.kind is OrchestrationErrors.MISSING_LOG_MANIFEST
+    assert universe.manifest_path is None
+    assert universe.sources == ()
+    assert universe.universe == ()
+    assert universe.possible == ()
+    assert universe.archives == {}
 
 
 def test_resolve_jobs_empty_manifest(tmp_path):
@@ -537,11 +541,29 @@ def test_prepare_jobs_propagates_manifest_guards(tmp_path):
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     _build_archive(directory=log_directory, source_id=1)
+    _build_archive(directory=log_directory / "second", source_id=2)
+    CameraManifest(sources=[CameraSourceData(id=1, name="one")]).to_yaml(
+        file_path=log_directory / CAMERA_MANIFEST_FILENAME
+    )
+    CameraManifest(sources=[CameraSourceData(id=2, name="two")]).to_yaml(
+        file_path=log_directory / "second" / CAMERA_MANIFEST_FILENAME
+    )
 
     with pytest.raises(OrchestrationError) as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    assert failure.value.kind is OrchestrationErrors.MISSING_LOG_MANIFEST
+    assert failure.value.kind is OrchestrationErrors.AMBIGUOUS_LOG_DIRECTORY
+
+
+def test_prepare_jobs_prepares_nothing_when_the_tree_holds_no_manifest(tmp_path):
+    """Verifies that prepare_jobs prepares no job for a tree holding no camera manifest."""
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    _build_archive(directory=log_directory, source_id=1)
+
+    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+
+    assert job_set.jobs == ()
 
 
 def test_prepare_jobs_registers_prepared_jobs_on_the_tracker(tmp_path):

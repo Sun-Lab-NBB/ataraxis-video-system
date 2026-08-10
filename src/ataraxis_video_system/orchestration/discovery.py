@@ -50,8 +50,8 @@ class JobUniverse:
 
     log_directory: Path
     """The root directory the resolution searched."""
-    manifest_path: Path
-    """The path to the single camera manifest the directory holds."""
+    manifest_path: Path | None
+    """The path to the single camera manifest the directory holds, or None when the tree holds none."""
     sources: tuple[JobSource, ...]
     """Every source the manifest registers, in ascending source identifier order."""
     universe: tuple[tuple[str, str], ...]
@@ -127,7 +127,8 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
         of sources, one for the manifest and one indexing every archive name the manifest implies.
 
         One recording writes one VideoSystem to one DataLogger, so a tree holding several manifests spans several
-        recordings and is rejected rather than resolved against the first manifest found.
+        recordings and is rejected rather than resolved against the first manifest found. A tree holding no manifest
+        holds no camera jobs, and yields an empty universe rather than an error.
 
     Args:
         log_directory: The root directory whose tree is searched for the camera manifest and the log archives.
@@ -136,9 +137,9 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
         The resolved job universe.
 
     Raises:
-        OrchestrationError: Carrying the missing log manifest kind when the directory does not exist, is not a
-            directory, or holds no manifest, the ambiguous log directory kind when the tree holds more than one
-            manifest, or the empty log manifest kind when the manifest registers no sources.
+        OrchestrationError: Carrying the missing log manifest kind when the directory does not exist or is not a
+            directory, the ambiguous log directory kind when the tree holds more than one manifest, or the empty
+            log manifest kind when a manifest registers no sources.
         OSError: If any directory beneath the log directory cannot be read.
     """
     if not log_directory.is_dir():
@@ -150,13 +151,17 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
 
     candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
 
+    # A tree holding no camera manifest holds no camera jobs, which is an answer rather than a failure. A caller
+    # walking many recordings reads the empty universe and moves on, while a caller that asked for work to be done
+    # raises on the empty result itself.
     if not candidates:
-        message = (
-            f"Unable to resolve camera timestamp extraction jobs in '{log_directory}'. No "
-            f"{CAMERA_MANIFEST_FILENAME} was found. A camera manifest is required to identify which log archives "
-            f"were produced by ataraxis-video-system."
+        return JobUniverse(
+            log_directory=log_directory,
+            manifest_path=None,
+            sources=(),
+            universe=(),
+            possible=(),
         )
-        console.error(message=message, error=OrchestrationErrors.MISSING_LOG_MANIFEST.as_error())
 
     if len(candidates) > 1:
         message = (

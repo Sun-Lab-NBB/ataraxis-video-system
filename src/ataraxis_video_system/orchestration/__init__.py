@@ -12,7 +12,6 @@ from .jobs import (
     resolve_timestamps_path,
     resolve_output_directory,
 )
-from .errors import OrchestrationError, OrchestrationErrors
 from .worker import execute_job, run_extraction_job
 from .pipeline import run_log_processing_pipeline
 from .discovery import JobSet, JobSource, JobUniverse, size_job, prepare_jobs, resolve_jobs
@@ -48,8 +47,6 @@ __all__ = [
     "JobSizing",
     "JobSource",
     "JobUniverse",
-    "OrchestrationError",
-    "OrchestrationErrors",
     "OutputLayout",
     "estimate_archive_job_memory_mb",
     "estimate_job_memory_mb",

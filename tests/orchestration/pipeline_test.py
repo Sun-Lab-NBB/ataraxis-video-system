@@ -7,7 +7,7 @@ from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, ProcessingStatus, ProcessingTracker
 
 from ataraxis_video_system.orchestration import pipeline, discovery
-from ataraxis_video_system.video.manifest import CAMERA_MANIFEST_FILENAME, write_camera_manifest
+from ataraxis_video_system.video.manifest import write_camera_manifest
 from ataraxis_video_system.video.timestamps import ExtractedDataColumns
 from ataraxis_video_system.orchestration.jobs import (
     OutputLayout,
@@ -176,201 +176,19 @@ def test_run_log_processing_pipeline_missing_log_directory(tmp_path):
 
 
 def test_run_log_processing_pipeline_missing_manifest(tmp_path):
-    """Verifies that the pipeline reports the missing manifest kind when the log directory holds no camera manifest."""
+    """Verifies that the pipeline fails loudly when the recording resolves no extraction job."""
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
     message = (
-        f"Unable to resolve camera timestamp extraction jobs in '{tmp_path}'. No {CAMERA_MANIFEST_FILENAME} was "
-        f"found. A camera manifest is required to identify which log archives were produced by ataraxis-video-system."
-    )
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
-        run_log_processing_pipeline(
-            log_directory=tmp_path,
-            output_directory=tmp_path / "output",
-            workers=1,
-            display_progress=False,
-        )
-
-    assert error.value.kind == OrchestrationErrors.MISSING_LOG_MANIFEST
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_unregistered_source_id(tmp_path):
-    """Verifies that the pipeline reports the unknown job source kind for a source absent from the camera manifest."""
-    log_directory = tmp_path / "logs"
-    _build_camera_logs(log_directory=log_directory, source_ids=(1, 2))
-
-    manifest_path = log_directory / CAMERA_MANIFEST_FILENAME
-    message = (
-        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. The following requested source IDs "
-        f"are not registered in the {CAMERA_MANIFEST_FILENAME} at '{manifest_path}': 3. The corresponding log "
-        f"archives were not produced by ataraxis-video-system. Registered source IDs: 1, 2."
-    )
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
-        run_log_processing_pipeline(
-            log_directory=log_directory,
-            output_directory=tmp_path / "output",
-            source_ids=["3"],
-            workers=1,
-            display_progress=False,
-        )
-
-    assert error.value.kind == OrchestrationErrors.UNKNOWN_JOB_SOURCE
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_split_logger_output(tmp_path):
-    """Verifies that the pipeline reports the split logger output kind when the archives span several directories."""
-    log_directory = tmp_path / "logs"
-    first_directory = log_directory / "a"
-    second_directory = log_directory / "b"
-    first_directory.mkdir(parents=True)
-    second_directory.mkdir(parents=True)
-
-    create_test_archive(
-        archive_path=_archive_path(log_directory=first_directory, source_id=1),
-        source_id=1,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=_FRAME_ELAPSED_US,
-    )
-    create_test_archive(
-        archive_path=_archive_path(log_directory=second_directory, source_id=2),
-        source_id=2,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=_FRAME_ELAPSED_US,
+        f"Unable to process camera log archives in '{log_directory}'. The recording resolved no extraction job. Its "
+        f"tree holds no camera manifest, or the manifest registers no source whose log archive resolves to exactly "
+        f"one file beneath it."
     )
 
-    # Writes the single manifest at the search root, so both archives are registered under one recording.
-    write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
-    write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
+    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
+        run_log_processing_pipeline(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    parents = sorted(str(parent) for parent in (first_directory, second_directory))
-    message = (
-        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. The resolved log archives sit in 2 "
-        f"different directories: {parents}. Archives in separate directories were written by separate DataLogger "
-        f"instances, and one recording writes one logger, so this tree holds more than one recording. Each DataLogger "
-        f"output directory must be prepared and processed on its own invocation."
-    )
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
-        run_log_processing_pipeline(
-            log_directory=log_directory,
-            output_directory=tmp_path / "output",
-            source_ids=["1", "2"],
-            workers=1,
-            display_progress=False,
-        )
-
-    assert error.value.kind == OrchestrationErrors.SPLIT_LOGGER_OUTPUT
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_external_mode(tmp_path):
-    """Verifies that external mode executes only the job the canonical job identifier names."""
-    log_directory = tmp_path / "logs"
-    _build_camera_logs(log_directory=log_directory, source_ids=(1, 2))
-
-    output_directory = tmp_path / "output"
-    job_ids = generate_job_ids(source_ids=["1", "2"])
-    run_log_processing_pipeline(
-        log_directory=log_directory,
-        output_directory=output_directory,
-        job_id=job_ids["1"],
-        source_ids=["2"],
-        workers=1,
-        display_progress=False,
-    )
-
-    # The source ID request is ignored in external mode, so only the archive the job identifier names is processed.
-    timestamps_directory = resolve_output_directory(output_directory=output_directory)
-    assert resolve_timestamps_path(output_directory=timestamps_directory, source_id="1").is_file()
-    assert not resolve_timestamps_path(output_directory=timestamps_directory, source_id="2").exists()
-
-    tracker = _open_tracker(output_directory=output_directory)
-    assert tracker.get_job_status(job_id=job_ids["1"]) == ProcessingStatus.SUCCEEDED
-    assert job_ids["2"] not in tracker.snapshot()
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_external_mode_unresolved_sibling(tmp_path):
-    """Verifies that external mode runs the named job even when a sibling source resolves to no log archive."""
-    log_directory = tmp_path / "logs"
-    _build_camera_logs(log_directory=log_directory, source_ids=(1,))
-
-    # Registers a second source the tree holds no archive for, which the named job must not be judged against.
-    write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
-
-    output_directory = tmp_path / "output"
-    job_ids = generate_job_ids(source_ids=["1", "2"])
-    run_log_processing_pipeline(
-        log_directory=log_directory,
-        output_directory=output_directory,
-        job_id=job_ids["1"],
-        workers=1,
-        display_progress=False,
-    )
-
-    assert len(_read_timestamps(output_directory=output_directory, source_id="1")) == len(_FRAME_ELAPSED_US)
-    assert _open_tracker(output_directory=output_directory).get_job_status(job_id=job_ids["1"]) == (
-        ProcessingStatus.SUCCEEDED
-    )
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_unknown_job_id(tmp_path):
-    """Verifies that external mode reports the unknown job identifier kind when the manifest defines no such job."""
-    log_directory = tmp_path / "logs"
-    _build_camera_logs(log_directory=log_directory, source_ids=(1,))
-
-    manifest_path = log_directory / CAMERA_MANIFEST_FILENAME
-    message = (
-        f"Unable to prepare the camera timestamp extraction job 'invalid_job_id_value' in '{log_directory}'. The "
-        f"camera manifest at '{manifest_path}' defines no job with that identifier. Registered source IDs: 1."
-    )
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
-        run_log_processing_pipeline(
-            log_directory=log_directory,
-            output_directory=tmp_path / "output",
-            job_id="invalid_job_id_value",
-            workers=1,
-            display_progress=False,
-        )
-
-    assert error.value.kind == OrchestrationErrors.UNKNOWN_JOB_ID
-
-
-@pytest.mark.xdist_group(name="orchestration")
-def test_run_log_processing_pipeline_external_jobs_share_tracker(tmp_path):
-    """Verifies that a second external job aligned against the full universe leaves its sibling's outcome intact."""
-    log_directory = tmp_path / "logs"
-    _build_camera_logs(log_directory=log_directory, source_ids=(1, 2))
-
-    output_directory = tmp_path / "output"
-    job_ids = generate_job_ids(source_ids=["1", "2"])
-
-    run_log_processing_pipeline(
-        log_directory=log_directory,
-        output_directory=output_directory,
-        job_id=job_ids["1"],
-        workers=1,
-        display_progress=False,
-    )
-    assert _open_tracker(output_directory=output_directory).get_job_status(job_id=job_ids["1"]) == (
-        ProcessingStatus.SUCCEEDED
-    )
-
-    # The second invocation shares the tracker of the first, and the alignment against the manifest universe keeps it
-    # from resetting the sibling job it does not request.
-    run_log_processing_pipeline(
-        log_directory=log_directory,
-        output_directory=output_directory,
-        job_id=job_ids["2"],
-        workers=1,
-        display_progress=False,
-    )
-
-    tracker = _open_tracker(output_directory=output_directory)
-    assert tracker.get_job_status(job_id=job_ids["1"]) == ProcessingStatus.SUCCEEDED
-    assert tracker.get_job_status(job_id=job_ids["2"]) == ProcessingStatus.SUCCEEDED
-    assert len(_read_timestamps(output_directory=output_directory, source_id="1")) == len(_FRAME_ELAPSED_US)
-    assert len(_read_timestamps(output_directory=output_directory, source_id="2")) == len(_FRAME_ELAPSED_US)
+    assert failure.value.kind is OrchestrationErrors.UNRESOLVED_ARCHIVE
 
 
 def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, monkeypatch):

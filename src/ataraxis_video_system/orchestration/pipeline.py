@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from ataraxis_base_utilities import LogLevel, console
 from ataraxis_data_structures import ProcessingTracker
 
+from .errors import OrchestrationErrors
 from .worker import execute_job
 from .discovery import prepare_jobs
 
@@ -72,6 +73,16 @@ def run_log_processing_pipeline(
         job_id=job_id,
         core_ceiling=workers,
     )
+
+    # A caller reaching this function asked for work to be carried out, so resolving nothing is a failure here even
+    # though the resolution itself reports a recording holding no camera data as an ordinary answer.
+    if not job_set.jobs:
+        message = (
+            f"Unable to process camera log archives in '{log_directory}'. The recording resolved no extraction job. "
+            f"Its tree holds no camera manifest, or the manifest registers no source whose log archive resolves to "
+            f"exactly one file beneath it."
+        )
+        console.error(message=message, error=OrchestrationErrors.UNRESOLVED_ARCHIVE.as_error())
 
     console.echo(
         message=(
