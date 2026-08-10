@@ -258,7 +258,12 @@ def test_resolve_jobs_ambiguous_log_directory(tmp_path):
     _build_recording(log_directory=tmp_path / "recording_one", source_ids=(1,))
     _build_recording(log_directory=tmp_path / "recording_two", source_ids=(2,))
 
-    with pytest.raises(ValueError, match=r"spans\s+several\s+recordings\s+or\s+several") as failure:
+    message = (
+        f"Unable to resolve camera timestamp extraction jobs in '{tmp_path}'. The directory tree holds 2 "
+        f"{CAMERA_MANIFEST_FILENAME} files, which means it spans several recordings or several DataLogger instances:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)) as failure:
         resolve_jobs(log_directory=tmp_path)
     # The report names every manifest found, so the caller can split the tree into its individual recordings.
     assert str(tmp_path / "recording_one" / CAMERA_MANIFEST_FILENAME) in str(failure.value)
@@ -426,7 +431,12 @@ def test_prepare_jobs_unknown_job_id(tmp_path):
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
-    with pytest.raises(ValueError, match=r"deadbeefdeadbeef") as failure:
+    message = (
+        f"Unable to prepare the camera timestamp extraction job 'deadbeefdeadbeef' in '{log_directory}'. The camera "
+        f"manifest at"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)) as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", job_id="deadbeefdeadbeef")
     assert "deadbeefdeadbeef" in str(failure.value)
 
@@ -436,7 +446,12 @@ def test_prepare_jobs_unknown_source_under_strict_sourcing(tmp_path):
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
-    with pytest.raises(ValueError, match=r"are\s+not\s+registered\s+in\s+the") as failure:
+    message = (
+        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. The following requested source IDs "
+        f"are not registered in the {CAMERA_MANIFEST_FILENAME} at"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)) as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", source_ids=["1", "9"])
     assert CAMERA_MANIFEST_FILENAME in str(failure.value)
 
@@ -494,7 +509,12 @@ def test_prepare_jobs_split_logger_output(tmp_path):
     _build_archive(directory=log_directory / "logger_one", source_id=1)
     _build_archive(directory=log_directory / "logger_two", source_id=2)
 
-    with pytest.raises(ValueError, match=r"different\s+directories") as failure:
+    message = (
+        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. The resolved log archives sit in 2 "
+        f"different directories:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)) as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
     assert str(log_directory / "logger_one") in str(failure.value)
     assert str(log_directory / "logger_two") in str(failure.value)
@@ -510,7 +530,12 @@ def test_prepare_jobs_guards_run_before_any_write(tmp_path):
     _build_archive(directory=log_directory / "logger_one", source_id=1)
     _build_archive(directory=log_directory / "logger_two", source_id=2)
 
-    with pytest.raises(ValueError, match=r"different\s+directories"):
+    message = (
+        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. The resolved log archives sit in 2 "
+        f"different directories:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         prepare_jobs(log_directory=log_directory, output_directory=output_root)
 
     assert not output_root.exists()
@@ -530,7 +555,12 @@ def test_prepare_jobs_propagates_manifest_guards(tmp_path):
         file_path=log_directory / "second" / CAMERA_MANIFEST_FILENAME
     )
 
-    with pytest.raises(ValueError, match=r"spans\s+several\s+recordings\s+or\s+several"):
+    message = (
+        f"Unable to resolve camera timestamp extraction jobs in '{log_directory}'. The directory tree holds 2 "
+        f"{CAMERA_MANIFEST_FILENAME} files,"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
 
@@ -713,10 +743,13 @@ def test_job_set_resolve_job_unknown_id(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    with pytest.raises(ValueError, match=r"deadbeefdeadbeef") as failure:
+    message = (
+        f"Unable to resolve the camera timestamp extraction job 'deadbeefdeadbeef' in '{log_directory}'. The prepared "
+        f"job set holds no job with that identifier. Held job IDs: {job_set.jobs[0].job_id}."
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         job_set.resolve_job(job_id="deadbeefdeadbeef")
-    assert "deadbeefdeadbeef" in str(failure.value)
-    assert job_set.jobs[0].job_id in str(failure.value)
 
 
 def test_job_set_resolve_job_empty_set(tmp_path):
@@ -731,9 +764,13 @@ def test_job_set_resolve_job_empty_set(tmp_path):
         core_ceiling=1,
     )
 
-    with pytest.raises(ValueError, match=r"Held\s+job\s+IDs:\s+none") as failure:
+    message = (
+        f"Unable to resolve the camera timestamp extraction job 'deadbeefdeadbeef' in '{tmp_path}'. The prepared job "
+        f"set holds no job with that identifier. Held job IDs: none."
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         job_set.resolve_job(job_id="deadbeefdeadbeef")
-    assert "none" in str(failure.value)
 
 
 def test_job_descriptor_from_mapping_missing_key(tmp_path):
@@ -744,9 +781,13 @@ def test_job_descriptor_from_mapping_missing_key(tmp_path):
     mapping = job_set.jobs[0].to_mapping()
     del mapping["archive_path"]
 
-    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as failure:
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        "required keys are absent: archive_path."
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         JobDescriptor.from_mapping(mapping=mapping)
-    assert "archive_path" in str(failure.value)
 
 
 def test_job_descriptor_from_mapping_unreadable_value(tmp_path):
@@ -757,7 +798,12 @@ def test_job_descriptor_from_mapping_unreadable_value(tmp_path):
     mapping = job_set.jobs[0].to_mapping()
     mapping["core_weight"] = "not an integer"
 
-    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type"):
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its values "
+        "cannot be read as the type its field declares:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         JobDescriptor.from_mapping(mapping=mapping)
 
 

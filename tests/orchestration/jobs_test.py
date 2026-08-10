@@ -370,15 +370,23 @@ def test_from_mapping_missing_key_reports_every_absent_key(tmp_path):
     del payload["source_id"]
     del payload["job_name"]
 
-    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as error:
-        JobDescriptor.from_mapping(mapping=payload)
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        "required keys are absent: job_name, source_id."
+    )
 
-    assert "required keys are absent: job_name, source_id." in _normalize(text=error.value)
+    with pytest.raises(ValueError, match=error_format(message)):
+        JobDescriptor.from_mapping(mapping=payload)
 
 
 def test_from_mapping_empty_mapping():
     """Verifies that from_mapping rejects an empty payload instead of building a descriptor from defaults."""
-    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as error:
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. The following "
+        "required keys are absent:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)) as error:
         JobDescriptor.from_mapping(mapping={})
     for field in fields(JobDescriptor):
         assert field.name in _normalize(text=error.value)
@@ -389,9 +397,13 @@ def test_from_mapping_unreadable_value(tmp_path):
     job = _build_descriptor(tmp_path=tmp_path)
     payload = {**job.to_mapping(), "core_weight": "eight"}
 
-    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type") as error:
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its values "
+        "cannot be read as the type its field declares:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         JobDescriptor.from_mapping(mapping=payload)
-    assert "One of its values cannot be read as the type its field declares" in _normalize(text=error.value)
 
 
 def test_from_mapping_unreadable_path(tmp_path):
@@ -399,7 +411,12 @@ def test_from_mapping_unreadable_path(tmp_path):
     job = _build_descriptor(tmp_path=tmp_path)
     payload = {**job.to_mapping(), "log_directory": None}
 
-    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type"):
+    message = (
+        "Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its values "
+        "cannot be read as the type its field declares:"
+    )
+
+    with pytest.raises(ValueError, match=error_format(message)):
         JobDescriptor.from_mapping(mapping=payload)
 
 
