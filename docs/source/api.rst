@@ -1,85 +1,33 @@
 .. This file provides the instructions for how to display the API documentation generated using sphinx autodoc
-   extension. Use it to declare Python documentation sub-directories via appropriate modules (automodule, etc.).
+   extension. Use it to declare Python documentation sub-directories via appropriate packages (automodule, etc.).
 
-Video System
-============
-
-.. automodule:: ataraxis_video_system.video.video_system
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Camera
-======
-
-.. automodule:: ataraxis_video_system.video.camera
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Saver
+Video
 =====
 
-.. automodule:: ataraxis_video_system.video.saver
+.. automodule:: ataraxis_video_system.video
    :members:
    :undoc-members:
    :show-inheritance:
 
-GenICam Configuration
-=====================
+.. autodata:: ataraxis_video_system.video.manifest.CAMERA_MANIFEST_FILENAME
 
-.. automodule:: ataraxis_video_system.video.configuration
+.. autodata:: ataraxis_video_system.video.configuration.DEFAULT_BLACKLISTED_NODES
+
+.. autodata:: ataraxis_video_system.video.video_system.MAXIMUM_QUANTIZATION_VALUE
+
+Orchestration
+=============
+
+.. automodule:: ataraxis_video_system.orchestration
    :members:
    :undoc-members:
    :show-inheritance:
 
-Camera Manifest
-===============
+.. autodata:: ataraxis_video_system.orchestration.jobs.CAMERA_EXTRACTION_JOB_NAME
 
-.. automodule:: ataraxis_video_system.video.manifest
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. autodata:: ataraxis_video_system.orchestration.allocation.CAMERA_EXTRACTION_JOB_CORES
 
-Frame Timestamps
-================
-
-.. automodule:: ataraxis_video_system.video.timestamps
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Orchestration Jobs
-==================
-
-.. automodule:: ataraxis_video_system.orchestration.jobs
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Resource Allocation
-===================
-
-.. automodule:: ataraxis_video_system.orchestration.allocation
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Log Processing Pipeline
-=======================
-
-.. automodule:: ataraxis_video_system.orchestration.pipeline
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Batch Execution
-===============
-
-.. automodule:: ataraxis_video_system.orchestration.execution
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. autodata:: ataraxis_video_system.orchestration.allocation.SPAWNED_CHILD_MEMORY_MB
 
 Command Line Interfaces (CLIs)
 ==============================

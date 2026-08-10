@@ -20,7 +20,7 @@ from .camera import (
     harvester_connection,
 )
 from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, CameraSourceData, write_camera_manifest
-from .timestamps import extract_logged_camera_timestamps
+from .timestamps import ExtractedDataColumns, extract_logged_camera_timestamps
 from .video_system import MAXIMUM_QUANTIZATION_VALUE, VideoSystem, resolve_camera_video_path
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
@@ -40,6 +40,7 @@ __all__ = [
     "CameraManifest",
     "CameraSourceData",
     "EncoderSpeedPresets",
+    "ExtractedDataColumns",
     "GenicamConfiguration",
     "GenicamNodeInfo",
     "HarvestersCamera",

@@ -1,62 +1,76 @@
-"""Provides the orchestration layer: the job descriptors and manifest-derived job discovery, the declared core
-allocation and archive-derived footprint model, the local batch execution engine, and the pipeline entry point.
+"""Provides the orchestration layer: the job identity and output layout, the archive-derived sizing model, the
+manifest-derived job resolution, the single-job runner, the shared-pool batch engine, and the sequential pipeline.
 """
 
 from .jobs import (
-    TRACKER_FILENAME,
-    FRAME_TIME_COLUMN,
-    TIMESTAMP_JOB_NAME,
-    CAMERA_TIMESTAMPS_PREFIX,
-    CAMERA_TIMESTAMPS_SUFFIX,
-    CAMERA_TIMESTAMPS_DIRECTORY,
-    PendingJob,
+    CAMERA_EXTRACTION_JOB_NAME,
+    JobSizing,
+    OutputLayout,
+    JobDescriptor,
     generate_job_ids,
-    discover_camera_jobs,
-    resolve_camera_timestamps_path,
+    resolve_tracker_path,
+    resolve_timestamps_path,
+    resolve_output_directory,
 )
-from .pipeline import execute_job, run_log_processing_pipeline
+from .errors import OrchestrationError, OrchestrationErrors
+from .worker import execute_job, run_extraction_job
+from .pipeline import run_log_processing_pipeline
+from .discovery import JobSet, JobSource, JobUniverse, size_job, prepare_jobs, resolve_jobs
 from .execution import (
     JobExecutionState,
-    size_pending_job,
     get_execution_state,
     set_execution_state,
     group_jobs_by_tracker,
     job_execution_manager,
 )
 from .allocation import (
-    TIMESTAMP_JOB_CORES,
+    SPAWNED_CHILD_MEMORY_MB,
+    CAMERA_EXTRACTION_JOB_CORES,
     ArchiveFootprint,
+    resolve_pool_size,
     resolve_core_budget,
     resolve_job_workers,
     estimate_job_memory_mb,
+    resolve_host_memory_mb,
     resolve_memory_budget_mb,
     resolve_archive_footprint,
+    estimate_archive_job_memory_mb,
 )
 
 __all__ = [
-    "CAMERA_TIMESTAMPS_DIRECTORY",
-    "CAMERA_TIMESTAMPS_PREFIX",
-    "CAMERA_TIMESTAMPS_SUFFIX",
-    "FRAME_TIME_COLUMN",
-    "TIMESTAMP_JOB_CORES",
-    "TIMESTAMP_JOB_NAME",
-    "TRACKER_FILENAME",
+    "CAMERA_EXTRACTION_JOB_CORES",
+    "CAMERA_EXTRACTION_JOB_NAME",
+    "SPAWNED_CHILD_MEMORY_MB",
     "ArchiveFootprint",
+    "JobDescriptor",
     "JobExecutionState",
-    "PendingJob",
-    "discover_camera_jobs",
+    "JobSet",
+    "JobSizing",
+    "JobSource",
+    "JobUniverse",
+    "OrchestrationError",
+    "OrchestrationErrors",
+    "OutputLayout",
+    "estimate_archive_job_memory_mb",
     "estimate_job_memory_mb",
     "execute_job",
     "generate_job_ids",
     "get_execution_state",
     "group_jobs_by_tracker",
     "job_execution_manager",
+    "prepare_jobs",
     "resolve_archive_footprint",
-    "resolve_camera_timestamps_path",
     "resolve_core_budget",
+    "resolve_host_memory_mb",
     "resolve_job_workers",
+    "resolve_jobs",
     "resolve_memory_budget_mb",
+    "resolve_output_directory",
+    "resolve_pool_size",
+    "resolve_timestamps_path",
+    "resolve_tracker_path",
+    "run_extraction_job",
     "run_log_processing_pipeline",
     "set_execution_state",
-    "size_pending_job",
+    "size_job",
 ]
