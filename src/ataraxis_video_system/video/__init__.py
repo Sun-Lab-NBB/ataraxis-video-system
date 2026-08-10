@@ -11,6 +11,7 @@ from .saver import (
     check_ffmpeg_availability,
 )
 from .camera import (
+    GENICAM_UNAVAILABLE_REASON,
     CameraInterfaces,
     HarvestersCamera,
     CameraInformation,
@@ -18,6 +19,7 @@ from .camera import (
     check_cti_file,
     discover_camera_ids,
     harvester_connection,
+    genicam_runtime_available,
 )
 from .manifest import CAMERA_MANIFEST_FILENAME, CameraManifest, CameraSourceData, write_camera_manifest
 from .timestamps import ExtractedDataColumns, extract_logged_camera_timestamps
@@ -34,6 +36,7 @@ from .configuration import (
 __all__ = [
     "CAMERA_MANIFEST_FILENAME",
     "DEFAULT_BLACKLISTED_NODES",
+    "GENICAM_UNAVAILABLE_REASON",
     "MAXIMUM_QUANTIZATION_VALUE",
     "CameraInformation",
     "CameraInterfaces",
@@ -56,6 +59,7 @@ __all__ = [
     "enumerate_genicam_nodes",
     "extract_logged_camera_timestamps",
     "format_genicam_node",
+    "genicam_runtime_available",
     "harvester_connection",
     "read_genicam_node",
     "resolve_camera_video_path",

@@ -10,6 +10,7 @@ from ataraxis_data_structures import DataLogger, assemble_log_archives
 
 from ..video import (
     DEFAULT_BLACKLISTED_NODES,
+    GENICAM_UNAVAILABLE_REASON,
     VideoSystem,
     CameraInterfaces,
     OutputPixelFormats,
@@ -24,6 +25,7 @@ from ..video import (
     check_gpu_availability,
     enumerate_genicam_nodes,
     check_ffmpeg_availability,
+    genicam_runtime_available,
 )
 from .mcp_server import run_server as run_mcp
 from ..orchestration import run_log_processing_pipeline
@@ -79,6 +81,15 @@ def check_cti_status() -> None:
     interface requires the GenTL Producer interface (.cti) file to discover and interface with GenICam-compatible
     cameras. Use this command to verify the configuration status before attempting to use the Harvesters interface.
     """
+    # Reports the unsupported platform first, since check_cti_file() is unable to validate a Producer without the
+    # runtime that loads it and would otherwise blame the configuration for a platform limitation.
+    if not genicam_runtime_available():
+        console.echo(
+            message=f"AXVS CTI file: Unable to check. {GENICAM_UNAVAILABLE_REASON}",
+            level=LogLevel.ERROR,
+        )
+        return
+
     cti_path = check_cti_file()
 
     if cti_path is not None:
@@ -138,7 +149,12 @@ def check_devices() -> None:
             )
 
     # Displays Harvesters camera information.
-    if not harvesters_cameras:
+    if not genicam_runtime_available():
+        console.echo(
+            message=f"Harvesters camera discovery skipped. {GENICAM_UNAVAILABLE_REASON}",
+            level=LogLevel.WARNING,
+        )
+    elif not harvesters_cameras:
         console.echo(message="No Harvesters-compatible cameras discovered.", level=LogLevel.WARNING)
     else:
         # Note, Harvesters interface supports identifying the camera's model and serial number, which makes it easy to

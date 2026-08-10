@@ -16,7 +16,7 @@ from ataraxis_base_utilities import LogLevel, console
 from ataraxis_data_structures import YamlConfig
 
 if TYPE_CHECKING:
-    from genicam.genapi import NodeMap  # type: ignore[import-untyped]
+    from genicam.genapi import NodeMap
 
 
 class _NodeType(IntEnum):

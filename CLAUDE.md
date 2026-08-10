@@ -176,6 +176,14 @@ video encoding using CPU or GPU.
   the system_id with the human-readable name. A producer process acquires frames from the camera interface and
   pushes them to a queue. A consumer process pops frames and streams raw bytes to FFMPEG via stdin. A 4-element
   SharedMemoryArray controls termination and frame-saving toggles via IPC.
+- **GenICam Platform Support**: `harvesters` and `genicam` carry a `sys_platform != 'darwin'` marker, because `genicam`
+  publishes no macOS wheel for every supported Python version. macOS therefore does not support the GenICam camera
+  interface at all. `camera.py` imports both inside a top-of-file `try/except ImportError` that falls back to `None`,
+  keeping the module usable for the OpenCV and Mock interfaces there. `genicam_runtime_available()` reports the state,
+  `_require_genicam_runtime()` aborts with `NotImplementedError` at every entry point that reaches GenICam hardware
+  (`HarvestersCamera.connect()` and `add_cti_file()`), and `discover_camera_ids()` and `check_cti_file()` report the
+  interface as absent instead of failing. A `[[tool.mypy.overrides]]` block marks both modules
+  `ignore_missing_imports`, which is what keeps `tox -e lint` passing on a macOS host where neither is installed.
 - **Camera Interfaces**: Three implementations behind a unified API: OpenCVCamera (cv2.VideoCapture),
   HarvestersCamera (GenICam/Harvesters with NodeMap access), and MockCamera (synthetic frames for testing).
   `discover_camera_ids()` returns CameraInformation objects from all available interfaces.

@@ -20,7 +20,11 @@ from ataraxis_video_system import (
     discover_camera_ids,
     check_ffmpeg_availability,
 )
-from ataraxis_video_system.video.camera import _CTI_PATH_VARIABLE, HarvestersCamera
+from ataraxis_video_system.video.camera import (
+    _CTI_PATH_VARIABLE,
+    HarvestersCamera,
+    genicam_runtime_available,
+)
 
 _SIMULATOR_ROOT: Path = Path(__file__).parent / "gentl_simulator"
 """Stores the path to the directory holding the vendored TLSimu GenTL Producer simulator binaries."""
@@ -84,6 +88,12 @@ def gentl_simulator(simulator_cti_path: Path | None, monkeypatch: pytest.MonkeyP
     The override is applied through the environment so that it also reaches the processes VideoSystem spawns, and it
     leaves the CTI path persisted for the user's real hardware untouched.
     """
+    # The simulator is driven through the GenICam camera interface, so a bundled Producer is of no use on a platform
+    # that installs no runtime to load it with. macOS bundles a Producer and installs no runtime, so the two conditions
+    # are checked separately.
+    if not genicam_runtime_available():
+        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
+
     if simulator_cti_path is None:
         pytest.skip("Skipping this test as no GenTL Producer simulator is bundled for this platform.")
 

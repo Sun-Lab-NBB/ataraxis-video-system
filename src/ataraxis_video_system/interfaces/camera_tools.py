@@ -3,12 +3,14 @@
 from pathlib import Path
 
 from ..video import (
+    GENICAM_UNAVAILABLE_REASON,
     CameraInterfaces,
     add_cti_file,
     check_cti_file,
     discover_camera_ids,
     check_gpu_availability,
     check_ffmpeg_availability,
+    genicam_runtime_available,
 )
 from .mcp_instance import mcp
 
@@ -20,14 +22,19 @@ def list_cameras_tool() -> str:
     Returns:
         A newline-separated list of discovered cameras, each showing interface type, index, frame dimensions, and
         frame rate. Harvesters cameras also include model and serial number. Returns a "No cameras discovered"
-        message if no cameras are found.
+        message if no cameras are found. A trailing note reports the skipped Harvesters discovery on a platform that
+        does not support the GenICam interface.
     """
     # Runs the discovery procedure across both OpenCV and Harvesters interfaces. OpenCV cameras are probed by
     # iterating over positional indices, while Harvesters cameras are enumerated through the GenTL Producer.
     all_cameras = discover_camera_ids()
 
+    # Names the skipped interface, so that an empty or OpenCV-only listing is not read as an absence of GenICam
+    # hardware on a host that is unable to enumerate it in the first place.
+    skip_note = "" if genicam_runtime_available() else f"\nHarvesters discovery skipped. {GENICAM_UNAVAILABLE_REASON}"
+
     if not all_cameras:
-        return "No cameras discovered on the system."
+        return f"No cameras discovered on the system.{skip_note}"
 
     # Formats each discovered camera as a human-readable summary line. Harvesters cameras include model and serial
     # number because the GenTL interface exposes this metadata, whereas OpenCV does not.
@@ -45,7 +52,7 @@ def list_cameras_tool() -> str:
                 f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
             )
 
-    return "\n".join(lines)
+    return "\n".join(lines) + skip_note
 
 
 @mcp.tool()
@@ -57,8 +64,14 @@ def get_cti_status_tool() -> str:
 
     Returns:
         The configuration status and the path to the configured CTI file, or a "Not configured" message if no valid
-        CTI file is set.
+        CTI file is set. Reports the unavailable interface instead on a platform that does not support GenICam.
     """
+    # Reports the unavailable interface before the configuration, since check_cti_file() reports None for both an
+    # unconfigured Producer and an unsupported platform, and directing the caller to configure a Producer it can never
+    # load would send it down a dead end.
+    if not genicam_runtime_available():
+        return f"CTI: Unavailable. {GENICAM_UNAVAILABLE_REASON}"
+
     # Reads the persisted CTI file path from the library's configuration storage and verifies that the file still
     # exists on disk. Returns None if no path was previously set or the stored path no longer points to a valid file.
     cti_path = check_cti_file()
@@ -112,7 +125,7 @@ def check_runtime_requirements_tool() -> str:
 
     Returns:
         A pipe-separated status line showing FFMPEG, GPU, and CTI availability, each marked as "OK", "Missing", or
-        "None".
+        "None". The CTI field instead reads "Unsupported" on a platform that does not support the GenICam interface.
     """
     # Probes the system for each runtime dependency independently. FFMPEG is required for any video encoding, GPU is
     # optional (enables hardware-accelerated H.264/H.265 encoding via NVENC), and the CTI file is only needed for
@@ -124,6 +137,14 @@ def check_runtime_requirements_tool() -> str:
     # Formats each check result as a short status token for compact display.
     ffmpeg_status = "OK" if ffmpeg_available else "Missing"
     gpu_status = "OK" if gpu_available else "None"
-    cti_status = "OK" if cti_path is not None else "None"
+
+    # Distinguishes an unsupported platform from a missing configuration, since check_cti_file() reports None for both
+    # and telling the agent to configure a Producer it can never use would send it down a dead end.
+    if not genicam_runtime_available():
+        cti_status = "Unsupported"
+    elif cti_path is not None:
+        cti_status = "OK"
+    else:
+        cti_status = "None"
 
     return f"FFMPEG: {ffmpeg_status} | GPU: {gpu_status} | CTI: {cti_status}"
