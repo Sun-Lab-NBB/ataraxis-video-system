@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from ataraxis_base_utilities import LogLevel, console
 from ataraxis_data_structures import ProcessingTracker
 
-from .errors import OrchestrationErrors
 from .worker import execute_job
 from .discovery import prepare_jobs
 
@@ -61,9 +60,11 @@ def run_log_processing_pipeline(
         display_progress: Determines whether to display progress bars during timestamp extraction.
 
     Raises:
-        OrchestrationError: Carrying the kind of the first unsupported condition met, which covers the manifest
-            resolution kinds, the unknown job source kind, the unresolved archive kind, the split logger output kind,
-            and the unknown job identifier kind.
+        FileNotFoundError: If the log directory does not exist, if a requested source's archive is absent, or if
+            the recording resolves no job to run.
+        ValueError: If the tree holds more than one camera manifest, if a manifest registers no sources, if a
+            requested source or job identifier is not registered, or if the resolved archives span several
+            directories.
         OSError: If any directory beneath the log directory cannot be read.
     """
     job_set = prepare_jobs(
@@ -82,7 +83,7 @@ def run_log_processing_pipeline(
             f"Its tree holds no camera manifest, or the manifest registers no source whose log archive resolves to "
             f"exactly one file beneath it."
         )
-        console.error(message=message, error=OrchestrationErrors.UNRESOLVED_ARCHIVE.as_error())
+        console.error(message=message, error=FileNotFoundError)
 
     console.echo(
         message=(

@@ -27,7 +27,6 @@ from ataraxis_video_system.orchestration.jobs import (
     resolve_tracker_path,
     resolve_output_directory,
 )
-from ataraxis_video_system.orchestration.errors import OrchestrationError, OrchestrationErrors
 from ataraxis_video_system.orchestration.discovery import (
     JobSet,
     JobSource,
@@ -211,10 +210,8 @@ def test_resolve_jobs_missing_directory(tmp_path):
         f"not a directory."
     )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         resolve_jobs(log_directory=missing_directory)
-
-    assert failure.value.kind is OrchestrationErrors.MISSING_LOG_MANIFEST
 
 
 def test_resolve_jobs_not_a_directory(tmp_path):
@@ -226,10 +223,8 @@ def test_resolve_jobs_not_a_directory(tmp_path):
         f"directory."
     )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         resolve_jobs(log_directory=file_path)
-
-    assert failure.value.kind is OrchestrationErrors.MISSING_LOG_MANIFEST
 
 
 def test_resolve_jobs_returns_an_empty_universe_when_the_tree_holds_no_manifest(tmp_path):
@@ -254,10 +249,8 @@ def test_resolve_jobs_empty_manifest(tmp_path):
         f"'{manifest_path}' contains no source entries."
     )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
+    with pytest.raises(ValueError, match=error_format(message)):
         resolve_jobs(log_directory=tmp_path)
-
-    assert failure.value.kind is OrchestrationErrors.EMPTY_LOG_MANIFEST
 
 
 def test_resolve_jobs_ambiguous_log_directory(tmp_path):
@@ -265,10 +258,8 @@ def test_resolve_jobs_ambiguous_log_directory(tmp_path):
     _build_recording(log_directory=tmp_path / "recording_one", source_ids=(1,))
     _build_recording(log_directory=tmp_path / "recording_two", source_ids=(2,))
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"spans\s+several\s+recordings\s+or\s+several") as failure:
         resolve_jobs(log_directory=tmp_path)
-
-    assert failure.value.kind is OrchestrationErrors.AMBIGUOUS_LOG_DIRECTORY
     # The report names every manifest found, so the caller can split the tree into its individual recordings.
     assert str(tmp_path / "recording_one" / CAMERA_MANIFEST_FILENAME) in str(failure.value)
     assert str(tmp_path / "recording_two" / CAMERA_MANIFEST_FILENAME) in str(failure.value)
@@ -435,10 +426,8 @@ def test_prepare_jobs_unknown_job_id(tmp_path):
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"deadbeefdeadbeef") as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", job_id="deadbeefdeadbeef")
-
-    assert failure.value.kind is OrchestrationErrors.UNKNOWN_JOB_ID
     assert "deadbeefdeadbeef" in str(failure.value)
 
 
@@ -447,10 +436,8 @@ def test_prepare_jobs_unknown_source_under_strict_sourcing(tmp_path):
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"are\s+not\s+registered\s+in\s+the") as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", source_ids=["1", "9"])
-
-    assert failure.value.kind is OrchestrationErrors.UNKNOWN_JOB_SOURCE
     assert CAMERA_MANIFEST_FILENAME in str(failure.value)
 
 
@@ -460,10 +447,8 @@ def test_prepare_jobs_missing_archive_under_strict_sourcing(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,))
     write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(FileNotFoundError):
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", source_ids=["2"])
-
-    assert failure.value.kind is OrchestrationErrors.UNRESOLVED_ARCHIVE
 
 
 def test_prepare_jobs_ambiguous_archive_under_strict_sourcing(tmp_path):
@@ -474,10 +459,8 @@ def test_prepare_jobs_ambiguous_archive_under_strict_sourcing(tmp_path):
     _build_archive(directory=log_directory / "logger_one", source_id=2)
     _build_archive(directory=log_directory / "logger_two", source_id=2)
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(FileNotFoundError):
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-
-    assert failure.value.kind is OrchestrationErrors.UNRESOLVED_ARCHIVE
 
 
 def test_prepare_jobs_records_skipped_sources_without_strict_sourcing(tmp_path):
@@ -511,10 +494,8 @@ def test_prepare_jobs_split_logger_output(tmp_path):
     _build_archive(directory=log_directory / "logger_one", source_id=1)
     _build_archive(directory=log_directory / "logger_two", source_id=2)
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"different\s+directories") as failure:
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-
-    assert failure.value.kind is OrchestrationErrors.SPLIT_LOGGER_OUTPUT
     assert str(log_directory / "logger_one") in str(failure.value)
     assert str(log_directory / "logger_two") in str(failure.value)
 
@@ -529,7 +510,7 @@ def test_prepare_jobs_guards_run_before_any_write(tmp_path):
     _build_archive(directory=log_directory / "logger_one", source_id=1)
     _build_archive(directory=log_directory / "logger_two", source_id=2)
 
-    with pytest.raises(OrchestrationError):
+    with pytest.raises(ValueError, match=r"different\s+directories"):
         prepare_jobs(log_directory=log_directory, output_directory=output_root)
 
     assert not output_root.exists()
@@ -549,10 +530,8 @@ def test_prepare_jobs_propagates_manifest_guards(tmp_path):
         file_path=log_directory / "second" / CAMERA_MANIFEST_FILENAME
     )
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"spans\s+several\s+recordings\s+or\s+several"):
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-
-    assert failure.value.kind is OrchestrationErrors.AMBIGUOUS_LOG_DIRECTORY
 
 
 def test_prepare_jobs_prepares_nothing_when_the_tree_holds_no_manifest(tmp_path):
@@ -734,10 +713,8 @@ def test_job_set_resolve_job_unknown_id(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"deadbeefdeadbeef") as failure:
         job_set.resolve_job(job_id="deadbeefdeadbeef")
-
-    assert failure.value.kind is OrchestrationErrors.UNKNOWN_JOB_ID
     assert "deadbeefdeadbeef" in str(failure.value)
     assert job_set.jobs[0].job_id in str(failure.value)
 
@@ -754,10 +731,8 @@ def test_job_set_resolve_job_empty_set(tmp_path):
         core_ceiling=1,
     )
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"Held\s+job\s+IDs:\s+none") as failure:
         job_set.resolve_job(job_id="deadbeefdeadbeef")
-
-    assert failure.value.kind is OrchestrationErrors.UNKNOWN_JOB_ID
     assert "none" in str(failure.value)
 
 
@@ -769,10 +744,8 @@ def test_job_descriptor_from_mapping_missing_key(tmp_path):
     mapping = job_set.jobs[0].to_mapping()
     del mapping["archive_path"]
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as failure:
         JobDescriptor.from_mapping(mapping=mapping)
-
-    assert failure.value.kind is OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
     assert "archive_path" in str(failure.value)
 
 
@@ -784,10 +757,8 @@ def test_job_descriptor_from_mapping_unreadable_value(tmp_path):
     mapping = job_set.jobs[0].to_mapping()
     mapping["core_weight"] = "not an integer"
 
-    with pytest.raises(OrchestrationError) as failure:
+    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type"):
         JobDescriptor.from_mapping(mapping=mapping)
-
-    assert failure.value.kind is OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
 
 
 def test_job_descriptor_round_trips_through_a_mapping(tmp_path):

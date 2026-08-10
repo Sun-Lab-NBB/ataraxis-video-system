@@ -12,8 +12,6 @@ from dataclasses import fields, dataclass
 from ataraxis_base_utilities import console
 from ataraxis_data_structures import ProcessingTracker
 
-from .errors import OrchestrationErrors
-
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -121,8 +119,8 @@ class JobDescriptor:
             The reconstructed descriptor.
 
         Raises:
-            OrchestrationError: Carrying the malformed job descriptor kind, if a required key is absent or if a
-                value cannot be read as the type its field declares.
+            ValueError: If a required key is absent, or if a value cannot be read as the type its field
+                declares.
         """
         field_names = tuple(field.name for field in fields(cls))
         missing_keys = [name for name in field_names if name not in mapping]
@@ -133,7 +131,7 @@ class JobDescriptor:
                 f"following required keys are absent: {', '.join(sorted(missing_keys))}. A descriptor mapping "
                 f"carries every key the descriptor writes: {', '.join(field_names)}."
             )
-            console.error(message=message, error=OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR.as_error())
+            console.error(message=message, error=ValueError)
 
         try:
             return cls(
@@ -151,7 +149,7 @@ class JobDescriptor:
                 f"Unable to read a camera timestamp extraction job descriptor from the supplied mapping. One of its "
                 f"values cannot be read as the type its field declares: {error}."
             )
-            console.error(message=message, error=OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR.as_error())
+            console.error(message=message, error=ValueError)
             raise  # pragma: no cover - console.error always raises, this satisfies the linter's return analysis.
 
     @property

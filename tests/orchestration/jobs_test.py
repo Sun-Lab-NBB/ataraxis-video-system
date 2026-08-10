@@ -20,7 +20,6 @@ from ataraxis_video_system.orchestration.jobs import (
     resolve_timestamps_path,
     resolve_output_directory,
 )
-from ataraxis_video_system.orchestration.errors import OrchestrationError, OrchestrationErrors
 
 _ONSET_US = 1700000000000000
 """The UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
@@ -360,10 +359,8 @@ def test_from_mapping_missing_key(tmp_path):
         f"{field_names}."
     )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
+    with pytest.raises(ValueError, match=error_format(message)):
         JobDescriptor.from_mapping(mapping=payload)
-
-    assert error.value.kind == OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
 
 
 def test_from_mapping_missing_key_reports_every_absent_key(tmp_path):
@@ -373,19 +370,16 @@ def test_from_mapping_missing_key_reports_every_absent_key(tmp_path):
     del payload["source_id"]
     del payload["job_name"]
 
-    with pytest.raises(OrchestrationError) as error:
+    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as error:
         JobDescriptor.from_mapping(mapping=payload)
 
     assert "required keys are absent: job_name, source_id." in _normalize(text=error.value)
-    assert error.value.kind == OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
 
 
 def test_from_mapping_empty_mapping():
     """Verifies that from_mapping rejects an empty payload instead of building a descriptor from defaults."""
-    with pytest.raises(OrchestrationError) as error:
+    with pytest.raises(ValueError, match=r"required\s+keys\s+are\s+absent") as error:
         JobDescriptor.from_mapping(mapping={})
-
-    assert error.value.kind == OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
     for field in fields(JobDescriptor):
         assert field.name in _normalize(text=error.value)
 
@@ -395,10 +389,8 @@ def test_from_mapping_unreadable_value(tmp_path):
     job = _build_descriptor(tmp_path=tmp_path)
     payload = {**job.to_mapping(), "core_weight": "eight"}
 
-    with pytest.raises(OrchestrationError) as error:
+    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type") as error:
         JobDescriptor.from_mapping(mapping=payload)
-
-    assert error.value.kind == OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
     assert "One of its values cannot be read as the type its field declares" in _normalize(text=error.value)
 
 
@@ -407,10 +399,8 @@ def test_from_mapping_unreadable_path(tmp_path):
     job = _build_descriptor(tmp_path=tmp_path)
     payload = {**job.to_mapping(), "log_directory": None}
 
-    with pytest.raises(OrchestrationError) as error:
+    with pytest.raises(ValueError, match=r"cannot\s+be\s+read\s+as\s+the\s+type"):
         JobDescriptor.from_mapping(mapping=payload)
-
-    assert error.value.kind == OrchestrationErrors.MALFORMED_JOB_DESCRIPTOR
 
 
 def test_job_descriptor_pickle_round_trip(tmp_path):

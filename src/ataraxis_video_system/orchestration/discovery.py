@@ -24,7 +24,6 @@ from .jobs import (
     resolve_output_directory,
 )
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
-from .errors import OrchestrationError, OrchestrationErrors
 from .allocation import resolve_core_budget, resolve_job_workers, estimate_job_memory_mb, resolve_archive_footprint
 
 if TYPE_CHECKING:
@@ -100,7 +99,7 @@ class JobSet:
             The descriptor of the requested job.
 
         Raises:
-            OrchestrationError: Carrying the unknown job identifier kind, if no job in this set carries it.
+            ValueError: If no job in this set carries the requested identifier.
         """
         matches = {descriptor.job_id: descriptor for descriptor in self.jobs}
 
@@ -112,10 +111,10 @@ class JobSet:
             f"Unable to resolve the camera timestamp extraction job '{job_id}' in '{self.log_directory}'. The "
             f"prepared job set holds no job with that identifier. Held job IDs: {held_ids}."
         )
-        console.error(message=message, error=OrchestrationErrors.UNKNOWN_JOB_ID.as_error())
+        console.error(message=message, error=ValueError)
 
         # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
-        raise OrchestrationError(message, OrchestrationErrors.UNKNOWN_JOB_ID)  # pragma: no cover
+        raise ValueError(message)  # pragma: no cover
 
 
 def resolve_jobs(log_directory: Path) -> JobUniverse:
@@ -137,9 +136,8 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
         The resolved job universe.
 
     Raises:
-        OrchestrationError: Carrying the missing log manifest kind when the directory does not exist or is not a
-            directory, the ambiguous log directory kind when the tree holds more than one manifest, or the empty
-            log manifest kind when a manifest registers no sources.
+        FileNotFoundError: If the log directory does not exist or is not a directory.
+        ValueError: If the tree holds more than one camera manifest, or if a manifest registers no sources.
         OSError: If any directory beneath the log directory cannot be read.
     """
     if not log_directory.is_dir():
@@ -147,7 +145,7 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
             f"Unable to resolve camera timestamp extraction jobs in '{log_directory}'. The path does not exist or is "
             f"not a directory."
         )
-        console.error(message=message, error=OrchestrationErrors.MISSING_LOG_MANIFEST.as_error())
+        console.error(message=message, error=FileNotFoundError)
 
     candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
 
@@ -171,7 +169,7 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
             f"VideoSystem to one logger, so exactly one manifest is supported per invocation. Pass the individual "
             f"DataLogger output directory of each recording instead."
         )
-        console.error(message=message, error=OrchestrationErrors.AMBIGUOUS_LOG_DIRECTORY.as_error())
+        console.error(message=message, error=ValueError)
 
     manifest_path = candidates[0]
     manifest = CameraManifest.from_yaml(file_path=manifest_path)
@@ -182,7 +180,7 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
             f"Unable to resolve camera timestamp extraction jobs in '{log_directory}'. The "
             f"{CAMERA_MANIFEST_FILENAME} at '{manifest_path}' contains no source entries."
         )
-        console.error(message=message, error=OrchestrationErrors.EMPTY_LOG_MANIFEST.as_error())
+        console.error(message=message, error=ValueError)
 
     source_ids = sorted(entries)
 
@@ -254,9 +252,11 @@ def prepare_jobs(
         The prepared job set.
 
     Raises:
-        OrchestrationError: Carrying the kind of the first unsupported condition met, which covers the manifest
-            resolution kinds, the unknown job source kind or the unresolved archive kind under strict sourcing, the
-            split logger output kind, and the unknown job identifier kind.
+        FileNotFoundError: If the log directory does not exist, or if a requested source's archive is absent under
+            strict sourcing.
+        ValueError: If the tree holds more than one camera manifest, if a manifest registers no sources, if a
+            requested source or job identifier is not registered, or if the resolved archives span several
+            directories.
         OSError: If any directory beneath the log directory cannot be read.
     """
     universe = resolve_jobs(log_directory=log_directory)
@@ -276,7 +276,7 @@ def prepare_jobs(
                 f"manifest at '{universe.manifest_path}' defines no job with that identifier. Registered source IDs: "
                 f"{', '.join(registered_ids)}."
             )
-            console.error(message=message, error=OrchestrationErrors.UNKNOWN_JOB_ID.as_error())
+            console.error(message=message, error=ValueError)
 
         requested_ids = matched
     else:
@@ -293,7 +293,7 @@ def prepare_jobs(
             f"ataraxis-video-system. Registered source IDs: {', '.join(registered_ids)}."
         )
         if strict_sources:
-            console.error(message=message, error=OrchestrationErrors.UNKNOWN_JOB_SOURCE.as_error())
+            console.error(message=message, error=ValueError)
         skipped.extend(
             (source_id, "The source is not registered in the camera manifest.") for source_id in unregistered_ids
         )
@@ -309,7 +309,7 @@ def prepare_jobs(
             f"{', '.join(unresolved_ids)}."
         )
         if strict_sources:
-            console.error(message=message, error=OrchestrationErrors.UNRESOLVED_ARCHIVE.as_error())
+            console.error(message=message, error=FileNotFoundError)
         skipped.extend(
             (source_id, "The source's log archive is absent or resolves to more than one file.")
             for source_id in unresolved_ids
@@ -326,7 +326,7 @@ def prepare_jobs(
             f"by separate DataLogger instances, and one recording writes one logger, so this tree holds more than "
             f"one recording. Each DataLogger output directory must be prepared and processed on its own invocation."
         )
-        console.error(message=message, error=OrchestrationErrors.SPLIT_LOGGER_OUTPUT.as_error())
+        console.error(message=message, error=ValueError)
 
     resolved_output = resolve_output_directory(output_directory=output_directory)
     tracker_path = resolve_tracker_path(output_directory=resolved_output)

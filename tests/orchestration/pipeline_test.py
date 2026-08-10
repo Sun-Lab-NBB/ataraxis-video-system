@@ -16,7 +16,6 @@ from ataraxis_video_system.orchestration.jobs import (
     resolve_timestamps_path,
     resolve_output_directory,
 )
-from ataraxis_video_system.orchestration.errors import OrchestrationError, OrchestrationErrors
 from ataraxis_video_system.orchestration.pipeline import run_log_processing_pipeline
 from ataraxis_video_system.orchestration.allocation import resolve_core_budget
 
@@ -160,7 +159,7 @@ def test_run_log_processing_pipeline_missing_log_directory(tmp_path):
         f"Unable to resolve camera timestamp extraction jobs in '{missing_directory}'. The path does not exist or is "
         f"not a directory."
     )
-    with pytest.raises(OrchestrationError, match=error_format(message)) as error:
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         run_log_processing_pipeline(
             log_directory=missing_directory,
             output_directory=tmp_path / "output",
@@ -168,8 +167,6 @@ def test_run_log_processing_pipeline_missing_log_directory(tmp_path):
             workers=1,
             display_progress=False,
         )
-
-    assert error.value.kind == OrchestrationErrors.MISSING_LOG_MANIFEST
 
     # A failed resolution materializes nothing, as the output subdirectory is created only once the jobs resolve.
     assert not (tmp_path / "output").exists()
@@ -185,10 +182,8 @@ def test_run_log_processing_pipeline_missing_manifest(tmp_path):
         f"one file beneath it."
     )
 
-    with pytest.raises(OrchestrationError, match=error_format(message)) as failure:
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
         run_log_processing_pipeline(log_directory=log_directory, output_directory=tmp_path / "output")
-
-    assert failure.value.kind is OrchestrationErrors.UNRESOLVED_ARCHIVE
 
 
 def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, monkeypatch):
