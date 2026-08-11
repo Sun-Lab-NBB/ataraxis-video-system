@@ -128,6 +128,17 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
     range_index = saver._ffmpeg_command.index("-color_range")
     assert saver._ffmpeg_command[range_index + 1] == "pc"
 
+    # Pins the frame geometry argument. The width and the height are interchangeable in every square-framed test, so
+    # nothing else in the suite would catch the two being transposed, which FFMPEG accepts and encodes as a sheared
+    # video rather than rejecting.
+    size_index = saver._ffmpeg_command.index("-s")
+    assert saver._ffmpeg_command[size_index + 1] == "320x240"
+
+    # Pins the quantization parameter, which the encoder-specific parameter specifier carries for CPU encoders.
+    specifier = "-x264-params" if "libx264" in saver._ffmpeg_command else "-x265-params"
+    specifier_index = saver._ffmpeg_command.index(specifier)
+    assert saver._ffmpeg_command[specifier_index + 1] == "qp=25"
+
 
 @pytest.mark.parametrize(
     ("video_encoder", "output_pixel_format"),
@@ -166,6 +177,11 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
     gpu_index = saver._ffmpeg_command.index("-gpu")
     assert saver._ffmpeg_command[gpu_index + 1] == "0"
+    # Pins the frame geometry and the quantization parameter, neither of which any other assertion would catch.
+    size_index = saver._ffmpeg_command.index("-s")
+    assert saver._ffmpeg_command[size_index + 1] == "320x240"
+    qp_index = saver._ffmpeg_command.index("-qp")
+    assert saver._ffmpeg_command[qp_index + 1] == "25"
     # Verifies the output is forced to full (pc) range
     range_index = saver._ffmpeg_command.index("-color_range")
     assert saver._ffmpeg_command[range_index + 1] == "pc"

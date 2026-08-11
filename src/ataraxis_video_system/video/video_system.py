@@ -8,11 +8,12 @@ VideoSystem class.
 from __future__ import annotations
 
 import sys
-from queue import Queue
+from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 import warnings
-from threading import Thread
+from threading import Lock, Thread
+from contextlib import suppress
 from multiprocessing import (
     Queue as MPQueue,
     Manager,
@@ -22,9 +23,11 @@ from multiprocessing import (
 import cv2
 import numpy as np
 from ataraxis_time import (
+    TimeUnits,
     PrecisionTimer,
     TimerPrecisions,
     TimestampFormats,
+    convert_time,
     get_timestamp,
     rate_to_interval,
 )
@@ -59,6 +62,16 @@ identical cross-platform behavior on all supported platforms."""
 
 _PROCESS_INITIALIZATION_TIME: int = 20
 """The maximum number of seconds to wait for the consumer and producer processes to initialize."""
+
+_PROCESS_INITIALIZATION_TIMEOUT: int = int(
+    convert_time(time=_PROCESS_INITIALIZATION_TIME, from_units=TimeUnits.SECOND, to_units=TimeUnits.MILLISECOND)
+)
+"""The initialization timeout, expressed in the millisecond units of the timer that paces the startup handshake."""
+
+_PROCESS_INITIALIZATION_POLL_INTERVAL: int = 20
+"""The interval, in milliseconds, at which the startup handshake of the child processes is examined. Matching the
+watchdog's own cadence lets start() return as soon as both processes report, instead of on a tick coarse enough to
+dominate the startup time and to push the initialization timeout past the bound it is set to."""
 
 _PROCESS_SHUTDOWN_TIME: int = 600
 """The maximum number of seconds to wait for the consumer process to save all buffered frames and shut down."""
@@ -138,12 +151,13 @@ class VideoSystem:
             OutputPixelFormats enumeration members.
         quantization_parameter: The integer value to use for the 'quantization parameter' of the encoder. This
             determines how much information to discard from each encoded frame. Lower values produce better video
-            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Setting
-            this to -1 defers the choice to the encoder's default. Note, the default value is calibrated for the H265
-            encoder and is likely too low for the H264 encoder.
+            quality at the expense of longer processing time and larger file size: 0 is best, 51 is worst. Note, the
+            default value is calibrated for the H265 encoder and is likely too low for the H264 encoder.
 
     Attributes:
         _started: Tracks whether the system is currently running (has active subprocesses).
+        _shutdown_lock: Stores the lock that serializes the teardown between the stop() method and the watchdog
+            thread, so exactly one of the two releases the shared memory buffer.
         _mp_manager: Stores the SyncManager instance used to control the multiprocessing assets (Queue and Lock
             instances).
         _system_id: Stores the unique identifier code of the VideoSystem instance.
@@ -165,7 +179,8 @@ class VideoSystem:
 
     Raises:
         TypeError: If any of the provided arguments has an invalid type.
-        ValueError: If any of the provided arguments has an invalid value.
+        ValueError: If any of the provided arguments has an invalid value, or if the managed camera acquires frames
+            that do not use the 8-bit unsigned integer data type.
         RuntimeError: If the host system does not have access to FFMPEG or Nvidia GPU (when the instance is configured
             to use hardware encoding).
     """
@@ -192,6 +207,10 @@ class VideoSystem:
     ) -> None:
         # Initializes the started flag early to prevent stop method errors.
         self._started: bool = False
+
+        # Serializes the teardown between stop() and the watchdog thread, so exactly one of the two releases the
+        # shared memory buffer and neither reaches it after the other has destroyed it.
+        self._shutdown_lock: Lock = Lock()
 
         # Creates the manager early in the __init__ phase to support del-based cleanup.
         self._mp_manager: SyncManager = Manager()
@@ -320,11 +339,24 @@ class VideoSystem:
         self._camera.connect()
 
         # Verifies that the frame acquisition works as expected.
-        self._camera.grab_frame()
+        probe_frame = self._camera.grab_frame()
 
         # Disconnects from the camera. The camera is re-connected by the remote producer process once it is
         # instantiated.
         self._camera.disconnect()
+
+        # The FFMPEG input pixel format resolved below describes 8 bits per component for every member of the
+        # InputPixelFormats enumeration. A camera acquiring a wider format therefore hands the saver twice the bytes
+        # per frame the command declares, which FFMPEG demuxes into two frames, leaving the video and the logged
+        # acquisition timestamps describing different frames. The library performs no software conversion, so the
+        # unsupported format is rejected here rather than silently corrupting the recording.
+        if probe_frame.dtype != np.uint8:
+            message = (
+                f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. The managed "
+                f"camera acquires frames using the '{probe_frame.dtype}' data type, but this library encodes 8-bit "
+                f"frames only. Reconfigure the camera to use an 8-bit pixel format, such as Mono8 or BGR8."
+            )
+            console.error(message=message, error=ValueError)
 
         # If the system is configured to display the acquired frames to the user, ensures that the display frame rate
         # is valid and works with the managed camera's frame acquisition rate.
@@ -390,12 +422,12 @@ class VideoSystem:
                 console.error(message=message, error=ValueError)
             if (
                 not isinstance(quantization_parameter, int)
-                or not -1 <= quantization_parameter <= MAXIMUM_QUANTIZATION_VALUE
+                or not 0 <= quantization_parameter <= MAXIMUM_QUANTIZATION_VALUE
             ):
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "
-                    f"integer between -1 and 51 as the 'quantization_parameter' argument value, but got "
-                    f"{quantization_parameter} of type {type(quantization_parameter).__name__}."
+                    f"integer between 0 and {MAXIMUM_QUANTIZATION_VALUE} as the 'quantization_parameter' argument "
+                    f"value, but got {quantization_parameter} of type {type(quantization_parameter).__name__}."
                 )
                 console.error(message=message, error=TypeError)
 
@@ -477,8 +509,10 @@ class VideoSystem:
         if self._started:
             return
 
-        # Creates a timer to detect processes that stall at initialization and to pace the polling loop.
-        initialization_timer = PrecisionTimer(precision=TimerPrecisions.SECOND)
+        # Creates a timer to detect processes that stall at initialization and to pace the polling loop. The timer
+        # runs at millisecond precision, since poll() delays before it yields and the loop below therefore cannot
+        # examine the handshake until one whole interval has passed.
+        initialization_timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # Instantiates a SharedMemoryArray used to control the runtime of the child processes.
         # Index 0 (element 1) is used to issue the global process termination command.
@@ -522,7 +556,9 @@ class VideoSystem:
         self._producer_process.start()
 
         # Waits for the processes to report that they have been successfully initialized.
-        for _ in initialization_timer.poll(interval=10, allow_sleep=True, block=False):  # pragma: no cover
+        for _ in initialization_timer.poll(
+            interval=_PROCESS_INITIALIZATION_POLL_INTERVAL, allow_sleep=True, block=False
+        ):  # pragma: no cover
             # Exits once both processes have reported successful initialization.
             if self._terminator_array[2] == 1 and (self._consumer_process is None or self._terminator_array[3] == 1):
                 break
@@ -531,7 +567,7 @@ class VideoSystem:
             error = False
             message: str = ""  # Pre-initializes the variable to satisfy mypy.
             if (
-                initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[2] != 1
+                initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIMEOUT and self._terminator_array[2] != 1
             ) or not self._producer_process.is_alive():
                 message = (
                     f"Unable to start the VideoSystem with id {self._system_id}. The producer process has "
@@ -541,7 +577,7 @@ class VideoSystem:
                 )
                 error = True
             elif self._consumer_process is not None and (
-                (initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIME and self._terminator_array[3] != 1)
+                (initialization_timer.elapsed > _PROCESS_INITIALIZATION_TIMEOUT and self._terminator_array[3] != 1)
                 or not self._consumer_process.is_alive()
             ):
                 message = (
@@ -577,23 +613,31 @@ class VideoSystem:
             The consumer process is kept alive until all frames buffered to the saver_queue are saved. If the consumer
             process does not save all buffered frames within the shutdown timeout, it is abandoned and any unprocessed
             data is discarded.
+
+            The teardown is claimed under a lock the watchdog thread takes as well, so exactly one of the two releases
+            the shared memory buffer. The lock is released before this method joins that thread, since the watchdog
+            acquires the same lock and holding it across the join would leave each side waiting on the other.
         """
-        # Prevents stopping an already stopped VideoSystem instance.
-        if not self._started or self._terminator_array is None:
-            return
+        # Claims the teardown. A watchdog that reached its own teardown first clears the flag, which takes the early
+        # return below and keeps this method away from the terminator array that thread has already destroyed.
+        with self._shutdown_lock:
+            if not self._started or self._terminator_array is None:
+                return
 
-        # Inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
-        self._started = False
+            # Inactivates the watchdog thread monitoring, ensuring it does not err when the processes are terminated.
+            self._started = False
 
-        self._terminate_child_processes()
+            self._terminate_child_processes()
 
-        # Joins the watchdog thread.
+            # Disconnects from and destroys the terminator array buffer, then drops the reference so that neither this
+            # method nor the watchdog can reach the destroyed buffer afterwards.
+            self._terminator_array.disconnect()
+            self._terminator_array.destroy()
+            self._terminator_array = None
+
+        # Joins the watchdog thread outside the lock, since that thread acquires the same lock on every poll cycle.
         if self._watchdog_thread is not None:
             self._watchdog_thread.join(timeout=_PROCESS_TERMINATION_TIME)
-
-        # Disconnects from and destroys the terminator array buffer.
-        self._terminator_array.disconnect()
-        self._terminator_array.destroy()
 
     def start_frame_saving(self) -> None:
         """Enables saving acquired camera frames to disk as an .mp4 video file."""
@@ -747,9 +791,13 @@ class VideoSystem:
         display_queue: Queue | None = None  # type: ignore[type-arg]
         display_thread: Thread | None = None
         if display_frame_rate > 0:
-            # Creates the queue and thread for displaying camera frames.
+            # Creates the queue and thread for displaying camera frames. The thread is a daemon, so that a failure
+            # raised between its start and the try block below cannot hold this process open on the interpreter's
+            # join of every non-daemon thread.
             display_queue = Queue()
-            display_thread = Thread(target=VideoSystem._frame_display_loop, args=(display_queue, system_id))
+            display_thread = Thread(
+                target=VideoSystem._frame_display_loop, args=(display_queue, system_id), daemon=True
+            )
             display_thread.start()
 
             # Converts the frame display rate from frames per second to microseconds per frame. This gives the delay
@@ -758,12 +806,14 @@ class VideoSystem:
             show_time = rate_to_interval(rate=display_frame_rate, to_units="us", as_float=True)
             show_timer = PrecisionTimer(precision=TimerPrecisions.MICROSECOND)
 
-        camera.connect()  # Connects to the hardware of the camera.
-
-        # Indicates that the camera interface has started successfully.
-        terminator_array[2] = 1
-
         try:
+            # Connects to the hardware of the camera. The connection happens inside the guarded block, so that a
+            # camera that refuses the requested acquisition parameters still reaches the cleanup below.
+            camera.connect()
+
+            # Indicates that the camera interface has started successfully.
+            terminator_array[2] = 1
+
             # Runs until the VideoSystem is terminated by setting the first element (index 0) of the array to 1.
             while not terminator_array[0]:
                 # Grabs the first available frame as a numpy array. For Harvesters and Mock interfaces, this method
@@ -777,7 +827,17 @@ class VideoSystem:
                 if display_queue is not None and show_timer.elapsed >= show_time:  # type: ignore[union-attr, operator]
                     # Resets the display timer.
                     show_timer.reset()  # type: ignore[union-attr]
-                    display_queue.put(frame)
+
+                    # The display thread ends on its own when the user dismisses the window, and the queue it drained
+                    # is unbounded. Feeding it past that point would grow the process by one frame per display cycle
+                    # for the rest of the runtime, so the frames it never consumed are released and the queue is
+                    # dropped, which also keeps this branch from being taken again.
+                    if display_thread is not None and display_thread.is_alive():
+                        display_queue.put(frame)
+                    else:
+                        _empty_display_queue(display_queue=display_queue)
+                        display_queue = None
+                        display_thread = None
 
                 # If frame saving is enabled, sends the acquired frame data and the acquisition timestamp to the
                 # consumer (video saver) process.
@@ -904,52 +964,74 @@ class VideoSystem:
 
         # Polls every 20 ms until the global shutdown signal is emitted.
         for _ in timer.poll(interval=20, allow_sleep=True, block=False):
-            if self._terminator_array is None or self._terminator_array[0]:
-                break
-
-            # Only activates after the VideoSystem has been started.
-            if not self._started:
-                continue
-
-            # Checks if the producer is alive.
-            error = False
             producer = False
-            if self._producer_process is not None and not self._producer_process.is_alive():
-                error = True
-                producer = True
 
-            # Checks if the consumer is alive.
-            if self._consumer_process is not None and not self._consumer_process.is_alive():
-                error = True
+            # Examines the runtime state under the same lock the stop() method claims, so this thread never reads or
+            # destroys a buffer that method has already released, and exactly one of the two performs the teardown.
+            with self._shutdown_lock:
+                if self._terminator_array is None or self._terminator_array[0]:
+                    break
 
-            # If either consumer or producer is dead, ensures proper resource reclamation before terminating with an
-            # error.
-            if error:
+                # Only activates after the VideoSystem has been started.
+                if not self._started:
+                    continue
+
+                # Checks if the producer is alive.
+                error = False
+                if self._producer_process is not None and not self._producer_process.is_alive():
+                    error = True
+                    producer = True
+
+                # Checks if the consumer is alive.
+                if self._consumer_process is not None and not self._consumer_process.is_alive():
+                    error = True
+
+                # Resumes polling while both processes are alive.
+                if not error:
+                    continue
+
                 # Reclaims all committed resources before terminating with an error. The consumer is given the time to
                 # save any frames that the producer buffered before the failure.
                 self._terminate_child_processes()
 
-                # Disconnects from the shared memory array and destroys the shared memory buffer.
-                if self._terminator_array is not None:
-                    self._terminator_array.disconnect()
-                    self._terminator_array.destroy()
+                # Disconnects from the shared memory array, destroys the buffer, and drops the reference so that a
+                # concurrent stop() takes its own early return instead of reaching the destroyed buffer.
+                self._terminator_array.disconnect()
+                self._terminator_array.destroy()
+                self._terminator_array = None
 
                 # Marks the instance as stopped after resource cleanup.
                 self._started = False
 
-                # Raises the error.
-                if producer:
-                    message = (
-                        f"The producer process for the VideoSystem with id {self._system_id} has been prematurely "
-                        f"shut down. This likely indicates that the process has encountered a runtime error that "
-                        f"terminated the process."
-                    )
-                    console.error(message=message, error=RuntimeError)
+            # Raises outside the lock, so a stop() call blocked on the teardown above is released before this thread
+            # ends with the error.
+            if producer:
+                message = (
+                    f"The producer process for the VideoSystem with id {self._system_id} has been prematurely "
+                    f"shut down. This likely indicates that the process has encountered a runtime error that "
+                    f"terminated the process."
+                )
+            else:
+                message = (
+                    f"The consumer process for the VideoSystem with id {self._system_id} has been prematurely "
+                    f"shut down. This likely indicates that the process has encountered a runtime error that "
+                    f"terminated the process."
+                )
+            console.error(message=message, error=RuntimeError)
 
-                else:
-                    message = (
-                        f"The consumer process for the VideoSystem with id {self._system_id} has been prematurely "
-                        f"shut down. This likely indicates that the process has encountered a runtime error that "
-                        f"terminated the process."
-                    )
-                    console.error(message=message, error=RuntimeError)
+
+def _empty_display_queue(display_queue: Queue) -> None:  # type: ignore[type-arg]
+    """Discards every frame left in the display queue once the thread that drained it has ended.
+
+    Notes:
+        The queue is unbounded, so the frames it still holds are the ones the display thread had not reached when it
+        exited. Releasing them returns that memory to the producer process rather than holding it for the rest of the
+        acquisition runtime.
+
+    Args:
+        display_queue: The queue whose remaining frames are discarded.
+    """
+    with suppress(Empty):
+        while True:
+            display_queue.get_nowait()
+            display_queue.task_done()

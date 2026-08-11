@@ -288,7 +288,10 @@ def prepare_jobs(
 
         requested_ids = matched
     else:
-        requested_ids = sorted(source_ids) if source_ids else registered_ids
+        # Collapses a repeated identifier, since one source addresses one archive and one tracker entry. Two
+        # descriptors for one source share a dispatch key, which leaves the batch engine tracking one running job
+        # while two workers extract the same archive and write the same output file.
+        requested_ids = sorted(set(source_ids)) if source_ids else registered_ids
 
     unregistered_ids = [source_id for source_id in requested_ids if source_id not in registered_ids]
     skipped: list[tuple[str, str]] = []

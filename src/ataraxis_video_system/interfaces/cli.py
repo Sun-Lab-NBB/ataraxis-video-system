@@ -52,7 +52,7 @@ def cti_group() -> None:
 @click.option(
     "-f",
     "--file-path",
-    required=False,
+    required=True,
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path),
     help=(
         "The path to the CTI file that provides the GenTL Producer interface. It is recommended to use the "
@@ -321,44 +321,52 @@ def live_run(
 
     # Ensures that manual control instructions are only shown once.
     show_instructions: bool = True
-    # Uses terminal input to control the video system.
-    while video_system.started:
-        if show_instructions:
-            message = (
-                "Enter 'q' to terminate system's runtime. Enter 'w' to start saving camera frames. "
-                "Enter 's' to stop saving camera frames. Note, after termination, the system may stay alive for up "
-                "to 600 seconds to finish saving buffered frame data."
-            )
-            console.echo(message=message, level=LogLevel.SUCCESS)
-            show_instructions = False
 
-        key = input("\nEnter command key:")
-        if key.lower() == "q":
-            message = "Terminating the VideoSystem..."
-            console.echo(message=message)
-            video_system.stop()
-            logger.stop()
-        elif key.lower() == "w":
-            message = "VideoSystem's camera frame saving: Started."
-            console.echo(message=message)
-            video_system.start_frame_saving()
-        elif key.lower() == "s":
-            message = "VideoSystem's camera frame saving: Stopped."
-            console.echo(message=message)
-            video_system.stop_frame_saving()
-        else:
-            message = (
-                f"Unknown input key {key.lower()} encountered while interacting with the VideoSystem. Use 'q' to "
-                f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
-            )
-            console.echo(message=message, level=LogLevel.WARNING)
-    video_system.stop()
-    logger.stop()
-    console.echo(
-        message=f"VideoSystem: Terminated. Saved frames (if any) are available from the {output_directory} directory.",
-        level=LogLevel.SUCCESS,
-    )
-    assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, verbose=True)
+    try:
+        # Uses terminal input to control the video system.
+        while video_system.started:
+            if show_instructions:
+                message = (
+                    "Enter 'q' to terminate system's runtime. Enter 'w' to start saving camera frames. "
+                    "Enter 's' to stop saving camera frames. Note, after termination, the system may stay alive for "
+                    "up to 600 seconds to finish saving buffered frame data."
+                )
+                console.echo(message=message, level=LogLevel.SUCCESS)
+                show_instructions = False
+
+            key = input("\nEnter command key:")
+            if key.lower() == "q":
+                message = "Terminating the VideoSystem..."
+                console.echo(message=message)
+                video_system.stop()
+                logger.stop()
+            elif key.lower() == "w":
+                message = "VideoSystem's camera frame saving: Started."
+                console.echo(message=message)
+                video_system.start_frame_saving()
+            elif key.lower() == "s":
+                message = "VideoSystem's camera frame saving: Stopped."
+                console.echo(message=message)
+                video_system.stop_frame_saving()
+            else:
+                message = (
+                    f"Unknown input key {key.lower()} encountered while interacting with the VideoSystem. Use 'q' to "
+                    f"terminate the runtime, 'w' to start saving frames, and 's' to stop saving frames."
+                )
+                console.echo(message=message, level=LogLevel.WARNING)
+    finally:
+        # Finalizes the session on every exit path, including the Abort that Click raises when the operator interrupts
+        # the prompt above. Both stop calls are idempotent, so the 'q' branch does not conflict with them, and the
+        # archive assembly is the step a later 'axvs process' invocation depends on.
+        video_system.stop()
+        logger.stop()
+        console.echo(
+            message=(
+                f"VideoSystem: Terminated. Saved frames (if any) are available from the {output_directory} directory."
+            ),
+            level=LogLevel.SUCCESS,
+        )
+        assemble_log_archives(log_directory=logger.output_directory, remove_sources=True, verbose=True)
 
 
 @axvs_cli.command("process")

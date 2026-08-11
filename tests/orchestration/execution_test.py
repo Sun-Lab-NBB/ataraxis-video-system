@@ -31,12 +31,14 @@ from ataraxis_video_system.orchestration.execution import (
     _abandon_batch,
     _job_is_unrecorded,
     _admit_pending_jobs,
+    _handle_broken_pool,
     _reap_finished_jobs,
     get_execution_state,
     set_execution_state,
     group_jobs_by_tracker,
     job_execution_manager,
     _select_admissible_jobs,
+    start_execution_session,
     _reconcile_unrecorded_job,
 )
 from ataraxis_video_system.orchestration.allocation import (
@@ -65,6 +67,7 @@ class _RecordingPool:
 
     def __init__(self, error=None):
         self.submissions = []
+        self.shutdown_calls = []
         self.error = error
 
     def submit(self, function, job):
@@ -76,6 +79,10 @@ class _RecordingPool:
         future = Future()
         future.set_result(None)
         return future
+
+    def shutdown(self, **arguments):
+        """Records the arguments of every shutdown the manager performs on a broken or a finished pool."""
+        self.shutdown_calls.append(arguments)
 
 
 @pytest.fixture(autouse=True)
@@ -358,6 +365,100 @@ def test_execution_state_round_trip():
 
     set_execution_state(state=None)
     assert get_execution_state() is None
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_start_execution_session_reserves_the_single_slot(tmp_path):
+    """Verifies that the reservation publishes one session with its manager attached and refuses a second live one."""
+    _, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
+
+    first = JobExecutionState(
+        all_jobs={descriptor.dispatch_key: descriptor},
+        pending_jobs=[(descriptor, sizing)],
+        core_budget=1,
+        memory_budget_mb=8192,
+        pool_size=1,
+    )
+
+    assert start_execution_session(state=first)
+
+    # The manager is attached before the state is published, so no published session is ever observable with the
+    # None manager thread that the incumbent test reads as a finished batch.
+    assert first.manager_thread is not None
+    assert get_execution_state() is first
+
+    second = JobExecutionState(core_budget=1, memory_budget_mb=8192, pool_size=1)
+
+    # A live session holds the slot, so the second reservation is refused and the incumbent is left in place.
+    assert not start_execution_session(state=second)
+    assert get_execution_state() is first
+    assert second.manager_thread is None
+
+    first.manager_thread.join(timeout=_MANAGER_TIMEOUT_SECONDS)
+    assert not first.manager_thread.is_alive()
+
+    # A session whose manager has ended no longer holds the slot, so the next batch is admitted.
+    assert start_execution_session(state=second)
+    assert get_execution_state() is second
+
+    second.manager_thread.join(timeout=_MANAGER_TIMEOUT_SECONDS)
+    assert not second.manager_thread.is_alive()
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_handle_broken_pool_charges_no_requeue_when_several_jobs_broke(tmp_path, monkeypatch):
+    """Verifies that a break killing more than one job is attributed to none of them, so neither spends its budget."""
+    first = _register_job(directory=tmp_path / "batch", source_id="1")
+    second = _register_job(directory=tmp_path / "batch", source_id="2")
+    sizing = _build_sizing(memory_mb=1024)
+
+    state = JobExecutionState(pool_size=1, pool_broken=True)
+    state.broken_jobs = [(first, sizing), (second, sizing)]
+
+    replacement = _RecordingPool()
+    requested_sizes = []
+
+    def _build_replacement(pool_size):
+        """Returns the stand-in replacement pool, recording the slot count the handler asked it for."""
+        requested_sizes.append(pool_size)
+        return replacement
+
+    monkeypatch.setattr(execution, "_create_job_pool", _build_replacement)
+
+    broken_pool = _RecordingPool()
+    assert _handle_broken_pool(state=state, executor=broken_pool) is replacement
+    assert requested_sizes == [state.pool_size]
+
+    # The broken pool is shut down without waiting, so a worker the host wedged cannot stall the rebuild.
+    assert broken_pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+    # A break fails every job in flight whatever caused it, so a break with two casualties is attributable to
+    # neither, and both return to the queue free of charge.
+    assert state.requeue_counts == {}
+    assert [job.dispatch_key for job, _ in state.pending_jobs] == [first.dispatch_key, second.dispatch_key]
+    assert _job_status(job=first) == ProcessingStatus.SCHEDULED
+    assert _job_status(job=second) == ProcessingStatus.SCHEDULED
+    assert state.pool_rebuilds == 1
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_handle_broken_pool_charges_the_sole_casualty(tmp_path, monkeypatch):
+    """Verifies that a break killing exactly one job is attributed to it, which is the case the ceiling exists for."""
+    job = _register_job(directory=tmp_path / "batch", source_id="1")
+
+    state = JobExecutionState(pool_size=1, pool_broken=True)
+    state.broken_jobs = [(job, _build_sizing(memory_mb=1024))]
+
+    def _build_replacement(pool_size):
+        """Returns a stand-in replacement pool sized the way the handler asked for it."""
+        assert pool_size == state.pool_size
+        return _RecordingPool()
+
+    monkeypatch.setattr(execution, "_create_job_pool", _build_replacement)
+
+    _handle_broken_pool(state=state, executor=_RecordingPool())
+
+    assert state.requeue_counts == {job.dispatch_key: 1}
 
 
 @pytest.mark.xdist_group(name="orchestration")
@@ -788,6 +889,41 @@ def test_job_execution_manager_rebuilds_a_broken_pool(tmp_path):
     assert state.requeue_counts == {descriptor.dispatch_key: 1}
     assert _job_status(job=descriptor) == ProcessingStatus.SUCCEEDED
     assert resolve_timestamps_path(output_directory=job_set.output_directory, source_id="1").exists()
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_job_execution_manager_fails_a_broken_job_after_a_cancel(tmp_path):
+    """Verifies that a pool break arriving after a cancel fails the killed job instead of returning it to the queue."""
+    job_set, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
+
+    # Seeds the state a break leaves behind on a session the cancellation tool has already stopped.
+    state = JobExecutionState(
+        all_jobs={descriptor.dispatch_key: descriptor},
+        broken_jobs=[(descriptor, sizing)],
+        core_budget=1,
+        memory_budget_mb=8192,
+        pool_size=1,
+        pool_broken=True,
+        canceled=True,
+    )
+    set_execution_state(state=state)
+
+    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager.start()
+    manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
+
+    assert not manager.is_alive()
+
+    # A requeued job would read scheduled forever, since the canceled manager exits on the very next iteration and
+    # the tracker is the only channel a status reader consults.
+    assert _job_status(job=descriptor) == ProcessingStatus.FAILED
+    assert state.pending_jobs == []
+    assert state.broken_jobs == []
+
+    # The canceled session skips the rebuild entirely, so it neither warms a replacement pool nor charges a requeue.
+    assert state.pool_rebuilds == 0
+    assert state.requeue_counts == {}
+    assert not resolve_timestamps_path(output_directory=job_set.output_directory, source_id="1").exists()
 
 
 @pytest.mark.xdist_group(name="orchestration")

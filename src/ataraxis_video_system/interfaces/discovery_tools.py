@@ -176,7 +176,9 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
         video_path = _match_video_file(
             all_video_files=all_video_files, log_directory=log_directory, source_id=source_id, name=name
         )
-        feather_path = _find_feather_file(timestamps_dirs=timestamps_dirs, source_id=source_id)
+        feather_path = _find_feather_file(
+            timestamps_dirs=timestamps_dirs, log_directory=log_directory, source_id=source_id
+        )
 
         sources_output.append(
             {
@@ -434,17 +436,10 @@ def _match_video_file(
     Returns:
         The string path to the matched video file, or None if no match is found.
     """
-    log_parts = log_directory.parts
 
-    # Counts leading path components shared between a candidate video and the log directory. Higher values
-    # indicate closer proximity in the directory tree.
     def proximity(video_path: Path) -> int:
-        shared = 0
-        for log_part, video_part in zip(log_parts, video_path.parts, strict=False):
-            if log_part != video_part:
-                break
-            shared += 1
-        return shared
+        """Returns the leading path components the candidate video shares with the source's log directory."""
+        return _count_shared_components(log_directory=log_directory, candidate=video_path)
 
     # Tries name-based matching first, since users may rename video files to meaningful names.
     if name:
@@ -461,22 +456,58 @@ def _match_video_file(
     return None
 
 
-def _find_feather_file(timestamps_dirs: tuple[Path, ...], source_id: int) -> Path | None:
+def _find_feather_file(timestamps_dirs: tuple[Path, ...], log_directory: Path, source_id: int) -> Path | None:
     """Searches pre-discovered ``camera_timestamps/`` directories for a processed feather file matching a source ID.
 
     Resolves the source's output path directly inside each ``camera_timestamps/`` directory through the same helper
     the extraction job writes with. The caller is responsible for pre-discovering ``camera_timestamps/`` directories
     via a single ``rglob`` pass over the search root.
 
+    Notes:
+        A search root spanning several recordings holds one candidate per recording that registered the source ID, and
+        the interfaces of this library assign a fixed ID to every recording they produce. The candidate sharing the
+        most leading path components with the source's own log directory is therefore the one that belongs to it,
+        which is the same tie-break the paired video resolver applies.
+
     Args:
         timestamps_dirs: Pre-discovered ``camera_timestamps/`` directory paths collected from the search root.
+        log_directory: The directory holding the source's camera manifest, used as the proximity reference.
         source_id: The numeric source ID to search for.
 
     Returns:
         The path to the feather file, or None if not found.
     """
-    for timestamps_dir in timestamps_dirs:
-        candidate = resolve_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))
-        if candidate.is_file():
-            return candidate
-    return None
+    candidates = [
+        candidate
+        for timestamps_dir in timestamps_dirs
+        if (candidate := resolve_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))).is_file()
+    ]
+
+    if not candidates:
+        return None
+
+    return max(
+        candidates, key=lambda candidate: _count_shared_components(log_directory=log_directory, candidate=candidate)
+    )
+
+
+def _count_shared_components(log_directory: Path, candidate: Path) -> int:
+    """Counts the leading path components a candidate file shares with a source's log directory.
+
+    Notes:
+        A higher count means the candidate sits closer to the log directory in the tree, which is what separates the
+        output of one recording from the identically named output of another under a shared search root.
+
+    Args:
+        log_directory: The directory holding the source's camera manifest.
+        candidate: The path whose proximity to the log directory is measured.
+
+    Returns:
+        The number of leading path components the two paths share.
+    """
+    shared = 0
+    for log_part, candidate_part in zip(log_directory.parts, candidate.parts, strict=False):
+        if log_part != candidate_part:
+            break
+        shared += 1
+    return shared

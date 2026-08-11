@@ -64,6 +64,9 @@ dependencies = [
     # Configuration
     "platformdirs>=4,<5",
 
+    # Cross-process File Locking
+    "filelock>=3,<4",
+
     # Host Resource Introspection
     "psutil>=7,<8",
 

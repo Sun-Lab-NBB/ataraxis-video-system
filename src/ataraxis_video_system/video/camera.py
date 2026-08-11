@@ -214,6 +214,11 @@ def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
     """
     _require_genicam_runtime(action="configure the GenTL Producer interface (.cti) file")
 
+    # Resolves the path before it is verified and persisted. A relative path validates against the directory the
+    # command happened to run from and then fails to resolve in every later runtime started from anywhere else,
+    # which contradicts the reuse this function exists to provide.
+    cti_path = Path(cti_path).expanduser().resolve()
+
     # Verifies the input CTI file.
     harvester = Harvester()
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
@@ -249,7 +254,7 @@ def check_cti_file() -> Path | None:  # pragma: no cover
 
     override = os.environ.get(_CTI_PATH_VARIABLE)
     if override:
-        cti_path = Path(override)
+        cti_path = Path(override).expanduser().resolve()
     else:
         # Resolves the path to the .cti path file using platformdirs.
         application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
@@ -362,8 +367,12 @@ class OpenCVCamera:
         # the connected camera.
         if self._frame_rate != 0:
             self._camera.set(propId=cv2.CAP_PROP_FPS, value=float(self._frame_rate))
-            actual_frame_rate = int(self._camera.get(propId=cv2.CAP_PROP_FPS))
-            if actual_frame_rate < self._frame_rate:  # pragma: no cover
+
+            # Rounds rather than truncates, so a camera that honors the request and reports it as 29.97 is not
+            # rejected by the cast. Any genuine deviation is rejected below, since the library performs no software
+            # decimation and would otherwise stamp the requested rate onto a stream acquired at a different one.
+            actual_frame_rate = round(self._camera.get(propId=cv2.CAP_PROP_FPS))
+            if actual_frame_rate != self._frame_rate:  # pragma: no cover
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames at the rate of {self._frame_rate} "
@@ -626,7 +635,10 @@ class HarvestersCamera:
         if frame_rate_node is not None:
             if self._frame_rate != 0:
                 frame_rate_node.value = self._frame_rate
-            self._frame_rate = int(frame_rate_node.value)
+
+            # Rounds the way discovery reads the same node, so that the camera interface and discover_camera_ids()
+            # report one rate for one device rather than differing by a frame whenever the node clamps.
+            self._frame_rate = int(round(number=frame_rate_node.value, ndigits=0))
 
         # Queries the current camera acquisition parameters and stores them in class attributes.
         self._frame_width = int(node_map.Width.value)
@@ -846,17 +858,21 @@ class HarvestersCamera:
         if not self._camera.is_acquiring():
             self._camera.start()
 
-        # Retrieves the next available image buffer from the camera. Uses the 'with' context to properly
-        # re-queue the buffer to acquire further images.
-        with self._camera.fetch() as buffer:
-            if buffer is None:  # pragma: no cover
-                message = (
-                    f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has failed to grab "
-                    f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
-                    f"connectivity issues."
-                )
-                console.error(message=message, error=BrokenPipeError)
+        # Retrieves the next available image buffer from the camera. The result is bound before its context is
+        # entered, since a failed fetch answers with None and entering a None context raises an opaque TypeError in
+        # place of the diagnostic error below.
+        buffer = self._camera.fetch()
 
+        if buffer is None:  # pragma: no cover
+            message = (
+                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has failed to grab "
+                f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
+                f"connectivity issues."
+            )
+            console.error(message=message, error=BrokenPipeError)
+
+        # Uses the 'with' context to properly re-queue the buffer to acquire further images.
+        with buffer:
             # Retrieves the contents (frame data) from the buffer.
             content = buffer.payload.components[0]
 
@@ -1283,9 +1299,11 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     # Resolves the CTI path once and caches it for reuse.
     cti_path = _get_cti_path()
 
-    # Instantiates the class and adds the input .cti file.
+    # Instantiates the class and adds the input .cti file. Both checks are requested, since _get_cti_path() returns
+    # the configured path unvalidated and a Producer that cannot be loaded would otherwise leave discovery reporting
+    # an empty camera list that is indistinguishable from a healthy Producer with no cameras attached.
     harvester = Harvester()
-    harvester.add_file(file_path=str(cti_path))
+    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
     # Gets the list of accessible cameras. Suppresses stdout to avoid verbose printouts about missing CTI features.
     with _suppress_output():
@@ -1370,10 +1388,11 @@ def _get_cti_path() -> Path:
     Raises:
         FileNotFoundError: If the function is unable to resolve the path to the .cti file.
     """
-    # Honors the runtime override before consulting the persisted path.
+    # Honors the runtime override before consulting the persisted path. The override is resolved, so that a relative
+    # value reaches every spawned child process as the same file the parent resolved.
     override = os.environ.get(_CTI_PATH_VARIABLE)
     if override:
-        return Path(override)
+        return Path(override).expanduser().resolve()
 
     # Uses platformdirs to locate the user's data directory and resolve the path to the .cti path file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))

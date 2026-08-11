@@ -396,6 +396,23 @@ def test_prepare_jobs_selects_requested_sources(tmp_path):
     )
 
 
+def test_prepare_jobs_collapses_a_repeated_source_id(tmp_path):
+    """Verifies that a repeated source identifier yields one descriptor rather than two sharing a dispatch key."""
+    log_directory = tmp_path / "logs"
+    _build_recording(log_directory=log_directory, source_ids=(1, 2))
+
+    job_set = prepare_jobs(
+        log_directory=log_directory,
+        output_directory=tmp_path / "output",
+        source_ids=["1", "1", "2", "1"],
+    )
+
+    # Two descriptors for one source share a dispatch key, which leaves the batch engine tracking one running job
+    # while two workers extract the same archive and write the same output file.
+    assert [job.source_id for job in job_set.jobs] == ["1", "2"]
+    assert len({job.dispatch_key for job in job_set.jobs}) == len(job_set.jobs)
+
+
 def test_prepare_jobs_selects_single_job_by_id(tmp_path):
     """Verifies that a requested job identifier selects one job and overrides any requested source identifiers."""
     log_directory = tmp_path / "logs"

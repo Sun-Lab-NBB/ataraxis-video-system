@@ -1,7 +1,9 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
+import cv2
 import numpy as np
 import pytest
+from tests.fake_opencv import FakeVideoCapture, build_capture_factory
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import CameraInterfaces, InputPixelFormats
@@ -12,6 +14,7 @@ from ataraxis_video_system.video.camera import (
     OpenCVCamera,
     HarvestersCamera,
     check_cti_file,
+    _get_opencv_ids,
     _get_harvesters_ids,
     discover_camera_ids,
     genicam_runtime_available,
@@ -266,6 +269,99 @@ def test_opencv_camera_grab_frame_errors() -> None:
         _ = camera.grab_frame()
 
 
+@pytest.mark.parametrize(
+    ("property_id", "requested", "reported", "argument"),
+    [
+        (cv2.CAP_PROP_FPS, 15, 30.0, "frame_rate"),
+        (cv2.CAP_PROP_FRAME_WIDTH, 320, 640.0, "frame_width"),
+        (cv2.CAP_PROP_FRAME_HEIGHT, 240, 480.0, "frame_height"),
+    ],
+)
+def test_opencv_camera_connect_rejects_a_substituted_parameter(
+    monkeypatch, property_id, requested, reported, argument
+) -> None:
+    """Verifies that connect() fails when the camera substitutes its own value for a requested parameter."""
+    capture = FakeVideoCapture(properties={property_id: reported}, accepts_writes=False)
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: capture}))
+
+    camera = OpenCVCamera(system_id=222, camera_index=0, **{argument: requested})
+
+    # The library performs no software decimation or scaling, so a camera acquiring at anything other than the
+    # requested parameters would leave the recording stamped with values it does not hold.
+    with pytest.raises(ValueError, match="Unable to configure the OpenCVCamera interface"):
+        camera.connect()
+
+    # The write was attempted before the readback rejected the substituted value, which is what separates a camera
+    # that refuses the parameter from one that was never asked for it.
+    assert (property_id, float(requested)) in capture.set_calls
+
+
+def test_opencv_camera_connect_accepts_a_rounded_frame_rate(monkeypatch) -> None:
+    """Verifies that a camera reporting the requested rate as a near-integer float is accepted rather than rejected."""
+    # A 30 fps camera commonly reports 29.97, which truncation would read as 29 and reject.
+    capture = FakeVideoCapture(properties={cv2.CAP_PROP_FPS: 29.97}, accepts_writes=False)
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: capture}))
+
+    camera = OpenCVCamera(system_id=222, camera_index=0, frame_rate=30)
+    camera.connect()
+
+    assert camera.frame_rate == 30
+
+
+def test_opencv_camera_grab_frame_converts_to_monochrome(monkeypatch) -> None:
+    """Verifies that a monochrome camera reduces the three-channel frame OpenCV returns to a single channel."""
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+
+    camera = OpenCVCamera(system_id=222, camera_index=0, color=False)
+    camera.connect()
+
+    frame = camera.grab_frame()
+
+    assert frame.ndim == 2
+    assert frame.shape == (480, 640)
+    assert camera.pixel_color_format == InputPixelFormats.MONOCHROME
+
+
+def test_get_opencv_ids_reports_every_working_index(monkeypatch) -> None:
+    """Verifies that OpenCV discovery reports one entry per working index and stops after five idle indices."""
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+
+    cameras = _get_opencv_ids()
+
+    assert len(cameras) == 1
+    assert cameras[0].camera_index == 0
+    assert cameras[0].interface == CameraInterfaces.OPENCV
+    assert cameras[0].frame_width == 640
+    assert cameras[0].frame_height == 480
+    assert cameras[0].acquisition_frame_rate == 30
+
+
+def test_get_opencv_ids_collapses_duplicate_device_nodes(monkeypatch) -> None:
+    """Verifies that two consecutive indices reporting identical properties collapse into one physical camera."""
+    # V4L2 routinely exposes one USB camera as two consecutive device nodes, only one of which can stream at a time.
+    first = FakeVideoCapture()
+    duplicate = FakeVideoCapture(readable=False)
+
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: first, 1: duplicate}))
+
+    # The duplicate answers reads while it is probed on its own, and refuses them while the first node is held open,
+    # since one physical camera streams to one capture at a time.
+    duplicate.readable = True
+    original_read = duplicate.read
+
+    def _read_unless_sibling_is_held():
+        """Refuses the read while the sibling node is streaming, the way a duplicate device node does."""
+        if first.released:
+            return original_read()
+        return False, None
+
+    monkeypatch.setattr(duplicate, "read", _read_unless_sibling_is_held)
+
+    cameras = _get_opencv_ids()
+
+    assert [camera.camera_index for camera in cameras] == [0]
+
+
 def test_harvesters_camera_init_repr() -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
     # Construction resolves no GenTL Producer, so this test needs neither hardware nor the simulator.
@@ -343,6 +439,45 @@ def test_harvesters_camera_connect_missing_frame_rate_node() -> None:
         assert default_camera.frame_rate == 0
     finally:
         default_camera.disconnect()
+
+
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_connect_rounds_the_frame_rate_node(monkeypatch) -> None:
+    """Verifies that a camera implementing AcquisitionFrameRate reports the node's value rounded, not truncated."""
+
+    class _FrameRateNode:
+        """Stands in for the optional AcquisitionFrameRate node the bundled simulator does not implement."""
+
+        def __init__(self) -> None:
+            self._value = 30.0
+
+        @property
+        def value(self) -> float:
+            """Returns the rate the node currently holds."""
+            return self._value
+
+        @value.setter
+        def value(self, new_value: float) -> None:
+            """Clamps the written rate the way a real float node does, landing just below the requested value."""
+            self._value = float(new_value) - 0.000076
+
+    node = _FrameRateNode()
+
+    def _resolve_node(node_map):
+        """Returns the stand-in node in place of the feature the simulated devices omit."""
+        assert node_map is not None
+        return node
+
+    monkeypatch.setattr(camera_module, "_get_frame_rate_node", _resolve_node)
+
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=30)
+    camera.connect()
+    try:
+        # Truncating the clamped readback would report 29, which is the value discovery already avoids by rounding,
+        # and would leave the two entry points describing one device with two different rates.
+        assert camera.frame_rate == 30
+    finally:
+        camera.disconnect()
 
 
 @pytest.mark.usefixtures("gentl_simulator")
