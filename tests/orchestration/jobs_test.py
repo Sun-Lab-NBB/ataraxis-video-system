@@ -21,11 +21,11 @@ from ataraxis_video_system.orchestration.jobs import (
     resolve_output_directory,
 )
 
-_ONSET_US = 1700000000000000
-"""The UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
+_ONSET_US: int = 1700000000000000
+"""Stores the UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
 
-_SPAWN_TIMEOUT_SECONDS = 180
-"""The time the spawned worker round-trip test waits for its single submitted call before failing."""
+_SPAWN_TIMEOUT_SECONDS: int = 180
+"""Stores the time the spawned worker round-trip test waits for its single submitted call before failing."""
 
 
 def _create_archive(directory, source_id):
@@ -423,13 +423,14 @@ def test_from_mapping_unreadable_path(tmp_path):
 def test_job_descriptor_pickle_round_trip(tmp_path):
     """Verifies that a descriptor pickles and unpickles unchanged, as a pool submission requires."""
     job = _build_descriptor(tmp_path=tmp_path, core_weight=4)
-    restored = pickle.loads(pickle.dumps(job))  # noqa: S301  # The payload is the descriptor built one line above.
+    restored = pickle.loads(pickle.dumps(job))  # noqa: S301 - The payload is the descriptor built one line above.
 
     assert restored == job
     assert restored.dispatch_key == job.dispatch_key
     assert restored.archive_path == job.archive_path
 
 
+@pytest.mark.xdist_group(name="orchestration")
 def test_job_descriptor_crosses_spawned_worker(tmp_path):
     """Verifies that a descriptor reaches a spawned worker intact and reconstructs from the mapping it returns."""
     job = _build_descriptor(tmp_path=tmp_path, core_weight=2)
@@ -475,5 +476,4 @@ def test_job_sizing_pickle_round_trip():
     """Verifies that a sizing record pickles unchanged, as a cross-process scheduler payload requires."""
     sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
 
-    # The payload is the record built one line above, so the round trip deserializes nothing untrusted.
-    assert pickle.loads(pickle.dumps(sizing)) == sizing  # noqa: S301
+    assert pickle.loads(pickle.dumps(sizing)) == sizing  # noqa: S301 - The payload is the record built one line above.

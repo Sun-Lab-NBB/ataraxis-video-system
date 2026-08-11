@@ -1,9 +1,4 @@
-"""Provides the sequential processing pipeline that runs the camera timestamp extraction jobs of one recording.
-
-Notes:
-    This module serves the command-line interface and any external driver that dispatches one job by its identifier.
-    It imports no batch engine. Batch orchestration across many recordings belongs to the MCP server.
-"""
+"""Provides the sequential processing pipeline that runs the camera timestamp extraction jobs of one recording."""
 
 from __future__ import annotations
 
@@ -37,8 +32,7 @@ def run_log_processing_pipeline(
 
     Notes:
         The tracker is aligned against the full job universe the camera manifest defines in both modes, which lets
-        independent external jobs share one tracker without resetting each other's state. That is what supports
-        running every source of one recording in parallel under an external scheduler.
+        independent external jobs share one tracker without resetting each other's state.
 
         Each job runs at the requested worker ceiling, and the extraction falls back to a sequential run only for an
         archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages. This path runs no sizing pass, so a job
@@ -53,7 +47,7 @@ def run_log_processing_pipeline(
         job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
             matching this ID is executed (external mode). If not provided, all requested jobs are run sequentially
             with automatic tracker management (local mode).
-        source_ids: A list of camera source IDs to process in local mode. Each ID must be registered in the camera
+        source_ids: The camera source IDs to process in local mode. Each ID must be registered in the camera
             manifest and correspond to exactly one archive under the log directory. If not provided, resolves all
             registered source IDs from the manifest. This argument is ignored in external mode.
         workers: The ceiling on the workers any single job receives. Setting this to a value less than 1 resolves the

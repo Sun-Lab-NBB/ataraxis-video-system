@@ -1,10 +1,10 @@
 """Provides synthetic Harvesters acquisition stand-ins shared by the camera test module.
 
-The GenICam frame grab path reshapes whatever payload the camera streams and re-orders its color channels, and the
-bundled GenTL Producer simulator streams RGB8 payloads alone: it never fails a fetch, never delivers a payload that is
-already in the BGR channel order, and never delivers one in a format the library does not support. Those three
-acquisition outcomes are reproduced with these stand-ins, which supply the payload while every reshaping, re-ordering,
-and rejection decision under test remains the library's own.
+The GenICam frame grab path reshapes whatever payload the camera streams and re-orders its color channels. The bundled
+GenTL Producer simulator streams RGB8 payloads alone: it never fails a fetch, never delivers a payload that is already
+in the BGR channel order, and never delivers one in a format the library does not support. Those three acquisition
+outcomes are reproduced with these stand-ins, which supply the payload while every reshaping, re-ordering, and
+rejection decision under test remains the library's own.
 """
 
 from typing import Self
@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-class FakeComponent:
+class _FakeComponent:
     """Emulates one component of a Harvesters buffer payload, which carries a single acquired frame.
 
     Args:
@@ -39,14 +39,14 @@ class FakeComponent:
         self.num_components_per_pixel = num_components_per_pixel
 
 
-class FakePayload:
+class _FakePayload:
     """Emulates the payload of a Harvesters buffer, which exposes the acquired frame as its first component.
 
     Args:
         component: The component carrying the acquired frame.
     """
 
-    def __init__(self, component: FakeComponent) -> None:
+    def __init__(self, component: _FakeComponent) -> None:
         self.components = (component,)
 
 
@@ -57,7 +57,7 @@ class FakeBuffer:
         payload: The payload this buffer carries.
     """
 
-    def __init__(self, payload: FakePayload) -> None:
+    def __init__(self, payload: _FakePayload) -> None:
         self.payload = payload
         self.entered = False
         self.exited = False
@@ -113,11 +113,11 @@ def build_frame_buffer(frame: NDArray[np.uint8], data_format: str) -> FakeBuffer
         The buffer instance carrying the flattened frame data.
     """
     channels = 1 if frame.ndim == 2 else frame.shape[2]
-    component = FakeComponent(
+    component = _FakeComponent(
         data=frame.reshape(-1),
         width=frame.shape[1],
         height=frame.shape[0],
         data_format=data_format,
         num_components_per_pixel=float(channels),
     )
-    return FakeBuffer(payload=FakePayload(component=component))
+    return FakeBuffer(payload=_FakePayload(component=component))

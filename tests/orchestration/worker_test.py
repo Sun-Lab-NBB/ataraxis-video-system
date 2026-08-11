@@ -13,7 +13,7 @@ from ataraxis_data_structures import (
     ProcessingTracker,
 )
 
-from ataraxis_video_system.orchestration import worker as worker_module
+from ataraxis_video_system.orchestration import worker
 from ataraxis_video_system.video.timestamps import ExtractedDataColumns
 from ataraxis_video_system.orchestration.jobs import (
     CAMERA_EXTRACTION_JOB_NAME,
@@ -42,10 +42,10 @@ class _CountingExecutor(ProcessPoolExecutor):
         super().__init__(max_workers=max_workers)
         self.submissions = 0
 
-    def submit(self, fn, /, *args, **kwargs):
+    def submit(self, function, /, *args, **kwargs):
         """Records the submission before handing the work to the underlying pool."""
         self.submissions += 1
-        return super().submit(fn, *args, **kwargs)
+        return super().submit(function, *args, **kwargs)
 
 
 def _build_archive(log_directory, source_id=_SOURCE_ID, frame_timestamps_us=None, data_timestamps_us=None):
@@ -389,7 +389,7 @@ def test_run_extraction_job_forwards_every_descriptor_field(tmp_path, monkeypatc
         """Records the arguments the runner derived from the descriptor instead of running the extraction."""
         calls.append(kwargs)
 
-    monkeypatch.setattr(worker_module, "execute_job", _record_call)
+    monkeypatch.setattr(target=worker, name="execute_job", value=_record_call)
 
     run_extraction_job(job=job)
 

@@ -17,9 +17,8 @@ from ataraxis_time import (
     convert_timestamp,
 )
 from tests.fake_opencv import FakeVideoCapture, build_capture_factory
-from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
-from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, DataLogger, SharedMemoryArray, assemble_log_archives
+from ataraxis_data_structures import DataLogger, SharedMemoryArray, assemble_log_archives
 
 from ataraxis_video_system import (
     VideoSystem,
@@ -35,127 +34,15 @@ from ataraxis_video_system.video.timestamps import extract_logged_camera_timesta
 from ataraxis_video_system.video.video_system import _empty_display_queue
 
 
-class _RecordingSaver:
-    """Records the encoder calls the frame saving loop makes, standing in for a VideoSaver without requiring FFMPEG."""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.frames: list = []
-
-    def start(self) -> None:
-        """Records the encoder startup."""
-        self.calls.append("start")
-
-    def save_frame(self, frame) -> None:
-        """Records the frame handed to the encoder."""
-        self.calls.append("save_frame")
-        self.frames.append(frame)
-
-    def stop(self) -> None:
-        """Records the encoder shutdown."""
-        self.calls.append("stop")
-
-
-class _ExplodingSaver:
-    """Fails on the first frame handed to it, standing in for an encoder whose pipe dies in the middle of a
-    recording.
-    """
-
-    def __init__(self) -> None:
-        self.stopped: bool = False
-
-    def start(self) -> None:
-        """Simulates a successful encoder startup."""
-
-    def save_frame(self, frame) -> None:
-        """Fails the way the encoder does when its input pipe is closed underneath it."""
-        message = f"ffmpeg pipe closed while saving a {frame.shape} frame"
-        raise RuntimeError(message)
-
-    def stop(self) -> None:
-        """Records the encoder shutdown."""
-        self.stopped = True
-
-
-class _ExplodingCamera:
-    """Fails on the first frame grab, standing in for a camera whose link to the hardware drops mid-acquisition."""
-
-    def __init__(self) -> None:
-        self.disconnected: bool = False
-
-    def connect(self) -> None:
-        """Simulates a successful connection to the camera hardware."""
-
-    def grab_frame(self):
-        """Fails the way a camera interface does when the link to the hardware drops."""
-        message = "camera link lost"
-        raise RuntimeError(message)
-
-    def disconnect(self) -> None:
-        """Records the release of the camera handle."""
-        self.disconnected = True
-
-
-def _wait_until(predicate, timeout_seconds: int = 15) -> bool:
-    """Blocks until the input predicate holds or the timeout elapses and reports whether the predicate held."""
-    timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
-    timeout_milliseconds = timeout_seconds * 1000
-    while timer.elapsed < timeout_milliseconds:
-        if predicate():
-            return True
-        timer.delay(delay=5, allow_sleep=True, block=False)
-    return predicate()
-
-
-def _drain_queue(target_queue) -> list:
-    """Removes and returns every item buffered in the input queue."""
-    items = []
-    while not target_queue.empty():
-        items.append(target_queue.get())
-    return items
-
-
-def _consumer_exit_at_once(*_arguments) -> None:
-    """Stands in for the consumer loop and returns at once, so the consumer process dies before it reports
-    initialization.
-    """
-
-
-def _consumer_exit_on_command(system_id, saver, saver_queue, logger_queue, terminator_array) -> None:
-    """Reports consumer initialization and exits once index 1 of the terminator array is set, standing in for a
-    consumer process that dies in the middle of a recording.
-    """
-    terminator_array.connect()
-    terminator_array[3] = 1
-
-    # Bounds the wait, so that a test which never issues the exit command still releases the process.
-    timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
-    while not terminator_array[1] and timer.elapsed < 60000:
-        timer.delay(delay=10, allow_sleep=True, block=False)
-
-    terminator_array.disconnect()
-
-
-def _producer_report_then_exit(
-    system_id, camera, display_frame_rate, saver_queue, logger_queue, terminator_array
-) -> None:
-    """Reports producer initialization and exits at once, standing in for a producer that dies immediately after
-    start() accepts its handshake.
-    """
-    terminator_array.connect()
-    terminator_array[2] = 1
-    terminator_array.disconnect()
-
-
 @pytest.fixture
 def data_logger(tmp_path) -> DataLogger:
     """Creates a DataLogger instance and returns it to the caller."""
     return DataLogger(output_directory=tmp_path, instance_name=str(randint(a=0, b=100000000000)))
 
 
-def test_init_repr(tmp_path, data_logger) -> None:
-    """Verifies the functioning of the VideoSystem __init__() and __repr__() methods."""
-    vs_instance = VideoSystem(
+def test_init_stores_parameters_and_renders_its_repr(tmp_path, data_logger) -> None:
+    """Verifies that constructing a VideoSystem stores the requested parameters and renders them in its repr."""
+    video_system = VideoSystem(
         system_id=np.uint8(1),
         data_logger=data_logger,
         name="test_camera",
@@ -164,20 +51,18 @@ def test_init_repr(tmp_path, data_logger) -> None:
         camera_index=0,
     )
 
-    # Verifies class properties
-    assert vs_instance.system_id == np.uint8(1)
-    assert not vs_instance.started
-    assert vs_instance.video_file_path is not None
+    assert video_system.system_id == np.uint8(1)
+    assert not video_system.started
+    assert video_system.video_file_path is not None
 
-    # Verifies the __repr__() method.
     representation_string: str = (
         f"VideoSystem(system_id={np.uint8(1)}, started={False}, camera=MockCamera, frame_saving={True})"
     )
-    assert repr(vs_instance) == representation_string
+    assert repr(video_system) == representation_string
 
 
-def test_init_errors(data_logger) -> None:
-    """Verifies the error handling behavior of the VideoSystem initialization method."""
+def test_init_rejects_invalid_constructor_arguments(data_logger) -> None:
+    """Verifies that an invalid system id, data logger, or output directory is rejected at construction."""
     # Invalid system_id input - causes conversion error
     invalid_system_id = "str"
     with pytest.raises((TypeError, ValueError)):
@@ -189,7 +74,6 @@ def test_init_errors(data_logger) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid data_logger input
     invalid_data_logger = None
     message = (
         f"Unable to initialize the VideoSystem instance with id 1. Expected an initialized "
@@ -204,7 +88,6 @@ def test_init_errors(data_logger) -> None:
             output_directory=data_logger.output_directory,
         )
 
-    # Invalid output_directory input
     invalid_output_directory = "Not a Path"
     message = (
         f"Unable to initialize the VideoSystem instance with id 1. Expected a Path instance or None "
@@ -245,7 +128,7 @@ def test_init_rejects_a_camera_acquiring_wider_than_eight_bit_frames(data_logger
         """Returns the 16-bit frame a GenICam camera configured for Mono12 or Mono16 delivers."""
         return np.zeros((4, 4), dtype=np.uint16)
 
-    monkeypatch.setattr(MockCamera, "grab_frame", _wide_frame)
+    monkeypatch.setattr(target=MockCamera, name="grab_frame", value=_wide_frame)
 
     # Every InputPixelFormats member describes 8 bits per component, so a wider frame hands the saver twice the bytes
     # the FFMPEG command declares and is demuxed as two frames, breaking frame-to-timestamp alignment.
@@ -266,7 +149,7 @@ def test_init_rejects_a_camera_acquiring_wider_than_eight_bit_frames(data_logger
 
 def test_init_builds_the_opencv_interface(data_logger, monkeypatch) -> None:
     """Verifies that the OpenCV branch of the interface selection builds, validates, and queries its camera."""
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     # The output directory is left unset, so the selection is exercised without requiring FFMPEG on the host.
     video_system = VideoSystem(
@@ -297,11 +180,10 @@ def test_empty_display_queue_releases_every_retained_frame() -> None:
     assert display_queue.unfinished_tasks == 0
 
 
-def test_camera_configuration_errors(data_logger, tmp_path) -> None:
-    """Verifies the error handling behavior of camera configuration during VideoSystem initialization."""
+def test_init_rejects_invalid_camera_configuration_arguments(data_logger, tmp_path) -> None:
+    """Verifies that an invalid camera index, rate, geometry, or interface is rejected at construction."""
     output_directory = tmp_path / "test_output_directory"
 
-    # Invalid camera index
     invalid_index = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
@@ -318,7 +200,6 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid frame rate
     invalid_frame_rate = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
@@ -335,7 +216,6 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid frame width
     invalid_frame_width = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
@@ -352,7 +232,6 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid frame height
     invalid_frame_height = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
@@ -427,7 +306,6 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid camera interface
     invalid_interface = "invalid"
     message_pattern = "Unable to configure the camera interface.*unsupported camera_interface"
     with pytest.raises(ValueError, match=message_pattern):
@@ -440,13 +318,12 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
         )
 
 
-def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
-    """Verifies the functioning of video saver configuration during VideoSystem initialization."""
+def test_init_builds_the_video_saver_for_the_available_encoder(data_logger, tmp_path, has_nvidia) -> None:
+    """Verifies that construction builds a video saver for whichever encoder the host supports."""
     output_directory = tmp_path / "test_output_directory"
 
-    # Tests GPU encoding if NVIDIA GPU is available, otherwise tests CPU encoding
     if has_nvidia and check_ffmpeg_availability():
-        vs = VideoSystem(
+        video_system = VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
             name="test_camera",
@@ -458,9 +335,9 @@ def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
             output_pixel_format=OutputPixelFormats.YUV444,
             quantization_parameter=5,
         )
-        assert vs._saver is not None
+        assert video_system._saver is not None
     elif check_ffmpeg_availability():
-        vs = VideoSystem(
+        video_system = VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
             name="test_camera",
@@ -472,13 +349,13 @@ def test_video_saver_configuration(data_logger, tmp_path, has_nvidia) -> None:
             output_pixel_format=OutputPixelFormats.YUV444,
             quantization_parameter=5,
         )
-        assert vs._saver is not None
+        assert video_system._saver is not None
 
 
 def test_init_rejects_a_host_without_ffmpeg(data_logger, tmp_path, monkeypatch) -> None:
     """Verifies that a host without FFMPEG is rejected at construction, before the video saver is built."""
     # The probe is answered rather than consulted, so the rejection is verified on a host that does have FFMPEG.
-    monkeypatch.setattr(video_system_module, "check_ffmpeg_availability", lambda: False)
+    monkeypatch.setattr(target=video_system_module, name="check_ffmpeg_availability", value=lambda: False)
 
     output_directory = tmp_path / "missing_ffmpeg_output"
     message = (
@@ -503,8 +380,8 @@ def test_init_rejects_a_host_without_ffmpeg(data_logger, tmp_path, monkeypatch) 
 def test_init_rejects_gpu_encoding_without_an_nvidia_gpu(data_logger, tmp_path, monkeypatch) -> None:
     """Verifies that GPU encoding requested on a host without an NVIDIA GPU is rejected at construction."""
     # Both probes are answered, so the outcome depends on the requested GPU index alone rather than on the host.
-    monkeypatch.setattr(video_system_module, "check_ffmpeg_availability", lambda: True)
-    monkeypatch.setattr(video_system_module, "check_gpu_availability", lambda: False)
+    monkeypatch.setattr(target=video_system_module, name="check_ffmpeg_availability", value=lambda: True)
+    monkeypatch.setattr(target=video_system_module, name="check_gpu_availability", value=lambda: False)
 
     output_directory = tmp_path / "missing_gpu_output"
     message = (
@@ -535,11 +412,10 @@ def test_init_rejects_gpu_encoding_without_an_nvidia_gpu(data_logger, tmp_path, 
     assert video_system._saver is not None
 
 
-def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
-    """Verifies the error handling behavior of video saver configuration during VideoSystem initialization."""
+def test_init_rejects_invalid_video_saver_arguments(data_logger, tmp_path) -> None:
+    """Verifies that an invalid gpu index, encoder, preset, pixel format, or quantization value is rejected."""
     output_directory = tmp_path / "test_output_directory"
 
-    # Invalid gpu index
     invalid_gpu = "str"
     message = (
         f"Unable to configure the video saver for the VideoSystem with id 1. Expected an "
@@ -555,7 +431,6 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid video encoder
     invalid_encoder = "invalid"
     message_pattern = "Unable to configure the video saver.*unexpected 'video_encoder'"
     with pytest.raises(ValueError, match=message_pattern):
@@ -568,7 +443,6 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid encoder preset
     invalid_preset = "invalid"
     message_pattern = "Unable to configure the video saver.*unexpected 'encoder_speed_preset'"
     with pytest.raises(ValueError, match=message_pattern):
@@ -581,7 +455,6 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid output pixel format
     invalid_format = "invalid"
     message_pattern = "Unable to configure the video saver.*unexpected 'output_pixel_format'"
     with pytest.raises(ValueError, match=message_pattern):
@@ -594,7 +467,6 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    # Invalid quantization parameter
     invalid_qp = "str"
     message = (
         f"Unable to configure the video saver for the VideoSystem with id 1. Expected an "
@@ -629,16 +501,12 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         )
 
 
-def test_start_stop(data_logger, tmp_path) -> None:
-    """Verifies the functioning of the start(), stop(), start_frame_saving() and stop_frame_saving() methods of the
-    VideoSystem class.
-
-    Also verifies internal DataLogger bindings and logged timestamp extraction methods.
-    """
-    # Creates two VideoSystem instances with different configurations
+@pytest.mark.xdist_group(name="video_system")
+def test_start_and_stop_control_the_recording_and_the_saving_gate(data_logger, tmp_path) -> None:
+    """Verifies the start, stop, and frame-saving controls of the VideoSystem alongside its DataLogger bindings."""
     output_directory = tmp_path / "test_output_directory"
 
-    video_system_1 = VideoSystem(
+    saving_system = VideoSystem(
         system_id=np.uint8(101),
         data_logger=data_logger,
         name="test_camera",
@@ -649,7 +517,7 @@ def test_start_stop(data_logger, tmp_path) -> None:
         quantization_parameter=40,
     )
 
-    video_system_2 = VideoSystem(
+    unsaved_system = VideoSystem(
         system_id=np.uint8(202),
         data_logger=data_logger,
         name="test_camera",
@@ -658,60 +526,55 @@ def test_start_stop(data_logger, tmp_path) -> None:
         frame_rate=5,
     )
 
-    # Starts all instances
     data_logger.start()
-    video_system_1.start()
+    saving_system.start()
     # Ensures that calling start twice does nothing.
-    video_system_1.start()
-    video_system_2.start()
+    saving_system.start()
+    unsaved_system.start()
 
-    assert video_system_1.started
-    assert video_system_2.started
+    assert saving_system.started
+    assert unsaved_system.started
 
-    # Tests frame saving control
     timer = PrecisionTimer(precision="s")
-    video_system_1.start_frame_saving()
+    saving_system.start_frame_saving()
     timer.delay(delay=2, allow_sleep=True, block=False)
-    video_system_1.stop_frame_saving()
+    saving_system.stop_frame_saving()
 
-    # Ensures that the saving commands are harmless for system 2, which has no video saver configured.
-    video_system_2.start_frame_saving()
-    video_system_2.stop_frame_saving()
+    # Ensures that the saving commands are harmless for the unsaved system, which has no video saver configured.
+    unsaved_system.start_frame_saving()
+    unsaved_system.stop_frame_saving()
 
-    # Re-enables saving for system 1
-    video_system_1.start_frame_saving()
+    saving_system.start_frame_saving()
     timer.delay(delay=2, allow_sleep=True, block=False)
-    video_system_1.stop_frame_saving()
+    saving_system.stop_frame_saving()
 
-    # Stops the video systems
-    video_system_1.stop()
-    video_system_2.stop()
+    saving_system.stop()
+    unsaved_system.stop()
     # Ensures that calling stop twice does nothing.
-    video_system_2.stop()
+    unsaved_system.stop()
 
-    assert not video_system_1.started
-    assert not video_system_2.started
+    assert not saving_system.started
+    assert not unsaved_system.started
 
     # Compresses logs for timestamp extraction
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
-    # Extracts frame timestamps for system 1 (which saved frames)
-    log_path_1 = data_logger.output_directory / "101_log.npz"
-    frame_timestamps_1 = extract_logged_camera_timestamps(log_path=log_path_1, workers=1)
-    # With fps of 10 and running for ~4 seconds total, should have acquired around 40 frames
-    assert 35 <= len(frame_timestamps_1) <= 45
+    # Extracts frame timestamps for the saving system, which is the only one that recorded frames.
+    saving_log_path = data_logger.output_directory / "101_log.npz"
+    saving_frame_timestamps = extract_logged_camera_timestamps(log_path=saving_log_path, workers=1)
+    # With a frame rate of 10 and ~4 seconds of recording in total, the system acquires around 40 frames.
+    assert 35 <= len(saving_frame_timestamps) <= 45
 
-    # Tests the system without frame saving
-    video_system_3 = VideoSystem(
+    default_system = VideoSystem(
         system_id=np.uint8(234),
         data_logger=data_logger,
         name="test_camera",
         output_directory=None,  # No output directory
         camera_interface=CameraInterfaces.MOCK,
     )
-    video_system_3.start()
+    default_system.start()
     timer.delay(delay=1, allow_sleep=True, block=False)
-    video_system_3.stop()
+    default_system.stop()
     data_logger.stop()
 
 
@@ -720,7 +583,7 @@ def test_start_reports_a_producer_that_never_initializes(data_logger, monkeypatc
     """Verifies that a producer that does not report initialization in time is reclaimed and reported."""
     # A spawned interpreter cannot report initialization within the first 20-millisecond poll tick, so a zero timeout
     # takes the stall arm deterministically.
-    monkeypatch.setattr(video_system_module, "_PROCESS_INITIALIZATION_TIMEOUT", 0)
+    monkeypatch.setattr(target=video_system_module, name="_PROCESS_INITIALIZATION_TIMEOUT", value=0)
 
     # The output directory is left unset, so the failed startup leaves no encoder subprocess behind.
     video_system = VideoSystem(
@@ -764,8 +627,8 @@ def test_start_reports_a_consumer_that_never_initializes(data_logger, tmp_path, 
     producer.
     """
     # The stand-in consumer never starts the encoder, so the saver is built without requiring FFMPEG on the host.
-    monkeypatch.setattr(video_system_module, "check_ffmpeg_availability", lambda: True)
-    monkeypatch.setattr(VideoSystem, "_frame_saving_loop", staticmethod(_consumer_exit_at_once))
+    monkeypatch.setattr(target=video_system_module, name="check_ffmpeg_availability", value=lambda: True)
+    monkeypatch.setattr(target=VideoSystem, name="_frame_saving_loop", value=staticmethod(_consumer_exit_at_once))
 
     video_system = VideoSystem(
         system_id=np.uint8(124),
@@ -890,7 +753,9 @@ def test_frame_production_loop_releases_a_departed_display_thread(monkeypatch) -
             displayed_frames.append(display_queue.get())
             display_queue.task_done()
 
-    monkeypatch.setattr(VideoSystem, "_frame_display_loop", staticmethod(_drain_two_frames_then_return))
+    monkeypatch.setattr(
+        target=VideoSystem, name="_frame_display_loop", value=staticmethod(_drain_two_frames_then_return)
+    )
 
     terminator_array = SharedMemoryArray.create_array(
         name="126_terminator_array", prototype=np.zeros(shape=4, dtype=np.uint8), exists_ok=True
@@ -957,7 +822,7 @@ def test_frame_production_loop_shuts_down_a_live_display_thread(monkeypatch) -> 
         PrecisionTimer(precision=TimerPrecisions.MILLISECOND).delay(delay=250, allow_sleep=True, block=False)
         finished.append(True)
 
-    monkeypatch.setattr(VideoSystem, "_frame_display_loop", staticmethod(_display_until_the_sentinel))
+    monkeypatch.setattr(target=VideoSystem, name="_frame_display_loop", value=staticmethod(_display_until_the_sentinel))
 
     terminator_array = SharedMemoryArray.create_array(
         name="127_terminator_array", prototype=np.zeros(shape=4, dtype=np.uint8), exists_ok=True
@@ -1016,7 +881,7 @@ def test_frame_production_loop_surfaces_a_camera_failure(capsys) -> None:
         # The producer process dies visibly rather than silently, which is what makes the watchdog's report
         # actionable, and it releases both of its handles on the way out.
         assert "camera link lost" in capsys.readouterr().err
-        assert camera.disconnected
+        assert camera._disconnected
         assert not terminator_array.is_connected
     finally:
         terminator_array.destroy()
@@ -1058,8 +923,8 @@ def test_frame_saving_loop_pairs_every_frame_with_its_timestamp() -> None:
 
     # The encoder is started once, fed every frame in queue order, and stopped after the last frame rather than
     # abandoned while it still holds an unfinalized video file.
-    assert saver.calls == ["start", *["save_frame"] * len(frames), "stop"]
-    for handed_frame, expected_frame in zip(saver.frames, frames, strict=True):
+    assert saver._calls == ["start", *["save_frame"] * len(frames), "stop"]
+    for handed_frame, expected_frame in zip(saver._frames, frames, strict=True):
         np.testing.assert_array_equal(handed_frame, expected_frame)
 
     # Exactly one log entry per encoded frame, in input order, each carrying that frame's own acquisition timestamp.
@@ -1095,7 +960,7 @@ def test_frame_saving_loop_surfaces_an_encoder_failure(capsys) -> None:
         # A mid-recording encoder failure still runs the cleanup, so the consumer process dies visibly with its
         # encoder stopped instead of dying silently while the encoder still holds the file.
         assert "ffmpeg pipe closed" in capsys.readouterr().err
-        assert saver.stopped
+        assert saver._stopped
         assert not terminator_array.is_connected
     finally:
         terminator_array.destroy()
@@ -1157,8 +1022,8 @@ def test_watchdog_reports_and_cleans_up_after_a_dead_producer(data_logger) -> No
 def test_watchdog_reports_a_dead_consumer(data_logger, tmp_path, monkeypatch) -> None:
     """Verifies that a consumer that dies mid-recording is reported as the consumer rather than the producer."""
     # The stand-in consumer never starts the encoder, so the saver is built without requiring FFMPEG on the host.
-    monkeypatch.setattr(video_system_module, "check_ffmpeg_availability", lambda: True)
-    monkeypatch.setattr(VideoSystem, "_frame_saving_loop", staticmethod(_consumer_exit_on_command))
+    monkeypatch.setattr(target=video_system_module, name="check_ffmpeg_availability", value=lambda: True)
+    monkeypatch.setattr(target=VideoSystem, name="_frame_saving_loop", value=staticmethod(_consumer_exit_on_command))
 
     video_system = VideoSystem(
         system_id=np.uint8(132),
@@ -1202,7 +1067,9 @@ def test_watchdog_activates_only_after_the_startup_completes(data_logger, monkey
 
     # The producer stand-in reports initialization and exits at once, so start() accepts the handshake and hands the
     # watchdog a system whose producer is already dead.
-    monkeypatch.setattr(VideoSystem, "_frame_production_loop", staticmethod(_producer_report_then_exit))
+    monkeypatch.setattr(
+        target=VideoSystem, name="_frame_production_loop", value=staticmethod(_producer_report_then_exit)
+    )
 
     video_system = VideoSystem(
         system_id=np.uint8(133),
@@ -1229,7 +1096,7 @@ def test_watchdog_activates_only_after_the_startup_completes(data_logger, monkey
             PrecisionTimer(precision=TimerPrecisions.MILLISECOND).delay(delay=200, allow_sleep=True, block=False)
             observations.append((producer_died, video_system._terminator_array is not None))
 
-    monkeypatch.setattr(video_system_module, "Thread", _WindowWideningThread)
+    monkeypatch.setattr(target=video_system_module, name="Thread", value=_WindowWideningThread)
 
     thread_errors: list = []
     original_excepthook = threading.excepthook
@@ -1252,11 +1119,10 @@ def test_watchdog_activates_only_after_the_startup_completes(data_logger, monkey
     assert video_system._terminator_array is None
 
 
-def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
-    """Verifies the validation of the display_frame_rate parameter."""
+def test_init_rejects_an_invalid_display_frame_rate(data_logger, tmp_path) -> None:
+    """Verifies that a display frame rate of the wrong type or above the acquisition rate is rejected."""
     output_directory = tmp_path / "test_output_directory"
 
-    # Tests invalid display frame rate (string instead of int)
     invalid_display_rate = "str"
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Encountered "
@@ -1300,7 +1166,7 @@ def test_init_disables_frame_display_on_macos(data_logger, monkeypatch) -> None:
     """Verifies that macOS degrades a requested frame display to disabled instead of rejecting the request."""
     # The constructor reads sys.platform at call time, which makes the macOS branch reachable from any host. Every
     # other platform read in the package resolves at import time and is therefore unaffected by this override.
-    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(target=sys, name="platform", value="darwin")
 
     # The output directory is left unset, so the degradation is exercised without requiring FFMPEG on the host.
     with pytest.warns(UserWarning, match="Displaying frames is currently not supported") as warning_records:
@@ -1315,7 +1181,7 @@ def test_init_disables_frame_display_on_macos(data_logger, monkeypatch) -> None:
         )
 
     # Construction succeeds and the requested rate is discarded, in contrast to the rates that
-    # test_display_frame_rate_validation has rejected outright.
+    # test_init_rejects_an_invalid_display_frame_rate has rejected outright.
     assert video_system._display_frame_rate == 0
 
     # The warning names the system that lost its display, which is what tells a user whose camera was disabled.
@@ -1324,15 +1190,15 @@ def test_init_disables_frame_display_on_macos(data_logger, monkeypatch) -> None:
 
 
 @pytest.mark.xdist_group(name="group1")
-def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
-    """Verifies that VideoSystem can be initialized with the OpenCV camera interface."""
+def test_init_builds_a_saver_for_the_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
+    """Verifies that construction over the OpenCV interface builds the video saver for the recording."""
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
     output_directory = tmp_path / "opencv_test"
-    vs = VideoSystem(
+    video_system = VideoSystem(
         system_id=np.uint8(50),
         data_logger=data_logger,
         name="test_camera",
@@ -1340,18 +1206,18 @@ def test_init_opencv_interface(has_opencv, data_logger, tmp_path) -> None:
         camera_interface=CameraInterfaces.OPENCV,
         camera_index=0,
     )
-    assert vs._saver is not None
+    assert video_system._saver is not None
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_init_harvesters_interface(data_logger, tmp_path) -> None:
-    """Verifies that VideoSystem can be initialized with the Harvesters camera interface."""
+def test_init_builds_a_saver_for_the_harvesters_interface(data_logger, tmp_path) -> None:
+    """Verifies that construction over the Harvesters interface builds the saver and applies the requested geometry."""
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
     output_directory = tmp_path / "harvesters_test"
     # The simulated devices report no acquisition rate of their own, so the encoder rate is supplied explicitly.
-    vs = VideoSystem(
+    video_system = VideoSystem(
         system_id=np.uint8(51),
         data_logger=data_logger,
         name="test_camera",
@@ -1362,22 +1228,22 @@ def test_init_harvesters_interface(data_logger, tmp_path) -> None:
         frame_width=200,
         frame_height=200,
     )
-    assert vs._saver is not None
-    assert vs._camera.frame_rate == 10
-    assert vs._camera.frame_width == 200
-    assert vs._camera.frame_height == 200
+    assert video_system._saver is not None
+    assert video_system._camera.frame_rate == 10
+    assert video_system._camera.frame_width == 200
+    assert video_system._camera.frame_height == 200
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_init_harvesters_interface_hardware(has_harvesters, data_logger, tmp_path) -> None:
-    """Verifies that VideoSystem can be initialized against real GenICam hardware."""
+def test_init_builds_a_saver_for_real_genicam_hardware(has_harvesters, data_logger, tmp_path) -> None:
+    """Verifies that construction against real GenICam hardware builds the video saver for the recording."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
     if not check_ffmpeg_availability():
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
     output_directory = tmp_path / "harvesters_hardware_test"
-    vs = VideoSystem(
+    video_system = VideoSystem(
         system_id=np.uint8(52),
         data_logger=data_logger,
         name="test_camera",
@@ -1385,37 +1251,12 @@ def test_init_harvesters_interface_hardware(has_harvesters, data_logger, tmp_pat
         camera_interface=CameraInterfaces.HARVESTERS,
         camera_index=0,
     )
-    assert vs._saver is not None
+    assert video_system._saver is not None
 
 
-def test_extract_logged_camera_timestamps_errors(tmp_path) -> None:
-    """Verifies the error handling of the extract_logged_camera_timestamps() function."""
-    # Tests with a non-existent file
-    non_existent_path = tmp_path / "non_existent.npz"
-    message = (
-        f"Unable to extract camera frame timestamp data from the log file {non_existent_path}, as it does not exist "
-        f"or does not point to a valid .npz archive."
-    )
-    with pytest.raises(ValueError, match=error_format(message)):
-        extract_logged_camera_timestamps(log_path=non_existent_path)
-
-    # Tests with invalid file extension
-    invalid_path = tmp_path / "invalid.txt"
-    invalid_path.touch()
-    message = (
-        f"Unable to extract camera frame timestamp data from the log file {invalid_path}, as it does not exist "
-        f"or does not point to a valid .npz archive."
-    )
-    with pytest.raises(ValueError, match=error_format(message)):
-        extract_logged_camera_timestamps(log_path=invalid_path)
-
-
-def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
-    """Verifies timestamp extraction with start/stop segments of frame saving.
-
-    Ensures that timestamps are correctly extracted when frame saving is enabled and disabled
-    multiple times during a single session.
-    """
+@pytest.mark.xdist_group(name="video_system")
+def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, tmp_path) -> None:
+    """Verifies that timestamps are extracted correctly across repeated frame-saving segments of one session."""
     system_id = np.uint8(99)
     frame_rate = 10  # Lower frame rate for easier validation
 
@@ -1434,7 +1275,6 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
         color=True,
     )
 
-    # Starts the systems.
     data_logger.start()
     video_system.start()
 
@@ -1461,14 +1301,11 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     timer.delay(delay=1, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
 
-    # Stops the systems.
     video_system.stop()
     data_logger.stop()
 
-    # Processes the logs.
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
-    # Extracts timestamps
     log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
     timestamps = extract_logged_camera_timestamps(log_path=log_file_path, workers=1)
 
@@ -1482,28 +1319,18 @@ def test_camera_timestamp_extraction(data_logger, tmp_path) -> None:
     # Checks for gaps in the timestamps that may indicate the recording pauses.
     # Uses a permissive threshold because the actual gap sizes depend on implementation details.
     if len(timestamps) > 10:
-        intervals = [timestamps[i] - timestamps[i - 1] for i in range(1, len(timestamps))]
-        max_interval = max(intervals)
+        intervals = [timestamps[index] - timestamps[index - 1] for index in range(1, len(timestamps))]
+        maximum_interval = max(intervals)
         average_interval = np.mean(intervals)
 
-        # The maximum interval might be larger due to pauses, but shouldn't be
-        # excessive (e.g., not more than 10x the average for this controlled test)
-        assert max_interval < average_interval * 10, "Detected unexpectedly large gap in timestamps"
+        # The pauses make the maximum interval larger than the average, but it stays under 10x the average in this
+        # controlled test.
+        assert maximum_interval < average_interval * 10, "Detected unexpectedly large gap in timestamps"
 
 
-def test_extract_logged_camera_timestamps_empty_archive(tmp_path) -> None:
-    """Verifies that extract_logged_camera_timestamps returns an empty array for archives with no messages."""
-    # Builds an archive holding the onset message alone, which is what a recording that acquired no frame produces.
-    archive_path = tmp_path / f"101{LOG_ARCHIVE_SUFFIX}"
-    create_test_archive(archive_path=archive_path, source_id=101, onset_us=1700000000000000, frame_timestamps_us=[])
-
-    timestamps = extract_logged_camera_timestamps(log_path=archive_path, workers=1)
-
-    assert timestamps.size == 0
-
-
-def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> None:
-    """Verifies that extract_logged_camera_timestamps works correctly with parallel processing."""
+@pytest.mark.xdist_group(name="orchestration")
+def test_parallel_extraction_matches_sequential_for_a_live_recording(data_logger, tmp_path) -> None:
+    """Verifies that parallel extraction of a recorded session's archive reproduces the sequential result."""
     system_id = np.uint8(77)
     frame_rate = 30
 
@@ -1534,16 +1361,125 @@ def test_extract_logged_camera_timestamps_parallel(data_logger, tmp_path) -> Non
     video_system.stop()
     data_logger.stop()
 
-    # Assembles log archives.
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
-    # Extracts timestamps using parallel workers.
     log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
     if log_file_path.exists():
         timestamps_parallel = extract_logged_camera_timestamps(log_path=log_file_path, workers=-1)
         timestamps_sequential = extract_logged_camera_timestamps(log_path=log_file_path, workers=1)
 
-        # Both methods should return the same timestamps.
         assert len(timestamps_parallel) == len(timestamps_sequential)
         np.testing.assert_array_equal(timestamps_parallel, timestamps_sequential)
         assert len(timestamps_parallel) > 2000
+
+
+class _RecordingSaver:
+    """Records the encoder calls the frame saving loop makes, standing in for a VideoSaver without requiring FFMPEG."""
+
+    def __init__(self) -> None:
+        self._calls: list[str] = []
+        self._frames: list = []
+
+    def start(self) -> None:
+        """Records the encoder startup."""
+        self._calls.append("start")
+
+    def save_frame(self, frame) -> None:
+        """Records the frame handed to the encoder."""
+        self._calls.append("save_frame")
+        self._frames.append(frame)
+
+    def stop(self) -> None:
+        """Records the encoder shutdown."""
+        self._calls.append("stop")
+
+
+class _ExplodingSaver:
+    """Fails on the first frame handed to it, standing in for an encoder whose pipe dies in the middle of a
+    recording.
+    """
+
+    def __init__(self) -> None:
+        self._stopped: bool = False
+
+    def start(self) -> None:
+        """Simulates a successful encoder startup."""
+
+    def save_frame(self, frame) -> None:
+        """Fails the way the encoder does when its input pipe is closed underneath it."""
+        message = f"ffmpeg pipe closed while saving a {frame.shape} frame"
+        raise RuntimeError(message)
+
+    def stop(self) -> None:
+        """Records the encoder shutdown."""
+        self._stopped = True
+
+
+class _ExplodingCamera:
+    """Fails on the first frame grab, standing in for a camera whose link to the hardware drops mid-acquisition."""
+
+    def __init__(self) -> None:
+        self._disconnected: bool = False
+
+    def connect(self) -> None:
+        """Simulates a successful connection to the camera hardware."""
+
+    def grab_frame(self):
+        """Fails the way a camera interface does when the link to the hardware drops."""
+        message = "camera link lost"
+        raise RuntimeError(message)
+
+    def disconnect(self) -> None:
+        """Records the release of the camera handle."""
+        self._disconnected = True
+
+
+def _wait_until(predicate, timeout_seconds: int = 15) -> bool:
+    """Blocks until the input predicate holds or the timeout elapses and reports whether the predicate held."""
+    timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
+    timeout_milliseconds = timeout_seconds * 1000
+    while timer.elapsed < timeout_milliseconds:
+        if predicate():
+            return True
+        timer.delay(delay=5, allow_sleep=True, block=False)
+    return predicate()
+
+
+def _drain_queue(target_queue) -> list:
+    """Removes and returns every item buffered in the input queue."""
+    items = []
+    while not target_queue.empty():
+        items.append(target_queue.get())
+    return items
+
+
+def _consumer_exit_at_once(*_arguments) -> None:
+    """Stands in for the consumer loop and returns at once, so the consumer process dies before it reports
+    initialization.
+    """
+
+
+def _consumer_exit_on_command(system_id, saver, saver_queue, logger_queue, terminator_array) -> None:
+    """Reports consumer initialization and exits once index 1 of the terminator array is set, standing in for a
+    consumer process that dies in the middle of a recording.
+    """
+    terminator_array.connect()
+    terminator_array[3] = 1
+
+    # Bounds the wait, so that a test which never issues the exit command still releases the process.
+    timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
+    while not terminator_array[1] and timer.elapsed < 60000:
+        timer.delay(delay=10, allow_sleep=True, block=False)
+
+    terminator_array.disconnect()
+
+
+def _producer_report_then_exit(
+    system_id, camera, display_frame_rate, saver_queue, logger_queue, terminator_array
+) -> None:
+    """Reports producer initialization and exits at once, standing in for a producer that dies immediately after
+    start() accepts its handshake.
+    """
+    terminator_array.connect()
+    terminator_array[2] = 1
+    terminator_array.disconnect()

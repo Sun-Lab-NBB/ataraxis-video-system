@@ -69,7 +69,6 @@ def set_cti_file(file_path: Path) -> None:
     """
     add_cti_file(cti_path=file_path)
 
-    # Notifies the user that the CTI file has been successfully set.
     console.echo(message=f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
 
 
@@ -126,7 +125,6 @@ def check_devices() -> None:
     opencv_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.OPENCV]
     harvesters_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
 
-    # Displays OpenCV camera information.
     if not opencv_cameras:
         console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.WARNING)
     else:
@@ -148,7 +146,6 @@ def check_devices() -> None:
                 )
             )
 
-    # Displays Harvesters camera information.
     if not genicam_runtime_available():
         console.echo(
             message=f"Harvesters camera discovery skipped. {GENICAM_UNAVAILABLE_REASON}",
@@ -226,7 +223,7 @@ def check_compatibility() -> None:
     default=-1,
     show_default=True,
     help="The index of the GPU device to use for video encoding. Setting this option to a value below zero (default) "
-    "forces the VideoSystem to use the CPU for encoding the videos. Note; GPU encoding currently requires an "
+    "forces the VideoSystem to use the CPU for encoding the videos. Note, GPU encoding currently requires an "
     "Nvidia GPU that supports hardware video encoding.",
 )
 @click.option(
@@ -287,7 +284,6 @@ def live_run(
     the terminal. Primarily, this CLI is designed to help with the initial identification and calibration of VideoSystem
     instances and does not support the full range of features offered through the VideoSystem class API.
     """
-    # Initializes and starts the DataLogger instance.
     logger = DataLogger(output_directory=output_directory, instance_name="axvs_live_run")
     logger.start()
 
@@ -309,13 +305,13 @@ def live_run(
         frame_width=width,
         frame_height=height,
         frame_rate=frame_rate,
-        display_frame_rate=25,  # Statically sets the display rate to 25 fps.
+        display_frame_rate=25,
         color=not monochrome,
         gpu=gpu_index,
         video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
         encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
         output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
-        quantization_parameter=15,  # Statically sets the H264 quantization parameter to 15.
+        quantization_parameter=15,
     )
 
     video_system.start()
@@ -383,7 +379,7 @@ def live_run(
     "-od",
     "--output-directory",
     required=True,
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    type=click.Path(exists=False, file_okay=False, dir_okay=True, writable=True, path_type=Path),
     help="The root path under which processed output files are written. A camera_timestamps/ subdirectory is created "
     "automatically beneath it and holds the processing tracker and every output file.",
 )
@@ -420,7 +416,7 @@ def live_run(
     show_default=True,
     help="Determines whether to display progress bars during timestamp extraction.",
 )
-def process(
+def process_log_archives(
     log_directory: Path,
     output_directory: Path,
     job_id: str | None,
@@ -497,7 +493,7 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
 )
 @click.pass_context
 def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool) -> None:
-    """Allows working with the configuration of the GenTL- (Harvesters)-compatible cameras."""
+    """Allows working with the configuration of GenTL (Harvesters) compatible cameras."""
     context.ensure_object(dict)
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
@@ -520,7 +516,7 @@ def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *
     "blacklisted.",
 )
 @click.pass_context
-def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:
+def read_genicam_configuration(context: click.Context, camera_index: int, node_name: str) -> None:
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists every
@@ -567,7 +563,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
     required=True,
     help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
-def configuration_write(camera_index: int, node_name: str, value: str) -> None:
+def write_genicam_configuration(camera_index: int, node_name: str, value: str) -> None:
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
@@ -591,11 +587,11 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None:
     "-o",
     "--output-file",
     required=True,
-    type=click.Path(file_okay=True, dir_okay=False, path_type=Path),
+    type=click.Path(exists=False, file_okay=True, dir_okay=False, writable=True, path_type=Path),
     help="The path to the output YAML file to write the configuration to.",
 )
 @click.pass_context
-def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:
+def dump_genicam_configuration(context: click.Context, camera_index: int, output_file: Path) -> None:
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     The output YAML includes every writable (ReadWrite) node that is not blacklisted, with its current value, as well
@@ -637,7 +633,7 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
     "and the connected camera.",
 )
 @click.pass_context
-def configuration_load(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
+def load_genicam_configuration(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
     Applies every non-blacklisted writable node from the configuration file to the camera. Optionally validates that

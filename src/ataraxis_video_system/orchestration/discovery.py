@@ -120,7 +120,7 @@ class JobSet:
         console.error(message=message, error=ValueError)
 
         # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
-        raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
+        raise ValueError(message)  # pragma: no cover
 
 
 def resolve_jobs(log_directory: Path) -> JobUniverse:
@@ -238,11 +238,9 @@ def prepare_jobs(
         than on disk.
 
         Reads no archive. Every job carries the core ceiling as its width, and the extraction falls back to a
-        sequential run only for an archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages, so a caller that
-        only runs jobs pays nothing to prepare them. A caller that weighs jobs against a budget sizes each one through
-        size_job, which is the only pass that narrows a width to the workers an archive repays. The ceiling is bounded
-        by CAMERA_EXTRACTION_JOB_CORES, so a job prepared without sizing holds no more cores than that cap, though an
-        archive above the threshold may hold more cores than the sizing pass would grant it.
+        sequential run only for an archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages. The ceiling is
+        bounded by CAMERA_EXTRACTION_JOB_CORES, so a job prepared without sizing holds no more cores than that cap,
+        though an archive above the threshold may hold more cores than the sizing pass would grant it.
 
         The tracker is aligned against the whole manifest universe whichever subset this call prepares, so several
         invocations naming different jobs share one tracker without resetting each other's recorded outcomes.
@@ -392,12 +390,7 @@ def size_job(job: JobDescriptor, core_ceiling: int = -1) -> tuple[JobDescriptor,
     """Sizes one prepared job from the archive it reads.
 
     Notes:
-        Reads the archive's zip directory and its file metadata alone, decoding no message. A caller that admits
-        jobs against a core and a memory budget runs this over the set it prepared, while a caller that only runs
-        jobs in turn has nothing to weigh and skips it.
-
-        Resolves both the width and the memory this stage demands, so a scheduler dispatching this stage asks for
-        the figures rather than composing them from the model itself.
+        Reads the archive's zip directory and its file metadata alone, decoding no message.
 
     Args:
         job: The prepared job to size.

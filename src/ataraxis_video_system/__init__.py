@@ -11,7 +11,8 @@ import os
 import multiprocessing as mp
 
 # Applies library-wide configurations that keep multiprocessing and frame display behaving consistently across
-# platforms.
+# platforms. This block must run before the imports below, as the start method has to be set before any process
+# spawns, and the OpenCV and Qt variables are read while the 'video' subpackage imports execute.
 if mp.get_start_method(allow_none=True) is None:
     # Makes the library behave the same way across all platforms.
     mp.set_start_method("spawn")

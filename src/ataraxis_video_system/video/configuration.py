@@ -19,59 +19,12 @@ if TYPE_CHECKING:
     from genicam.genapi import NodeMap
 
 
-class _NodeType(IntEnum):
-    """Defines GenICam ``principal_interface_type`` codes."""
-
-    INTEGER = 2
-    """Integer-valued node."""
-    BOOLEAN = 3
-    """Boolean-valued node."""
-    COMMAND = 4
-    """Command (action trigger) node."""
-    FLOAT = 5
-    """Float-valued node."""
-    STRING = 6
-    """String-valued node."""
-    REGISTER = 7
-    """Raw register node."""
-    CATEGORY = 8
-    """Category (container) node."""
-    ENUMERATION = 9
-    """Enumeration-valued node."""
-    ENUM_ENTRY = 10
-    """Single entry within an Enumeration node."""
-    PORT = 11
-    """Port node."""
-
-
-class _AccessMode(IntEnum):
-    """Defines GenICam ``get_access_mode()`` codes."""
-
-    NOT_IMPLEMENTED = 0
-    """Node is not implemented by the device."""
-    NOT_AVAILABLE = 1
-    """Node is currently not available."""
-    WRITE_ONLY = 2
-    """Node can be written but not read."""
-    READ_ONLY = 3
-    """Node can be read but not written."""
-    READ_WRITE = 4
-    """Node can be both read and written."""
-
-
 DEFAULT_BLACKLISTED_NODES: frozenset[str] = frozenset({"CustomerIDKey", "CustomerValueKey", "TestPattern"})
 """Node names silently skipped during configuration enumeration and apply operations.
 
 Some vendor-specific nodes report ReadWrite access but reject writes at the hardware level, causing spurious
-errors. These nodes are excluded by default from all configuration operations. End users can override this set
-via the ``blacklisted_nodes`` parameter on ``enumerate_genicam_nodes``, ``read_genicam_nodes``, and
-``apply_genicam_configuration``.
+errors. These nodes are excluded by default from all configuration operations.
 """
-
-_VALUE_NODE_TYPES: frozenset[int] = frozenset(
-    {_NodeType.INTEGER, _NodeType.BOOLEAN, _NodeType.FLOAT, _NodeType.STRING, _NodeType.ENUMERATION}
-)
-"""The GenICam node type codes that represent collectible leaf value nodes."""
 
 _APPLY_PHASE_ORDER: tuple[tuple[str, ...], ...] = (
     # Phase 1, Unlock: disables auto-controls and centering that lock dependent nodes.
@@ -211,6 +164,52 @@ class GenicamConfiguration(YamlConfig):
     """The list of ReadWrite GenICam nodes with their current values."""
 
 
+class _NodeType(IntEnum):
+    """Defines GenICam ``principal_interface_type`` codes."""
+
+    INTEGER = 2
+    """Integer-valued node."""
+    BOOLEAN = 3
+    """Boolean-valued node."""
+    COMMAND = 4
+    """Command (action trigger) node."""
+    FLOAT = 5
+    """Float-valued node."""
+    STRING = 6
+    """String-valued node."""
+    REGISTER = 7
+    """Raw register node."""
+    CATEGORY = 8
+    """Category (container) node."""
+    ENUMERATION = 9
+    """Enumeration-valued node."""
+    ENUM_ENTRY = 10
+    """Single entry within an Enumeration node."""
+    PORT = 11
+    """Port node."""
+
+
+class _AccessMode(IntEnum):
+    """Defines GenICam ``get_access_mode()`` codes."""
+
+    NOT_IMPLEMENTED = 0
+    """Node is not implemented by the device."""
+    NOT_AVAILABLE = 1
+    """Node is currently not available."""
+    WRITE_ONLY = 2
+    """Node can be written but not read."""
+    READ_ONLY = 3
+    """Node can be read but not written."""
+    READ_WRITE = 4
+    """Node can be both read and written."""
+
+
+_VALUE_NODE_TYPES: frozenset[int] = frozenset(
+    {_NodeType.INTEGER, _NodeType.BOOLEAN, _NodeType.FLOAT, _NodeType.STRING, _NodeType.ENUMERATION}
+)
+"""The GenICam node type codes that represent collectible leaf value nodes."""
+
+
 def enumerate_genicam_nodes(
     node_map: NodeMap,
     blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
@@ -245,7 +244,7 @@ def enumerate_genicam_nodes(
         # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
         try:
             name: str = node.node.name
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: S112 - a locked node raises on name access, and the traversal skips it.
             continue
 
         # Skips already-visited nodes to avoid cycles in the category tree.
@@ -260,7 +259,7 @@ def enumerate_genicam_nodes(
         # Resolves the node's principal interface type to determine how to handle it.
         try:
             type_code = int(node.node.principal_interface_type)
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: S112 - a locked node raises on type access, and the traversal skips it.
             continue
 
         # Descends into Category nodes by pushing their children onto the stack.
@@ -347,7 +346,6 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
     feature = getattr(node_map, name)
     raw_node = feature.node
 
-    # Rejects nodes that are not readable value nodes.
     type_code = int(raw_node.principal_interface_type)
     if type_code not in _VALUE_NODE_TYPES:
         message = (
@@ -383,15 +381,12 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
         ValueError: If the node is not a value type (Integer, Float, Boolean, String, or Enumeration), or is not
             readable (must be ReadWrite or ReadOnly).
     """
-    # Accesses the named feature and its underlying GenICam node descriptor.
     feature = getattr(node_map, name)
     raw_node = feature.node
 
-    # Reads the integer type and access mode codes from the node descriptor.
     type_code = int(raw_node.principal_interface_type)
     access_code = int(raw_node.get_access_mode())
 
-    # Rejects nodes that are not readable value nodes.
     if type_code not in _VALUE_NODE_TYPES:
         message = (
             f"Unable to format GenICam node '{name}'. The node must be a value type (Integer, Float, Boolean, "
@@ -427,19 +422,16 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
         f"  Description: {description}",
     ]
 
-    # Appends numeric range information for Integer and Float nodes.
     if type_code in (_NodeType.INTEGER, _NodeType.FLOAT):
         with suppress(Exception):
             lines.append(f"  Min: {feature.min}")
         with suppress(Exception):
             lines.append(f"  Max: {feature.max}")
 
-    # Appends the step increment for Integer nodes.
     if type_code == _NodeType.INTEGER:
         with suppress(Exception):
             lines.append(f"  Increment: {feature.inc}")
 
-    # Appends the list of valid entry names for Enumeration nodes.
     if type_code == _NodeType.ENUMERATION:
         with suppress(Exception):
             entry_names = [str(entry.node.name) for entry in feature.entries]
@@ -474,7 +466,6 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
     """
     feature = getattr(node_map, name)
 
-    # Rejects nodes that are not writable.
     access_code = int(feature.node.get_access_mode())
     if access_code != _AccessMode.READ_WRITE:
         message = (
@@ -483,7 +474,6 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
         )
         console.error(message=message, error=ValueError)
 
-    # Coerces the string value to the node's native type.
     type_code = int(feature.node.principal_interface_type)
     typed_value: int | float | str | bool
     if type_code == _NodeType.INTEGER:
@@ -568,7 +558,6 @@ def apply_genicam_configuration(
             continue
         node_lookup.setdefault(node_info.name, []).append(node_info)
 
-    # Validates that all nodes in the lookup exist on the device.
     for name in node_lookup:
         if not hasattr(node_map, name):
             message = (
@@ -718,7 +707,6 @@ def _coerce_boolean(name: str, value: str) -> bool:
     )
     console.error(message=message, error=ValueError)
 
-    # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
     raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
 
 

@@ -78,8 +78,8 @@ def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> st
     """
     try:
         with harvester_connection(camera_index=camera_index) as camera:
-            # Delegates value conversion and writing to the camera's set_node_value method. That method casts the
-            # string value to int, float, or bool by node type, keeping enumeration and string nodes as raw strings.
+            # The camera's set_node_value method casts the string value to int, float, or bool by node type, keeping
+            # enumeration and string nodes as raw strings.
             camera.set_node_value(name=node_name, value=value)
     except Exception as error:
         return f"Error: {error}"
@@ -120,8 +120,6 @@ def dump_genicam_config_tool(
             # current value, and addressing selectors of each node entry.
             config = camera.get_configuration(blacklisted_nodes=blacklist)
 
-            # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera
-            # of the same model.
             config.to_yaml(file_path=Path(output_file))
             return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
     except Exception as error:
@@ -165,7 +163,7 @@ def load_genicam_config_tool(
         with harvester_connection(camera_index=camera_index) as camera:
             # Deserializes the YAML configuration and applies each writable node value to the connected camera. When
             # strict_identity is True, the camera model and serial number must match the values stored in the YAML
-            # file; otherwise, a mismatch produces a warning but proceeds with the write.
+            # file. Otherwise, a mismatch produces a warning and the write proceeds.
             config = GenicamConfiguration.from_yaml(file_path=path)
             camera.apply_configuration(config=config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
     except Exception as error:
@@ -176,8 +174,6 @@ def load_genicam_config_tool(
 
 def _resolve_blacklist(blacklisted_nodes: list[str] | None) -> frozenset[str]:
     """Resolves an optional blacklist parameter to a frozenset suitable for GenICam configuration functions.
-
-    Converts a list of node names to a frozenset when provided, or returns the library default blacklist when None.
 
     Args:
         blacklisted_nodes: A list of GenICam node names to exclude, or None to use the default blacklist.

@@ -148,10 +148,10 @@ def extract_logged_camera_timestamps(
         if display_progress:
             with console.progress(
                 total=len(batches), description="Extracting camera frame timestamps", unit="batch"
-            ) as pbar:
+            ) as progress_bar:
                 for future in as_completed(future_to_index):
                     results[future_to_index[future]] = future.result()
-                    pbar.update(1)
+                    progress_bar.update(1)
         else:
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()

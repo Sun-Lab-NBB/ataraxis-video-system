@@ -25,8 +25,8 @@ def list_cameras_tool() -> str:
         message if no cameras are found. A trailing note reports the skipped Harvesters discovery when the GenICam
         camera runtime is unavailable.
     """
-    # Runs the discovery procedure across both OpenCV and Harvesters interfaces. OpenCV cameras are probed by
-    # iterating over positional indices, while Harvesters cameras are enumerated through the GenTL Producer.
+    # OpenCV cameras are probed by iterating over positional indices, while Harvesters cameras are enumerated through
+    # the GenTL Producer.
     all_cameras = discover_camera_ids()
 
     # Names the skipped interface, so that an empty or OpenCV-only listing is not read as an absence of GenICam
@@ -36,21 +36,15 @@ def list_cameras_tool() -> str:
     if not all_cameras:
         return f"No cameras discovered on the system.{skip_note}"
 
-    # Formats each discovered camera as a human-readable summary line. Harvesters cameras include model and serial
-    # number because the GenTL interface exposes this metadata, whereas OpenCV does not.
-    lines: list[str] = []
-
-    for camera in all_cameras:
-        if camera.interface == CameraInterfaces.OPENCV:
-            lines.append(
-                f"OpenCV #{camera.camera_index}: "
-                f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
-            )
-        else:
-            lines.append(
-                f"Harvesters #{camera.camera_index}: {camera.model} ({camera.serial_number}) "
-                f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
-            )
+    # Harvesters cameras include model and serial number because the GenTL interface exposes this metadata, whereas
+    # OpenCV does not.
+    lines = [
+        f"OpenCV #{camera.camera_index}: {camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
+        if camera.interface == CameraInterfaces.OPENCV
+        else f"Harvesters #{camera.camera_index}: {camera.model} ({camera.serial_number}) "
+        f"{camera.frame_width}x{camera.frame_height}@{camera.acquisition_frame_rate}fps"
+        for camera in all_cameras
+    ]
 
     return "\n".join(lines) + skip_note
 
@@ -135,7 +129,6 @@ def check_runtime_requirements_tool() -> str:
     gpu_available = check_gpu_availability()
     cti_path = check_cti_file()
 
-    # Formats each check result as a short status token for compact display.
     ffmpeg_status = "OK" if ffmpeg_available else "Missing"
     gpu_status = "OK" if gpu_available else "None"
 

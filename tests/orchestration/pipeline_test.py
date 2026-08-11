@@ -19,14 +19,14 @@ from ataraxis_video_system.orchestration.jobs import (
 from ataraxis_video_system.orchestration.pipeline import run_log_processing_pipeline
 from ataraxis_video_system.orchestration.allocation import resolve_core_budget
 
-_ONSET_US = 1700000000000000
-"""The UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
+_ONSET_US: int = 1700000000000000
+"""Stores the UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
 
-_FRAME_ELAPSED_US = [1000, 2000, 3000]
-"""The elapsed frame acquisition timestamps, in microseconds, written into every synthetic log archive."""
+_FRAME_ELAPSED_US: list[int] = [1000, 2000, 3000]
+"""Stores the elapsed frame acquisition timestamps, in microseconds, written into every synthetic log archive."""
 
-_FRAME_COLUMN = str(ExtractedDataColumns.FRAME_TIME)
-"""The name of the only column the extracted timestamp table carries."""
+_FRAME_COLUMN: str = str(ExtractedDataColumns.FRAME_TIME)
+"""Stores the name of the only column the extracted timestamp table carries."""
 
 
 def _archive_path(log_directory, source_id):
@@ -71,7 +71,7 @@ def _record_dispatches(monkeypatch):
     def _record(**arguments):
         calls.append(arguments)
 
-    monkeypatch.setattr(pipeline, "execute_job", _record)
+    monkeypatch.setattr(target=pipeline, name="execute_job", value=_record)
     return calls
 
 
@@ -200,7 +200,7 @@ def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, 
         message = f"The pipeline sized a job from its archive: {arguments}."
         raise AssertionError(message)
 
-    monkeypatch.setattr(discovery, "resolve_archive_footprint", _forbidden_footprint)
+    monkeypatch.setattr(target=discovery, name="resolve_archive_footprint", value=_forbidden_footprint)
     calls = _record_dispatches(monkeypatch=monkeypatch)
 
     output_directory = tmp_path / "output"

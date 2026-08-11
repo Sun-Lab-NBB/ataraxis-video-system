@@ -4,22 +4,22 @@ from ataraxis_video_system import CAMERA_MANIFEST_FILENAME, CameraManifest, Came
 from ataraxis_video_system.video.manifest import write_camera_manifest
 
 
-def test_camera_source_data_creation() -> None:
+def test_camera_source_data_stores_the_supplied_field_values() -> None:
     """Verifies creation of CameraSourceData instances with explicit field values."""
     source = CameraSourceData(id=112, name="face_camera")
     assert source.id == 112
     assert source.name == "face_camera"
 
 
-def test_camera_source_data_defaults() -> None:
-    """Verifies that CameraSourceData uses correct default values."""
+def test_camera_source_data_defaults_to_an_unnamed_zero_source() -> None:
+    """Verifies that a default CameraSourceData carries a zero source id and an empty name."""
     source = CameraSourceData()
     assert source.id == 0
     assert source.name == ""
 
 
-def test_camera_manifest_yaml_roundtrip(tmp_path) -> None:
-    """Verifies CameraManifest serialization and deserialization via YAML."""
+def test_camera_manifest_survives_a_yaml_roundtrip(tmp_path) -> None:
+    """Verifies that a CameraManifest survives serialization to YAML and deserialization back."""
     sources = [
         CameraSourceData(id=51, name="face_camera"),
         CameraSourceData(id=62, name="body_camera"),
@@ -37,8 +37,8 @@ def test_camera_manifest_yaml_roundtrip(tmp_path) -> None:
     assert loaded.sources[1].name == "body_camera"
 
 
-def test_camera_manifest_empty_yaml_roundtrip(tmp_path) -> None:
-    """Verifies YAML roundtrip for a CameraManifest with no sources."""
+def test_an_empty_camera_manifest_survives_a_yaml_roundtrip(tmp_path) -> None:
+    """Verifies that a CameraManifest holding no sources survives a YAML roundtrip."""
     manifest = CameraManifest(sources=[])
 
     yaml_path = tmp_path / "empty_manifest.yaml"
@@ -48,7 +48,7 @@ def test_camera_manifest_empty_yaml_roundtrip(tmp_path) -> None:
     assert loaded.sources == []
 
 
-def test_write_camera_manifest_new(tmp_path) -> None:
+def test_write_camera_manifest_creates_a_missing_manifest(tmp_path) -> None:
     """Verifies that write_camera_manifest creates a new manifest file."""
     write_camera_manifest(log_directory=tmp_path, source_id=111, name="test_camera")
 
@@ -89,7 +89,7 @@ def test_write_camera_manifest_keeps_sibling_sources(tmp_path) -> None:
     assert loaded.sources[0].id == 51
 
 
-def test_write_camera_manifest_append(tmp_path) -> None:
+def test_write_camera_manifest_appends_a_new_source(tmp_path) -> None:
     """Verifies that write_camera_manifest appends to an existing manifest."""
     write_camera_manifest(log_directory=tmp_path, source_id=51, name="face_camera")
     write_camera_manifest(log_directory=tmp_path, source_id=62, name="body_camera")

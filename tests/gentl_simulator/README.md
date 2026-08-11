@@ -7,9 +7,9 @@ carries them alongside the test suite, so that a released version stays reproduc
 `TLSimu.cti` is the GenTL Producer simulator from the GenICam reference implementation. It presents four simulated
 devices (`TLSimuMono` and `TLSimuColor`, two of each across two interfaces) and serves synthetic frames through the
 regular GenTL buffer flow, so `HarvestersCamera` drives it through the same code path it uses for a real camera.
-`libVirtualFG` is the virtual frame grabber that `TLSimu.cti` links against, and it must stay in the same directory
-because each producer resolves it relative to its own location, through `$ORIGIN` on Linux, `@loader_path` on macOS,
-and the loader's DLL search order on Windows.
+`libVirtualFG` is the virtual frame grabber that `TLSimu.cti` links against, and it must stay in the same directory.
+Each producer resolves it relative to its own location, through `$ORIGIN` on Linux, `@loader_path` on macOS, and the
+loader's DLL search order on Windows.
 
 ## Provenance
 

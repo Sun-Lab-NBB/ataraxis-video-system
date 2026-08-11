@@ -2,8 +2,6 @@
 round trip a prepared job set exercises.
 """
 
-from pathlib import Path
-
 import pytest
 from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
@@ -326,7 +324,7 @@ def test_prepare_jobs_reads_no_archive(tmp_path, monkeypatch):
         message = f"prepare_jobs read an archive: {kwargs}."
         raise AssertionError(message)
 
-    monkeypatch.setattr(discovery, "resolve_archive_footprint", _explode)
+    monkeypatch.setattr(target=discovery, name="resolve_archive_footprint", value=_explode)
 
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", core_ceiling=4)
 
@@ -500,7 +498,7 @@ def test_prepare_jobs_ambiguous_archive_under_strict_sourcing(tmp_path):
 
 
 def test_prepare_jobs_records_skipped_sources_without_strict_sourcing(tmp_path):
-    """Verifies that unstrict sourcing records every unpreparable source with its reason instead of raising."""
+    """Verifies that lenient sourcing records every source it cannot prepare with its reason instead of raising."""
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1,))
     write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
@@ -519,6 +517,44 @@ def test_prepare_jobs_records_skipped_sources_without_strict_sourcing(tmp_path):
     )
     # The skipped sources stay in the universe the tracker is aligned against.
     assert (CAMERA_EXTRACTION_JOB_NAME, "2") in job_set.universe
+
+
+def test_prepare_jobs_returns_an_empty_set_when_lenient_sourcing_skips_every_source(tmp_path):
+    """Verifies that a lenient request preparing no job returns a set rather than failing on tracker alignment."""
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    write_camera_manifest(log_directory=log_directory, source_id=1, name="one")
+    write_camera_manifest(log_directory=log_directory, source_id=2, name="two")
+    create_test_archive(archive_path=log_directory / "1.npz", source_id=1, onset_us=0, frame_timestamps_us=[1, 2])
+
+    job_set = prepare_jobs(
+        log_directory=log_directory,
+        output_directory=tmp_path / "out",
+        source_ids=["2"],
+        strict_sources=False,
+    )
+
+    assert job_set.jobs == ()
+    assert [source_id for source_id, _ in job_set.skipped_sources] == ["2"]
+
+
+def test_prepare_jobs_creates_no_output_directory_when_it_prepares_no_job(tmp_path):
+    """Verifies that a lenient request preparing no job leaves the caller's output path untouched."""
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    write_camera_manifest(log_directory=log_directory, source_id=1, name="one")
+    write_camera_manifest(log_directory=log_directory, source_id=2, name="two")
+    create_test_archive(archive_path=log_directory / "1.npz", source_id=1, onset_us=0, frame_timestamps_us=[1, 2])
+    output_directory = tmp_path / "out"
+
+    prepare_jobs(
+        log_directory=log_directory,
+        output_directory=output_directory,
+        source_ids=["2"],
+        strict_sources=False,
+    )
+
+    assert not resolve_output_directory(output_directory=output_directory).exists()
 
 
 def test_prepare_jobs_split_logger_output(tmp_path):
@@ -835,41 +871,3 @@ def test_job_descriptor_round_trips_through_a_mapping(tmp_path):
     job = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", core_ceiling=4).jobs[0]
 
     assert JobDescriptor.from_mapping(mapping=job.to_mapping()) == job
-
-
-def test_prepare_jobs_returns_an_empty_set_when_lenient_sourcing_skips_every_source(tmp_path: Path) -> None:
-    """Verifies that a lenient request preparing no job returns a set rather than failing on tracker alignment."""
-    log_directory = tmp_path / "logs"
-    log_directory.mkdir()
-    write_camera_manifest(log_directory=log_directory, source_id=1, name="one")
-    write_camera_manifest(log_directory=log_directory, source_id=2, name="two")
-    create_test_archive(archive_path=log_directory / "1.npz", source_id=1, onset_us=0, frame_timestamps_us=[1, 2])
-
-    job_set = prepare_jobs(
-        log_directory=log_directory,
-        output_directory=tmp_path / "out",
-        source_ids=["2"],
-        strict_sources=False,
-    )
-
-    assert job_set.jobs == ()
-    assert [source_id for source_id, _ in job_set.skipped_sources] == ["2"]
-
-
-def test_prepare_jobs_creates_no_output_directory_when_it_prepares_no_job(tmp_path: Path) -> None:
-    """Verifies that a lenient request preparing no job leaves the caller's output path untouched."""
-    log_directory = tmp_path / "logs"
-    log_directory.mkdir()
-    write_camera_manifest(log_directory=log_directory, source_id=1, name="one")
-    write_camera_manifest(log_directory=log_directory, source_id=2, name="two")
-    create_test_archive(archive_path=log_directory / "1.npz", source_id=1, onset_us=0, frame_timestamps_us=[1, 2])
-    output_directory = tmp_path / "out"
-
-    prepare_jobs(
-        log_directory=log_directory,
-        output_directory=output_directory,
-        source_ids=["2"],
-        strict_sources=False,
-    )
-
-    assert not resolve_output_directory(output_directory=output_directory).exists()

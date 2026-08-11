@@ -128,10 +128,10 @@ class VideoSystem:
         display_frame_rate: The frame rate at which to display the acquired frames to the user. Setting this
             argument to None (default) disables frame display functionality. Note, frame display is not supported on
             macOS and is automatically disabled there.
-        frame_rate: The desired rate, in frames per second, at which to capture the frames. Note; whether the requested
+        frame_rate: The desired rate, in frames per second, at which to capture the frames. Note, whether the requested
             rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
             this argument is not explicitly provided, the instance uses the default frame rate of the managed camera.
-        frame_width: The desired width of the acquired frames, in pixels. Note; the requested width must be compatible
+        frame_width: The desired width of the acquired frames, in pixels. Note, the requested width must be compatible
             with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
             provided, the instance uses the default frame width of the managed camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
@@ -155,11 +155,11 @@ class VideoSystem:
             default value is calibrated for the H265 encoder and is likely too low for the H264 encoder.
 
     Attributes:
-        _started: Tracks whether the system is currently running (has active subprocesses).
+        _started: Determines whether the system is currently running (has active subprocesses).
         _shutdown_lock: Stores the lock that serializes the teardown between the stop() method and the watchdog
             thread, so exactly one of the two releases the shared memory buffer.
-        _mp_manager: Stores the SyncManager instance used to create the multiprocessing Queue that pipes frames from
-            the producer process to the consumer process.
+        _multiprocessing_manager: Stores the SyncManager instance used to create the multiprocessing Queue that pipes
+            frames from the producer process to the consumer process.
         _system_id: Stores the unique identifier code of the VideoSystem instance.
         _output_file: Stores the path to the output .mp4 video file to be generated at runtime or None, if the instance
             is not configured to save acquired camera frames.
@@ -220,7 +220,7 @@ class VideoSystem:
         self._shutdown_lock: Lock = Lock()
 
         # Creates the manager early in the __init__ phase to support del-based cleanup.
-        self._mp_manager: SyncManager = Manager()
+        self._multiprocessing_manager: SyncManager = Manager()
 
         # Ensures system_id is a byte-convertible integer.
         self._system_id: np.uint8 = np.uint8(system_id)
@@ -299,9 +299,7 @@ class VideoSystem:
 
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera
 
-        # OpenCVCamera
         if camera_interface == CameraInterfaces.OPENCV:
-            # Instantiates the OpenCVCamera object.
             self._camera = OpenCVCamera(
                 system_id=int(self._system_id),
                 color=False if not isinstance(color, bool) else color,
@@ -311,9 +309,7 @@ class VideoSystem:
                 frame_rate=frame_rate,
             )
 
-        # HarvestersCamera
         elif camera_interface == CameraInterfaces.HARVESTERS:
-            # Instantiates the HarvestersCamera object.
             self._camera = HarvestersCamera(
                 system_id=int(self._system_id),
                 camera_index=camera_index,
@@ -322,9 +318,7 @@ class VideoSystem:
                 frame_rate=frame_rate,
             )
 
-        # MockCamera
         elif camera_interface == CameraInterfaces.MOCK:
-            # Instantiates the MockCamera object.
             self._camera = MockCamera(
                 system_id=int(self._system_id),
                 frame_height=frame_height,
@@ -466,7 +460,6 @@ class VideoSystem:
                 )
                 console.error(message=message, error=RuntimeError)
 
-            # Instantiates the VideoSaver object.
             self._saver = VideoSaver(
                 system_id=int(system_id),
                 output_file=self._output_file,
@@ -483,8 +476,9 @@ class VideoSystem:
 
         # Sets up the assets used to manage acquisition and saver processes. The assets are configured during the
         # start() method runtime, most of them are initialized to placeholder values here.
+        # The annotations omit the type parameter, because multiprocessing.Queue does not accept one at runtime.
         self._logger_queue: MPQueue = data_logger.input_queue  # type: ignore[type-arg]
-        self._saver_queue: MPQueue = self._mp_manager.Queue()  # type: ignore[type-arg, assignment]
+        self._saver_queue: MPQueue = self._multiprocessing_manager.Queue()  # type: ignore[type-arg, assignment]
         self._terminator_array: SharedMemoryArray | None = None
         self._producer_process: BaseProcess | None = None
         self._consumer_process: BaseProcess | None = None
@@ -497,7 +491,7 @@ class VideoSystem:
     def __del__(self) -> None:
         """Releases all reserved resources before the instance is garbage-collected."""
         self.stop()
-        self._mp_manager.shutdown()
+        self._multiprocessing_manager.shutdown()
 
     def __repr__(self) -> str:
         """Returns the string representation of the VideoSystem instance."""
@@ -532,9 +526,9 @@ class VideoSystem:
         # Index 2 (element 3) is used to track the producer process initialization status.
         # Index 3 (element 4) is used to track the consumer process initialization status.
         self._terminator_array = SharedMemoryArray.create_array(
-            name=f"{self._system_id}_terminator_array",  # Uses class id with an additional specifier
+            name=f"{self._system_id}_terminator_array",  # Uses class id with an additional specifier.
             prototype=np.zeros(shape=4, dtype=np.uint8),
-            exists_ok=True,  # Automatically recreates the buffer if it already exists
+            exists_ok=True,  # Automatically recreates the buffer if it already exists.
         )
 
         # Only starts the consumer process if the managed camera is configured to save frames.
@@ -552,7 +546,6 @@ class VideoSystem:
             )
             self._consumer_process.start()
 
-        # Starts the producer process.
         self._producer_process = _MULTIPROCESSING_CONTEXT.Process(
             target=self._frame_production_loop,
             args=(
@@ -604,13 +597,11 @@ class VideoSystem:
             if error:
                 self._terminate_child_processes()
 
-                # Disconnects from and destroys the shared memory array buffer.
                 self._terminator_array.disconnect()
                 self._terminator_array.destroy()
 
                 console.error(message=message, error=RuntimeError)
 
-        # Creates and starts the watchdog thread.
         self._watchdog_thread = Thread(target=self._watchdog, daemon=True)
         self._watchdog_thread.start()
 
@@ -707,6 +698,7 @@ class VideoSystem:
 
     @staticmethod
     def _frame_display_loop(
+        # The annotation omits the type parameter, matching the multiprocessing queues that cannot take one at runtime.
         display_queue: Queue,  # type: ignore[type-arg]
         system_id: np.uint8,
     ) -> None:  # pragma: no cover - GUI-only, requires a display server.
@@ -735,7 +727,6 @@ class VideoSystem:
                 display_queue.task_done()  # Ensures join() works as expected when the thread is terminated.
                 break
 
-            # Displays the image using the window created above.
             cv2.imshow(winname=window_name, mat=frame)
 
             # Terminates manually through the window GUI.
@@ -756,6 +747,7 @@ class VideoSystem:
         system_id: np.uint8,
         camera: OpenCVCamera | HarvestersCamera | MockCamera,
         display_frame_rate: int,
+        # The annotations omit the type parameter, because multiprocessing.Queue does not accept one at runtime.
         saver_queue: MPQueue,  # type: ignore[type-arg]
         logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
@@ -766,8 +758,7 @@ class VideoSystem:
         thread to render the acquired frames into and display them to the user in real time.
 
         Notes:
-            This method should be executed by the producer Process. It is not intended to be executed by the main
-            process where the VideoSystem is instantiated.
+            This method should be executed by the producer Process.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -781,7 +772,6 @@ class VideoSystem:
             terminator_array: A SharedMemoryArray instance used to control the runtime behavior of the process
                 and terminate it during the global shutdown.
         """
-        # Connects to the terminator array.
         terminator_array.connect()
 
         # Creates a timer that time-stamps acquired frames.
@@ -789,6 +779,8 @@ class VideoSystem:
 
         # Constructs a timezone-aware stamp using UTC time. This creates a reference point for all future time
         # readouts.
+        # get_timestamp declares a union return covering every TimestampFormats member, so the byte array the BYTES
+        # member returns cannot be expressed in the annotation.
         onset: NDArray[np.uint8] = get_timestamp(output_format=TimestampFormats.BYTES)  # type: ignore[assignment]
         frame_timer.reset()  # Immediately resets the stamp timer to make it as close as possible to the onset time.
 
@@ -800,6 +792,7 @@ class VideoSystem:
         # displaying the frames.
         show_time: float | None = None
         show_timer: PrecisionTimer | None = None
+        # The annotation omits the type parameter, matching the multiprocessing queues that cannot take one at runtime.
         display_queue: Queue | None = None  # type: ignore[type-arg]
         display_thread: Thread | None = None
         if display_frame_rate > 0:
@@ -836,14 +829,15 @@ class VideoSystem:
 
                 # If the camera is configured to display acquired frames, queues each frame to be displayed. The rate
                 # at which the frames are displayed does not have to match the rate at which they are acquired.
+                # The display timer and the display deadline are non-None exactly when the display queue is, so
+                # narrowing them would add a branch that never takes its False arm.
                 if display_queue is not None and show_timer.elapsed >= show_time:  # type: ignore[union-attr, operator]
-                    # Resets the display timer.
                     show_timer.reset()  # type: ignore[union-attr]
 
-                    # The display thread ends on its own when the user dismisses the window, and the queue it drained
-                    # is unbounded. Feeding it past that point would grow the process by one frame per display cycle
-                    # for the rest of the runtime, so the frames it never consumed are released and the queue is
-                    # dropped, which also keeps this branch from being taken again.
+                    # The display thread ends on its own when the user dismisses the window, and the queue it drained is
+                    # unbounded. Feeding it past that point would grow the process by one frame per display cycle
+                    # for the rest of the runtime. The frames it never consumed are released and the queue is dropped,
+                    # which also keeps this branch from being taken again.
                     if display_thread is not None and display_thread.is_alive():
                         display_queue.put(frame)
                     else:
@@ -856,10 +850,11 @@ class VideoSystem:
                 if terminator_array[1] == 1:
                     saver_queue.put((frame, frame_stamp))
 
-        # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
-        # before re-raising the exception to terminate the process.
+        # This process is spawned, so it re-imports the library and receives a disabled console. Writing to stderr
+        # directly is the only channel that always reaches the user from here. The write also precedes the cleanup
+        # below, which blocks for minutes on the encoder teardown and delays the interpreter's own traceback.
         except Exception as error:
-            sys.stderr.write(str(error))
+            sys.stderr.write(f"{error}\n")
             sys.stderr.flush()
             raise
 
@@ -872,8 +867,6 @@ class VideoSystem:
             # Terminates the display thread.
             if display_queue is not None:
                 display_queue.put(None)
-
-            # Waits for the thread to close.
             if display_thread is not None:
                 display_thread.join()
 
@@ -881,6 +874,7 @@ class VideoSystem:
     def _frame_saving_loop(
         system_id: np.uint8,
         saver: VideoSaver,
+        # The annotations omit the type parameter, because multiprocessing.Queue does not accept one at runtime.
         saver_queue: MPQueue,  # type: ignore[type-arg]
         logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
@@ -890,8 +884,7 @@ class VideoSystem:
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
 
         Notes:
-            This method should be executed by the consumer Process. It is not intended to be executed by the main
-            process where the VideoSystem is instantiated.
+            This method should be executed by the consumer Process.
 
             This method's main loop is kept alive until it encounters the end-of-stream sentinel appended to the
             saver_queue during shutdown. This is an intentional security feature that ensures all buffered images are
@@ -910,7 +903,6 @@ class VideoSystem:
         # Connects to the terminator array used to report the initialization status of this process.
         terminator_array.connect()
 
-        # Initializes the FFMPEG encoder process.
         saver.start()
 
         # Indicates that the video saver has started successfully.
@@ -932,8 +924,7 @@ class VideoSystem:
                 frame_time: int
                 frame, frame_time = payload
 
-                # Sends the frame to be saved by the saver.
-                saver.save_frame(frame)
+                saver.save_frame(frame=frame)
 
                 # Logs the saved frame's acquisition timestamp.
                 logger_queue.put(
@@ -944,19 +935,17 @@ class VideoSystem:
                     )
                 )
 
-        # If an unknown and unhandled exception occurs, prints and flushes the exception message to the terminal
-        # before re-raising the exception to terminate the process.
+        # This process is spawned, so it re-imports the library and receives a disabled console. Writing to stderr
+        # directly is the only channel that always reaches the user from here. The write also precedes the cleanup
+        # below, which blocks for minutes on the encoder teardown and delays the interpreter's own traceback.
         except Exception as error:
-            sys.stderr.write(str(error))
+            sys.stderr.write(f"{error}\n")
             sys.stderr.flush()
             raise
 
         # Ensures that local assets are always properly terminated.
         finally:
-            # Disconnects from the shared memory array.
             terminator_array.disconnect()
-
-            # Stops the encoder process.
             saver.stop()
 
     def _watchdog(self) -> None:
@@ -988,13 +977,11 @@ class VideoSystem:
                 if not self._started:
                     continue
 
-                # Checks if the producer is alive.
                 error = False
                 if self._producer_process is not None and not self._producer_process.is_alive():
                     error = True
                     producer = True
 
-                # Checks if the consumer is alive.
                 if self._consumer_process is not None and not self._consumer_process.is_alive():
                     error = True
 
@@ -1012,7 +999,6 @@ class VideoSystem:
                 self._terminator_array.destroy()
                 self._terminator_array = None
 
-                # Marks the instance as stopped after resource cleanup.
                 self._started = False
 
             # Raises outside the lock, so a stop() call blocked on the teardown above is released before this thread
@@ -1032,6 +1018,7 @@ class VideoSystem:
             console.error(message=message, error=RuntimeError)
 
 
+# The annotation omits the type parameter, matching the multiprocessing queues that cannot take one at runtime.
 def _empty_display_queue(display_queue: Queue) -> None:  # type: ignore[type-arg]
     """Discards every frame left in the display queue once the thread that drained it has ended.
 

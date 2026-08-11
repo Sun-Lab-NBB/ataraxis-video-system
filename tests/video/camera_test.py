@@ -48,8 +48,10 @@ _SIMULATED_COLOR_INDEX: int = 1
         (False, 10, 3000, 3000),
     ],
 )
-def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
-    """Verifies the functioning of the MockCamera __init__() method."""
+def test_mock_camera_init_stores_the_requested_acquisition_parameters(
+    color, frame_rate, frame_width, frame_height
+) -> None:
+    """Verifies that constructing a MockCamera stores the requested geometry, rate, and idle acquisition state."""
     camera = MockCamera(
         system_id=222, color=color, frame_rate=frame_rate, frame_width=frame_width, frame_height=frame_height
     )
@@ -68,28 +70,25 @@ def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
     assert not camera.is_connected
 
 
-def test_mock_camera_connect_disconnect() -> None:
-    """Verifies the functioning of the MockCamera connect() and disconnect() methods."""
+def test_mock_camera_connect_and_disconnect_toggle_the_connection_state() -> None:
+    """Verifies that connecting and disconnecting a MockCamera toggles the reported connection state."""
     camera = MockCamera(system_id=222)  # Uses default parameters
 
-    # Verifies camera connection
     camera.connect()
     assert camera.is_connected
 
-    # Verifies camera disconnection
     camera.disconnect()
     assert not camera.is_connected
 
 
-def test_mock_camera_grab_frame() -> None:
-    """Verifies the functioning of the MockCamera grab_frame() method."""
+def test_mock_camera_grab_frame_cycles_through_the_frame_pool() -> None:
+    """Verifies that grabbing frames cycles through the pre-generated frame pool as a circular buffer."""
     camera = MockCamera(system_id=222, color=False, frame_width=2, frame_height=3)
     camera.connect()
 
     # Accesses the frame pool generated at class initialization. All 'grabbed' frames are sampled from the frame pool.
     frame_pool = camera.frame_pool
 
-    # Acquires 11 frames.
     for frame_number in range(11):
         frame = camera.grab_frame()
 
@@ -98,31 +97,30 @@ def test_mock_camera_grab_frame() -> None:
         # pool as a circular buffer. So, when it reaches '10' (maximum index is 9), it wraps to 0.
         pool_index = frame_number % 10
 
-        # Verifies that the grabbed frame matches expectation
         assert np.array_equal(frame_pool[pool_index], frame)
 
 
-def test_mock_camera_grab_frame_errors() -> None:
-    """Verifies the error handling of the MockCamera grab_frame() method."""
+def test_mock_camera_grab_frame_rejects_a_disconnected_interface() -> None:
+    """Verifies that grabbing a frame before the simulated connection starts is rejected."""
     camera = MockCamera(system_id=222)
 
     # Verifies that the camera cannot yield images if it is not connected.
     message = (
-        f"The MockCamera instance for the VideoSystem with id {camera._system_id} is not currently simulating "
-        f"connection to the camera hardware, and cannot simulate image acquisition. Call the connect() method "
-        f"prior to calling the grab_frame() method."
+        f"Unable to simulate a frame acquisition using the MockCamera interface for the VideoSystem with id "
+        f"{camera._system_id}. The interface must be simulating a connection to the camera hardware, but the "
+        f"connection simulation has not been started. Call the connect() method prior to calling the "
+        f"grab_frame() method."
     )
     with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
 
 @pytest.mark.xdist_group(name="group1")
-def test_opencv_camera_init_repr() -> None:
-    """Verifies the functioning of the OpenCVCamera __init__() and __repr__() methods."""
+def test_opencv_camera_init_stores_parameters_and_renders_its_repr() -> None:
+    """Verifies that constructing an OpenCVCamera stores the requested parameters and renders them in its repr."""
     # Setup - uses parameters that are NOT applied to hardware (no connect() call).
     camera = OpenCVCamera(system_id=222, camera_index=0, color=True, frame_rate=100, frame_width=500, frame_height=500)
 
-    # Verifies initial camera parameters
     assert camera.frame_rate == 100
     assert camera.frame_width == 500
     assert camera.frame_height == 500
@@ -130,7 +128,6 @@ def test_opencv_camera_init_repr() -> None:
     assert not camera.is_acquiring
     assert camera._system_id == 222
 
-    # Verifies the __repr__() method
     representation_string = (
         f"OpenCVCamera(system_id={camera._system_id}, camera_index={camera._camera_index}, "
         f"frame_rate={camera.frame_rate} frames / second, frame_width={camera.frame_width} pixels, "
@@ -148,9 +145,8 @@ def test_opencv_camera_init_repr() -> None:
         False,
     ],
 )
-def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
-    """Verifies the functioning of the OpenCVCamera connect() and disconnect() methods."""
-    # Skips the test if OpenCV-compatible hardware is not available.
+def test_opencv_camera_connect_and_disconnect_toggle_the_connection_state(has_opencv, color) -> None:
+    """Verifies that connecting and disconnecting an OpenCVCamera toggles the reported connection state."""
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
@@ -170,7 +166,6 @@ def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
     assert camera.is_connected
     assert not camera.is_acquiring
 
-    # Tests disconnect method
     camera.disconnect()
     assert not camera.is_connected
 
@@ -183,9 +178,8 @@ def test_opencv_camera_connect_disconnect(has_opencv, color) -> None:
         False,
     ],
 )
-def test_opencv_camera_grab_frame(has_opencv, color) -> None:
-    """Verifies the functioning of the OpenCVCamera grab_frame() method."""
-    # Skips the test if OpenCV-compatible hardware is not available.
+def test_opencv_camera_grab_frame_returns_the_requested_channel_count(has_opencv, color) -> None:
+    """Verifies that a grabbed frame carries the channel count the requested color mode implies."""
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
 
@@ -196,7 +190,6 @@ def test_opencv_camera_grab_frame(has_opencv, color) -> None:
     )
     camera.connect()
 
-    # Tests grab_frame() method.
     assert not camera.is_acquiring
     frame = camera.grab_frame()
     # Ensures calling grab_frame() switches the camera into acquisition mode.
@@ -214,7 +207,7 @@ def test_opencv_camera_grab_frame(has_opencv, color) -> None:
 
 
 @pytest.mark.xdist_group(name="group1")
-def test_opencv_camera_connect_with_params(has_opencv) -> None:
+def test_opencv_camera_connect_applies_the_requested_parameters(has_opencv) -> None:
     """Verifies that OpenCVCamera connect() applies explicit frame_rate, frame_width, and frame_height parameters."""
     if not has_opencv:
         pytest.skip("Skipping this test as it requires an OpenCV-compatible camera.")
@@ -246,38 +239,34 @@ def test_opencv_camera_connect_with_params(has_opencv) -> None:
 
 
 @pytest.mark.xdist_group(name="group1")
-def test_opencv_camera_pixel_color_format() -> None:
+def test_opencv_camera_pixel_color_format_reports_the_requested_mode() -> None:
     """Verifies the pixel_color_format property of OpenCVCamera for both color and monochrome modes."""
-    # Tests color mode. No connect() needed — property reads an init-time attribute.
+    # The property reads an init-time attribute, so no connect() call is needed.
     camera_color = OpenCVCamera(system_id=222, camera_index=0, color=True)
     assert camera_color.pixel_color_format == InputPixelFormats.BGR
 
-    # Tests monochrome mode.
     camera_mono = OpenCVCamera(system_id=222, camera_index=0, color=False)
     assert camera_mono.pixel_color_format == InputPixelFormats.MONOCHROME
 
 
 @pytest.mark.xdist_group(name="group1")
-def test_opencv_camera_grab_frame_errors() -> None:
-    """Verifies the error handling of the OpenCVCamera grab_frame() method."""
+def test_opencv_camera_grab_frame_rejects_a_disconnected_or_silent_camera() -> None:
+    """Verifies that grabbing a frame is rejected while disconnected and when the camera returns none."""
     camera = OpenCVCamera(system_id=222, camera_index=333)  # Uses invalid index 333
 
-    # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
-        f"The OpenCVCamera instance for the VideoSystem with id {camera._system_id} is not connected to the "
-        f"camera hardware, and cannot acquire images. Call the connect() method prior to calling the "
-        f"grab_frame() method."
+        f"Unable to acquire a frame from the OpenCVCamera interface for the VideoSystem with id "
+        f"{camera._system_id}. The interface must be connected to the camera hardware, but it is currently "
+        f"disconnected. Call the connect() method prior to calling the grab_frame() method."
     )
     with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
-    # Verifies that connecting to an invalid camera ID correctly raises a BrokenPipeError when grab_frame() is called
-    # for that camera
     camera.connect()
     message = (
-        f"The OpenCVCamera instance for the VideoSystem with id {camera._system_id} has failed to grab a frame "
-        f"image from the camera hardware, which is not expected. This indicates initialization or connectivity "
-        f"issues."
+        f"Unable to acquire a frame from the OpenCVCamera interface for the VideoSystem with id "
+        f"{camera._system_id}. The camera hardware must return a frame image for each acquisition request, but "
+        f"it returned none. This indicates an initialization or a connectivity issue."
     )
     with pytest.raises(BrokenPipeError, match=error_format(message)):
         _ = camera.grab_frame()
@@ -296,7 +285,7 @@ def test_opencv_camera_connect_rejects_a_substituted_parameter(
 ) -> None:
     """Verifies that connect() fails when the camera substitutes its own value for a requested parameter."""
     capture = FakeVideoCapture(properties={property_id: reported}, accepts_writes=False)
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: capture}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: capture}))
 
     camera = OpenCVCamera(system_id=222, camera_index=0, **{argument: requested})
 
@@ -314,7 +303,7 @@ def test_opencv_camera_connect_accepts_a_rounded_frame_rate(monkeypatch) -> None
     """Verifies that a camera reporting the requested rate as a near-integer float is accepted rather than rejected."""
     # A 30 fps camera commonly reports 29.97, which truncation would read as 29 and reject.
     capture = FakeVideoCapture(properties={cv2.CAP_PROP_FPS: 29.97}, accepts_writes=False)
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: capture}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: capture}))
 
     camera = OpenCVCamera(system_id=222, camera_index=0, frame_rate=30)
     camera.connect()
@@ -324,7 +313,7 @@ def test_opencv_camera_connect_accepts_a_rounded_frame_rate(monkeypatch) -> None
 
 def test_opencv_camera_grab_frame_converts_to_monochrome(monkeypatch) -> None:
     """Verifies that a monochrome camera reduces the three-channel frame OpenCV returns to a single channel."""
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     camera = OpenCVCamera(system_id=222, camera_index=0, color=False)
     camera.connect()
@@ -338,7 +327,7 @@ def test_opencv_camera_grab_frame_converts_to_monochrome(monkeypatch) -> None:
 
 def test_get_opencv_ids_reports_every_working_index(monkeypatch) -> None:
     """Verifies that OpenCV discovery reports one entry per working index and stops after five idle indices."""
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     cameras = _get_opencv_ids()
 
@@ -356,7 +345,7 @@ def test_get_opencv_ids_collapses_duplicate_device_nodes(monkeypatch) -> None:
     first = FakeVideoCapture()
     duplicate = FakeVideoCapture(readable=False)
 
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: first, 1: duplicate}))
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: first, 1: duplicate}))
 
     # The duplicate answers reads while it is probed on its own, and refuses them while the first node is held open,
     # since one physical camera streams to one capture at a time.
@@ -369,7 +358,7 @@ def test_get_opencv_ids_collapses_duplicate_device_nodes(monkeypatch) -> None:
             return original_read()
         return False, None
 
-    monkeypatch.setattr(duplicate, "read", _read_unless_sibling_is_held)
+    monkeypatch.setattr(target=duplicate, name="read", value=_read_unless_sibling_is_held)
 
     cameras = _get_opencv_ids()
 
@@ -387,7 +376,7 @@ def test_get_opencv_ids_skips_an_index_whose_driver_raises(monkeypatch) -> None:
             raise RuntimeError(message)
         return factory(index, apiPreference)
 
-    monkeypatch.setattr(cv2, "VideoCapture", _open_capture)
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=_open_capture)
 
     cameras = _get_opencv_ids()
 
@@ -405,7 +394,7 @@ def test_get_opencv_ids_stops_after_five_raising_indices(monkeypatch) -> None:
         message = "V4L2: failed to open the capture device"
         raise RuntimeError(message)
 
-    monkeypatch.setattr(cv2, "VideoCapture", _open_capture)
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=_open_capture)
 
     assert _get_opencv_ids() == ()
 
@@ -414,12 +403,11 @@ def test_get_opencv_ids_stops_after_five_raising_indices(monkeypatch) -> None:
     assert probed == list(range(_MAXIMUM_NON_WORKING_IDS))
 
 
-def test_harvesters_camera_init_repr() -> None:
-    """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
+def test_harvesters_camera_init_stores_parameters_and_renders_its_repr() -> None:
+    """Verifies that constructing a HarvestersCamera stores the requested parameters and renders them in its repr."""
     # Construction resolves no GenTL Producer, so this test needs neither hardware nor the simulator.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
-    # Verifies initial camera parameters
     assert camera.frame_rate == 10
     assert camera.frame_width == 200
     assert camera.frame_height == 200
@@ -427,7 +415,6 @@ def test_harvesters_camera_init_repr() -> None:
     assert not camera.is_acquiring
     assert camera._system_id == 222
 
-    # Verifies the __repr__() method
     representation_string = (
         f"HarvestersCamera(system_id={camera._system_id}, camera_index={camera._camera_index}, "
         f"frame_rate={camera.frame_rate} frames / second, frame_width={camera.frame_width} pixels, "
@@ -438,8 +425,8 @@ def test_harvesters_camera_init_repr() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_camera_connect_disconnect() -> None:
-    """Verifies the functioning of the HarvestersCamera connect() and disconnect() methods."""
+def test_harvesters_camera_connect_and_disconnect_toggle_the_connection_state() -> None:
+    """Verifies that connecting and disconnecting a HarvestersCamera toggles the reported connection state."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
 
     assert not camera.is_connected
@@ -451,7 +438,6 @@ def test_harvesters_camera_connect_disconnect() -> None:
     assert camera.model == _SIMULATED_MONOCHROME_MODEL
     assert camera.serial_number == _SIMULATED_MONOCHROME_SERIAL
 
-    # Tests disconnect method
     camera.disconnect()
     assert not camera.is_connected
 
@@ -481,7 +467,7 @@ def test_harvesters_camera_connect_is_idempotent() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_get_harvesters_ids() -> None:
+def test_get_harvesters_ids_reports_every_exposed_device() -> None:
     """Verifies that Harvesters discovery reports every device the configured GenTL Producer exposes."""
     cameras = _get_harvesters_ids()
 
@@ -511,7 +497,7 @@ def test_get_harvesters_ids_skips_an_unqueryable_device(monkeypatch) -> None:
             raise RuntimeError(message)
         return original_create(self, search_key=search_key)
 
-    monkeypatch.setattr(camera_module.Harvester, "create", _create)
+    monkeypatch.setattr(target=camera_module.Harvester, name="create", value=_create)
 
     cameras = _get_harvesters_ids()
 
@@ -526,7 +512,7 @@ def test_get_harvesters_ids_skips_an_unqueryable_device(monkeypatch) -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_camera_connect_missing_frame_rate_node() -> None:
+def test_harvesters_camera_connect_retains_the_rate_without_a_rate_node() -> None:
     """Verifies that connecting to a camera without an AcquisitionFrameRate node retains the requested rate."""
     # The simulated devices do not implement the optional AcquisitionFrameRate feature.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10)
@@ -572,7 +558,7 @@ def test_harvesters_camera_connect_rounds_the_frame_rate_node(monkeypatch) -> No
         assert node_map is not None
         return node
 
-    monkeypatch.setattr(camera_module, "_get_frame_rate_node", _resolve_node)
+    monkeypatch.setattr(target=camera_module, name="_get_frame_rate_node", value=_resolve_node)
 
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=30)
     camera.connect()
@@ -589,18 +575,16 @@ def test_harvesters_camera_connect_rounds_the_frame_rate_node(monkeypatch) -> No
     ("frame_width", "frame_height"),
     [(440, 440), (200, 200), (None, None)],
 )
-def test_harvesters_camera_grab_frame(frame_width, frame_height) -> None:
-    """Verifies the functioning of the HarvestersCamera grab_frame() method."""
+def test_harvesters_camera_grab_frame_returns_frames_at_the_requested_size(frame_width, frame_height) -> None:
+    """Verifies that a grabbed frame carries the requested geometry and the device's single channel."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=frame_width, frame_height=frame_height)
     camera.connect()
 
-    # Tests grab_frame() method.
     assert not camera.is_acquiring
     frame = camera.grab_frame()
     # Ensures calling grab_frame() switches the camera into acquisition mode.
     assert camera.is_acquiring
 
-    # Verifies the dimensions of the grabbed frame
     if frame_height is not None and frame_width is not None:
         assert frame.shape[0] == frame_height
         assert frame.shape[1] == frame_width
@@ -613,7 +597,7 @@ def test_harvesters_camera_grab_frame(frame_width, frame_height) -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_camera_grab_frame_color() -> None:
+def test_harvesters_camera_grab_frame_converts_a_color_device_to_bgr() -> None:
     """Verifies that HarvestersCamera converts frames from a color device into three-channel BGR arrays."""
     camera = HarvestersCamera(system_id=222, camera_index=_SIMULATED_COLOR_INDEX, frame_width=200, frame_height=200)
     camera.connect()
@@ -625,16 +609,15 @@ def test_harvesters_camera_grab_frame_color() -> None:
         camera.disconnect()
 
 
-def test_harvesters_camera_grab_frame_errors() -> None:
-    """Verifies the error handling of the HarvestersCamera grab_frame() method."""
+def test_harvesters_camera_grab_frame_rejects_a_disconnected_interface() -> None:
+    """Verifies that grabbing a frame before the interface connects to the camera is rejected."""
     # The guard under test runs before any GenTL Producer is resolved, so no camera source is required.
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_rate=10, frame_width=200, frame_height=200)
 
-    # Verifies that calling grab_frame() correctly raises a ConnectionError when the camera is not connected
     message = (
-        f"The HarvestersCamera instance for the VideoSystem with id {camera._system_id} is not connected to the "
-        f"camera hardware and cannot acquire images. Call the connect() method prior to calling the "
-        f"grab_frame() method."
+        f"Unable to acquire a frame from the HarvestersCamera interface for the VideoSystem with id "
+        f"{camera._system_id}. The interface must be connected to the camera hardware, but it is currently "
+        f"disconnected. Call the connect() method prior to calling the grab_frame() method."
     )
     with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
@@ -649,9 +632,9 @@ def test_harvesters_camera_grab_frame_reports_a_failed_fetch() -> None:
     camera._camera = FakeImageAcquirer(buffers=[None])
 
     message = (
-        f"The HarvestersCamera instance for the VideoSystem with id {camera._system_id} has failed to grab "
-        f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
-        f"connectivity issues."
+        f"Unable to acquire a frame from the HarvestersCamera interface for the VideoSystem with id "
+        f"{camera._system_id}. The camera hardware must return a frame image for each acquisition request, but "
+        f"it returned none. This indicates an initialization or a connectivity issue."
     )
     # Entering the missing buffer's context directly would report an opaque TypeError, which is the whole diagnostic
     # the spawned producer process forwards to the user in place of this message.
@@ -712,7 +695,7 @@ def test_harvesters_camera_grab_frame_rejects_an_unsupported_format(data_format)
     ("camera_index", "expected_format"),
     [(0, InputPixelFormats.MONOCHROME), (_SIMULATED_COLOR_INDEX, InputPixelFormats.BGR)],
 )
-def test_harvesters_camera_pixel_color_format(camera_index, expected_format) -> None:
+def test_harvesters_camera_pixel_color_format_reflects_the_connected_device(camera_index, expected_format) -> None:
     """Verifies that pixel_color_format reflects the data format of the connected device."""
     camera = HarvestersCamera(system_id=222, camera_index=camera_index)
     camera.connect()
@@ -725,7 +708,7 @@ def test_harvesters_camera_pixel_color_format(camera_index, expected_format) -> 
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_camera_hardware_acquisition(has_harvesters) -> None:
+def test_harvesters_camera_negotiates_the_rate_and_acquires_from_hardware(has_harvesters) -> None:
     """Verifies frame rate negotiation and acquisition against real GenICam hardware."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
@@ -747,7 +730,7 @@ def test_harvesters_camera_hardware_acquisition(has_harvesters) -> None:
         camera.disconnect()
 
 
-def test_harvesters_camera_pixel_color_format_both_branches() -> None:
+def test_harvesters_camera_pixel_color_format_covers_both_color_states() -> None:
     """Verifies the pixel_color_format property for both _color=True and _color=False states."""
     # Tests both branches of pixel_color_format by directly setting the _color attribute. No hardware
     # interaction is needed since the property simply reads the attribute value.
@@ -794,16 +777,16 @@ def test_genicam_runtime_available_tracks_the_imported_runtime(monkeypatch) -> N
     """Verifies that genicam_runtime_available() reports whether the GenICam runtime imported."""
     # Patches both states rather than reading the host's own, so the assertions hold on macOS too, where the library
     # installs no runtime and the guarded import falls back to None.
-    monkeypatch.setattr(camera_module, "Harvester", object())
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=object())
     assert genicam_runtime_available()
 
-    monkeypatch.setattr(camera_module, "Harvester", None)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
     assert not genicam_runtime_available()
 
 
 def test_harvesters_camera_connect_requires_the_genicam_runtime(monkeypatch) -> None:
     """Verifies that connecting to a GenICam camera aborts on a platform that does not support the interface."""
-    monkeypatch.setattr(camera_module, "Harvester", None)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
     camera = HarvestersCamera(system_id=222, camera_index=3)
 
     # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
@@ -822,9 +805,9 @@ def test_discover_camera_ids_skips_genicam_without_the_runtime(monkeypatch) -> N
     def _no_opencv_cameras():
         return ()
 
-    monkeypatch.setattr(camera_module, "Harvester", None)
-    monkeypatch.setattr(camera_module, "_get_harvesters_ids", _forbidden_discovery)
-    monkeypatch.setattr(camera_module, "_get_opencv_ids", _no_opencv_cameras)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
+    monkeypatch.setattr(target=camera_module, name="_get_harvesters_ids", value=_forbidden_discovery)
+    monkeypatch.setattr(target=camera_module, name="_get_opencv_ids", value=_no_opencv_cameras)
 
     assert discover_camera_ids() == ()
 
@@ -834,8 +817,8 @@ def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeyp
     """Verifies that camera discovery reports OpenCV cameras alone where no GenTL Producer has been configured."""
     # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
     # since resolving the Producer path raises before Harvesters discovery constructs one.
-    monkeypatch.setattr(camera_module, "Harvester", object)
-    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
+    monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     cameras = discover_camera_ids()
 
@@ -847,7 +830,7 @@ def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeyp
 
 def test_check_cti_file_reports_an_unsupported_platform(monkeypatch) -> None:
     """Verifies that check_cti_file() reports an unusable configuration where the GenICam interface is unsupported."""
-    monkeypatch.setattr(camera_module, "Harvester", None)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
 
     assert check_cti_file() is None
 
@@ -857,7 +840,7 @@ def test_check_cti_file_reports_no_configured_producer(monkeypatch) -> None:
     """Verifies that a machine with no configured Producer reports one as absent instead of raising."""
     # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
     # since the absent path file answers before any Producer is loaded.
-    monkeypatch.setattr(camera_module, "Harvester", object)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
 
     assert check_cti_file() is None
 
@@ -883,7 +866,7 @@ def test_check_cti_file_rejects_a_stale_persisted_producer(persisted_cti_directo
             message = f"{file_path}: cannot open shared object file"
             raise OSError(message)
 
-    monkeypatch.setattr(camera_module, "Harvester", _UninstalledProducer)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=_UninstalledProducer)
 
     # Uninstalling the vendor SDK leaves the status query answering 'not configured' rather than propagating the
     # loader's failure to the caller.
@@ -892,7 +875,7 @@ def test_check_cti_file_rejects_a_stale_persisted_producer(persisted_cti_directo
 
 def test_add_cti_file_requires_the_genicam_runtime(monkeypatch) -> None:
     """Verifies that configuring a Producer aborts on a platform that does not support the GenICam interface."""
-    monkeypatch.setattr(camera_module, "Harvester", None)
+    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
 
     # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
     message = f"Unable to configure the GenTL Producer interface (.cti) file. {GENICAM_UNAVAILABLE_REASON}"
@@ -912,7 +895,7 @@ def test_add_cti_file_persists_a_resolved_producer_path(
 
     # A relative argument resolves against the directory the configuring command happened to run from, so the command
     # is run from that directory rather than the one the test session started in.
-    monkeypatch.chdir(simulator_cti_path.parent)
+    monkeypatch.chdir(path=simulator_cti_path.parent)
 
     add_cti_file(cti_path=Path(simulator_cti_path.name))
 

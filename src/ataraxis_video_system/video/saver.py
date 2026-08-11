@@ -6,6 +6,7 @@ in real time.
 
 from __future__ import annotations
 
+import sys
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING
 from threading import Thread
@@ -194,28 +195,22 @@ class VideoSaver:
         output_pixel_format: OutputPixelFormats | str = OutputPixelFormats.YUV420,
         quantization_parameter: int = 15,
     ) -> None:
-        # Stores the caller VideoSystem ID to an instance attribute.
         self._system_id: int = system_id
 
-        # Ensures that all enumeration inputs are stored as enumerations:
         video_encoder = VideoEncoders(video_encoder)
         encoder_speed_preset = EncoderSpeedPresets(encoder_speed_preset)
         input_pixel_format = InputPixelFormats(input_pixel_format)
         output_pixel_format = OutputPixelFormats(output_pixel_format)
 
-        # Ensures that the output file's directory exists.
         ensure_directory_exists(path=output_file, is_file=True)
 
         # Constructs the encoder-specific portion of the FFMPEG command based on whether GPU or CPU encoding is
         # requested. This portion contains the encoder parameters but lacks the input header and output path.
         encoder_command_portion: list[str]
 
-        # If a GPU index is provided, uses one of the hardware-encoding libraries.
         if gpu >= 0:
-            # Selects the encoder library.
             video_codec = "h264_nvenc" if video_encoder == VideoEncoders.H264 else "hevc_nvenc"
 
-            # Resolves the chromatic coding profile.
             if video_codec == "h264_nvenc":
                 encoder_profile = "high444p" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
             else:
@@ -244,12 +239,9 @@ class VideoSaver:
                 "constqp",
             ]
 
-        # Otherwise, uses one of the software-encoding libraries.
         else:
-            # Selects the encoder library.
             video_codec = "libx264" if video_encoder == VideoEncoders.H264 else "libx265"
 
-            # Resolves the chromatic coding profile.
             if video_codec == "libx265":
                 encoder_profile = "main444-8" if output_pixel_format == OutputPixelFormats.YUV444 else "main"
             else:
@@ -383,16 +375,16 @@ class VideoSaver:
         if self._ffmpeg_process.stderr is not None:
             self._ffmpeg_process.stderr.close()
 
-        # Logs captured stderr output only if the FFMPEG process exited with an error.
+        # This method runs inside the spawned consumer process, which re-imports the library and therefore receives a
+        # disabled console that discards every echoed message. Writing to stderr directly is the only channel that
+        # reaches the user from here, and it keeps the report off the stdout stream the MCP server sends JSON-RPC over.
         if self._ffmpeg_process.returncode != 0 and self._stderr_output:
-            console.echo(
-                message=(
-                    f"FFMPEG encoder error (system {self._system_id}, exit code "
-                    f"{self._ffmpeg_process.returncode}): "
-                    f"{self._stderr_output.decode(errors='replace')}"
-                ),
-                raw=True,
+            sys.stderr.write(
+                f"FFMPEG encoder error (system {self._system_id}, exit code "
+                f"{self._ffmpeg_process.returncode}): "
+                f"{self._stderr_output.decode(errors='replace')}\n"
             )
+            sys.stderr.flush()
 
         # Resets the process and thread references, allowing the underlying objects to be garbage-collected.
         self._ffmpeg_process = None
@@ -414,7 +406,6 @@ class VideoSaver:
             RuntimeError: If the FFMPEG process has terminated unexpectedly during encoding.
             BrokenPipeError: If an error occurs when submitting the frame's data to the FFMPEG process.
         """
-        # Raises an error if the encoder process does not exist.
         if self._ffmpeg_process is None:
             message = (
                 f"Unable to submit the frame's data to the FFMPEG encoder process of the VideoSaver instance for the "
@@ -423,7 +414,6 @@ class VideoSaver:
             )
             console.error(message=message, error=ConnectionError)
 
-        # Checks whether the FFMPEG process has terminated unexpectedly during encoding.
         exit_code = self._ffmpeg_process.poll()
         if exit_code is not None:
             # Waits for the stderr drain thread to finish capturing error output.
@@ -442,6 +432,8 @@ class VideoSaver:
 
         # Writes the input frame to the encoder's standard input pipe. Passes the underlying buffer directly
         # for C-contiguous arrays to avoid the per-frame copy overhead of tobytes().
+        # A Popen opened with stdin=PIPE always yields a stdin handle, so narrowing it would add a branch that never
+        # takes its False arm.
         try:
             if frame.flags["C_CONTIGUOUS"]:
                 self._ffmpeg_process.stdin.write(frame.data)  # type: ignore[union-attr]

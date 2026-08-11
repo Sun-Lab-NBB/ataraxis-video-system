@@ -101,23 +101,12 @@ available MCP tools over direct code execution when appropriate.
 
 **Guidelines for MCP usage:**
 
-1. **Discover available tools**: At the start of a session, check which MCP servers are connected and what tools
-   they provide. Use these tools when they offer functionality relevant to the current task.
-
-2. **Prefer MCP for runtime operations**: For operations like camera discovery, CTI file management, GenICam
+1. **Prefer MCP for runtime operations**: For operations like camera discovery, CTI file management, GenICam
    configuration, and log processing batch workflows, use MCP tools rather than writing and executing Python code
-   directly. MCP tools provide:
-   - Consistent, tested interfaces
-   - Proper resource management and cleanup
-   - Formatted output designed for user display
+   directly.
 
-3. **Use MCP for cross-library operations**: When dependency libraries (e.g., `ataraxis-data-structures`,
+2. **Use MCP for cross-library operations**: When dependency libraries (e.g., `ataraxis-data-structures`,
    `ataraxis-time`) provide MCP servers, explore and use their tools for interacting with those libraries.
-
-4. **Fall back to code when necessary**: Use direct code execution when:
-   - No MCP tool exists for the required functionality
-   - The task requires custom logic not covered by available tools
-   - Writing or modifying library source code
 
 ## Distribution model
 
@@ -179,13 +168,13 @@ video encoding using CPU or GPU.
 - **GenICam Platform Support**: `harvesters` and `genicam` carry a `sys_platform != 'darwin'` marker, because `genicam`
   publishes no macOS wheel for every supported Python version. macOS therefore does not support the GenICam camera
   interface at all. `camera.py` imports the `harvesters` names inside a top-of-file `try/except ImportError` that falls
-  back to `None` for `Harvester` and `ImageAcquirer` and to empty tuples for the pixel-format collections, while
-  `genicam` is imported only under `TYPE_CHECKING` and so never executes at runtime. That keeps the module usable for
-  the OpenCV and Mock interfaces there. `genicam_runtime_available()` reports the state,
-  `_require_genicam_runtime()` aborts with `NotImplementedError` at every entry point that reaches GenICam hardware
-  (`HarvestersCamera.connect()` and `add_cti_file()`), and `discover_camera_ids()` and `check_cti_file()` report the
-  interface as absent instead of failing. A `[[tool.mypy.overrides]]` block marks both modules
-  `ignore_missing_imports`, which is what keeps `tox -e lint` passing on a macOS host where neither is installed.
+  back to `None` for `Harvester` and `ImageAcquirer` and to empty tuples for the pixel-format collections. `genicam` is
+  imported only under `TYPE_CHECKING`, so it never executes at runtime. That keeps the module usable for the OpenCV and
+  Mock interfaces there. `genicam_runtime_available()` reports the state, `_require_genicam_runtime()` aborts with
+  `NotImplementedError` at every entry point that reaches GenICam hardware (`HarvestersCamera.connect()` and
+  `add_cti_file()`), and `discover_camera_ids()` and `check_cti_file()` report the interface as absent instead of
+  failing. A `[[tool.mypy.overrides]]` block marks both modules `ignore_missing_imports`, which is what keeps
+  `tox -e lint` passing on a macOS host where neither is installed.
 - **Camera Interfaces**: Three implementations behind a unified API: OpenCVCamera (cv2.VideoCapture),
   HarvestersCamera (GenICam/Harvesters with NodeMap access), and MockCamera (synthetic frames for testing).
   `discover_camera_ids()` returns CameraInformation objects from all available interfaces.
@@ -208,15 +197,15 @@ video encoding using CPU or GPU.
   Session global state (`_active_session`, `_active_logger`, `_session_info`), defined in `interfaces/session_tools.py`,
   enforces a single active VideoSystem session at a time. The 27 tools are split across the `interfaces/*_tools.py`
   modules. Tool categories: camera discovery and CTI management (3), system checks (1), video session lifecycle (5),
-  GenICam configuration (4), camera manifest management (2), log archive and video validation (2), recording discovery
-  via manifests (1), batch log processing execution (3), processing status and management (4), and post-processing
-  analysis and cleanup (2). Session tools expose configurable encoding parameters (encoder, speed preset, pixel format,
-  quantization). `stop_video_session` auto-assembles log archives and returns output paths. Batch log processing uses
-  `JobExecutionState` (in `orchestration/execution.py`) with separate core and memory budgets. `size_job()` resolves
-  each job's cores and memory from its own archive before dispatch, and `job_execution_manager()` admits what both
-  budgets fit, running an oversized job alone so it never stalls the queue. The MCP server
-  is registered with MCP clients via the **video** plugin in the ataraxis marketplace, not directly from this
-  repository.
+  GenICam configuration (4), camera manifest management (2). The remaining categories are log archive and video
+  validation (2), recording discovery via manifests (1), batch log processing execution (3), processing status and
+  management (4), and post-processing analysis and cleanup (2). Session tools expose configurable encoding parameters
+  (encoder, speed preset, pixel format, quantization). `stop_video_session` auto-assembles log archives and returns
+  output paths. Batch log processing uses `JobExecutionState` (in `orchestration/execution.py`) with separate core and
+  memory budgets. `size_job()` resolves each job's cores and memory from its own archive before dispatch, and
+  `job_execution_manager()` admits what both budgets fit, running an oversized job alone so it never stalls the queue.
+  The MCP server is registered with MCP clients via the **video** plugin in the ataraxis marketplace, not directly from
+  this repository.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
   log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
 
@@ -274,7 +263,7 @@ video encoding using CPU or GPU.
 **Modifying GenICam configuration:**
 
 1. Review `src/ataraxis_video_system/video/configuration.py` for node traversal and serialization
-2. Node enumeration uses iterative stack-based traversal (not recursive)
+2. Node enumeration uses iterative stack-based traversal, because a deep node tree overflows a recursive walk
 3. GenicamConfiguration is a YamlConfig subclass supporting `to_yaml()` and `from_yaml()`
 4. Strict identity checking compares camera model and serial number against YAML metadata
 
@@ -296,7 +285,7 @@ video encoding using CPU or GPU.
 1. Review `orchestration/discovery.py` for resolution, preparation, and sizing, `orchestration/worker.py` for the
    single-job runner, and `video/timestamps.py` for the extraction algorithm
 2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` and returns `NDArray[np.uint64]`
-3. `run_log_processing_pipeline()` runs one recording sequentially, or one job by identifier, and imports no engine
+3. `run_log_processing_pipeline()` runs one recording sequentially, or one job by identifier
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
 5. `_process_frame_message_batch()` runs in subprocess workers, which the `parallel` and `concurrency` keys measure
 6. Log discovery uses manifest-based routing via `camera_manifest.yaml` files

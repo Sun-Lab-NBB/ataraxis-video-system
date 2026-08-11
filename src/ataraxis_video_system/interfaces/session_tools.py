@@ -19,8 +19,8 @@ from .mcp_instance import mcp, scan_archive_source_ids
 
 _session_lock: RLock = RLock()
 """Serializes every read and every write of the three session globals below. The tools that own them run on separate
-worker threads, one per concurrently dispatched tool call, so the test that admits one session and the publication
-that records it would otherwise sit on opposite sides of a bytecode boundary and let two sessions record the same
+worker threads, one per concurrently dispatched tool call. Without this lock, the test that admits one session and the
+publication that records it would sit on opposite sides of a bytecode boundary, letting two sessions record the same
 camera to the same video file."""
 
 _active_session: VideoSystem | None = None
@@ -57,11 +57,11 @@ def start_video_session_tool(
 
     Important:
         The AI agent calling this tool MUST ask the user to provide the output_directory path before calling this
-        tool. Do not assume or guess the output directory - always prompt the user for an explicit path.
+        tool. Do not assume or guess the output directory. Always prompt the user for an explicit path.
 
     Args:
         output_directory: The path to the directory where video files will be saved. This must be provided by the
-            user - the AI agent should always ask for this value explicitly.
+            user, so the AI agent should always ask for this value explicitly.
         interface: The camera interface to use ('opencv', 'harvesters', or 'mock').
         camera_index: The index of the camera to use.
         width: The width of frames to capture in pixels.
@@ -99,31 +99,26 @@ def start_video_session_tool(
         if not output_path.is_dir():
             return f"Error: Not a directory: {output_directory}"
 
-        # Validates and maps the video encoder string to the corresponding enum member.
         encoder_upper = video_encoder.upper()
         if encoder_upper not in {member.value for member in VideoEncoders}:
             return f"Error: Invalid video_encoder '{video_encoder}'. Must be 'H264' or 'H265'."
         resolved_encoder = VideoEncoders(encoder_upper)
 
-        # Validates the encoder speed preset against the legal range (1-7).
         if encoder_speed_preset not in {member.value for member in EncoderSpeedPresets}:
             return f"Error: Invalid encoder_speed_preset {encoder_speed_preset}. Must be 1-7."
         resolved_preset = EncoderSpeedPresets(encoder_speed_preset)
 
-        # Validates the output pixel format against the corresponding enum.
         pixel_format_lower = output_pixel_format.lower()
         if pixel_format_lower not in {member.value for member in OutputPixelFormats}:
             return f"Error: Invalid output_pixel_format '{output_pixel_format}'. Must be 'yuv420p' or 'yuv444p'."
         resolved_pixel_format = OutputPixelFormats(pixel_format_lower)
 
-        # Validates the quantization parameter is within the legal FFMPEG range.
         if not 0 <= quantization_parameter <= MAXIMUM_QUANTIZATION_VALUE:
             return (
                 f"Error: quantization_parameter must be between 0 and {MAXIMUM_QUANTIZATION_VALUE}, "
                 f"got {quantization_parameter}."
             )
 
-        # Maps the string interface name to the corresponding CameraInterfaces enum member.
         if interface.lower() == "mock":
             camera_interface = CameraInterfaces.MOCK
         elif interface.lower() == "harvesters":
@@ -324,11 +319,9 @@ def get_session_status_tool() -> dict[str, Any]:
         if _active_session is None:
             return {"status": "inactive"}
 
-        # Determines the high-level session state from the started flag.
         status = "running" if _active_session.started else "stopped"
         result: dict[str, Any] = {"status": status}
 
-        # Enriches the response with session configuration captured at creation time.
         if _session_info is not None:
             result["name"] = _session_info["name"]
             result["interface"] = _session_info["interface"]
@@ -344,7 +337,6 @@ def get_session_status_tool() -> dict[str, Any]:
             result["output_directory"] = _session_info["output_directory"]
             result["display_frame_rate"] = _session_info["display_frame_rate"]
 
-        # Appends runtime-derived information from the VideoSystem and DataLogger instances.
         video_path = _active_session.video_file_path
         result["video_file"] = str(video_path) if video_path is not None else None
 

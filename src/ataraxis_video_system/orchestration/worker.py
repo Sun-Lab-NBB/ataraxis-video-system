@@ -61,9 +61,9 @@ def execute_job(
     writes the result as an IPC (Feather) file.
 
     Notes:
-        Delegates the job's state transitions to the tracker's run_job() context manager, which marks the job as
-        running, completes it when the block returns, and marks it as failed with the exception's message before
-        re-raising when the block raises an Exception.
+        Delegates the job's state transitions to the tracker's run_job() context manager. The context marks the job
+        as running, completes it when the block returns, and marks it as failed with the exception's message before
+        re-raising.
 
         Writes the feather file directly into the output directory, creates no directory, and registers no job on
         the tracker, so a scheduler owning its own tracker and output layout dispatches this function unchanged.
@@ -71,10 +71,10 @@ def execute_job(
     Args:
         log_path: The path to the .npz log archive to process.
         output_directory: The path to the directory where the output Feather file is written.
-        source_id: The source ID string identifying the log archive.
+        source_id: The identifier of the camera source whose archive is processed.
         job_id: The unique hexadecimal identifier for this processing job.
         workers: The number of worker processes to use for parallel processing.
-        tracker: The ProcessingTracker instance used to track the pipeline's runtime status.
+        tracker: The tracker recording this job's outcome.
         display_progress: Determines whether to display a progress bar during timestamp extraction.
         executor: When provided, parallel processing reuses this pool instead of creating a new one. The pool is
             passed through to extract_logged_camera_timestamps to avoid spawning a redundant process pool.
@@ -82,13 +82,11 @@ def execute_job(
     console.echo(message=f"Running '{CAMERA_EXTRACTION_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
 
     with tracker.run_job(job_id=job_id):
-        # Extracts frame acquisition timestamps from the log archive as a contiguous numpy array.
         timestamps = extract_logged_camera_timestamps(
             log_path=log_path, workers=workers, display_progress=display_progress, executor=executor
         )
 
-        # Wraps the numpy array in a Polars DataFrame for Feather output. Polars can reference the numpy buffer
-        # directly, avoiding a full copy of the timestamp data.
+        # Polars can reference the numpy buffer directly, avoiding a full copy of the timestamp data.
         column = str(ExtractedDataColumns.FRAME_TIME)
         dataframe = pl.DataFrame({column: pl.Series(name=column, values=timestamps)})
         dataframe.write_ipc(file=resolve_timestamps_path(output_directory=output_directory, source_id=source_id))

@@ -76,9 +76,10 @@ dependencies = [
     # Ataraxis Libraries
     "ataraxis-time>=7,<8",
     "ataraxis-base-utilities>=7,<8",
-    "ataraxis-data-structures>=7.1,<8",
+    "ataraxis-data-structures>=7.1,<8",  # 7.1 first exports the archive indexing log discovery reads
 ]
 
+# Project repository and hosted documentation URLs.
 [project.urls]
 Homepage = "https://github.com/Sun-Lab-NBB/ataraxis-video-system"
 Documentation = "https://ataraxis-video-system-api-docs.netlify.app/"
@@ -113,7 +114,7 @@ packages = ["src/ataraxis_video_system"]
 
 # Ruff Configuration.
 [tool.ruff]
-line-length = 120         # Deviates from the commonly used '80' standard.
+line-length = 120
 indent-width = 4
 target-version = "py312"  # Targets the lowest supported version of python
 src = ["src"]
@@ -184,6 +185,7 @@ convention = "google"
     "S311",    # A unique DataLogger instance name is drawn with the standard pseudo-random generator
 ]
 
+# Import sorting and grouping configurations.
 [tool.ruff.lint.isort]
 case-sensitive = true
 combine-as-imports = true          # Combines multiple "as" imports for the same package
@@ -245,10 +247,10 @@ pythonpath = ["."]
 # MCP server tools, which are covered by the tests written for the library functions they wrap. The 'parallel' and
 # 'concurrency' keys extend measurement to the spawned producer and consumer processes, to the log processing pool
 # workers that run run_extraction_job, and to the job execution manager, watchdog, frame display, and stderr drain
-# threads, giving each worker its own data file for the 'coverage' task to combine. The test corpus is omitted because
-# a spawned child re-reads this file without the '--cov' package restriction its parent was launched with, so a test
-# module that a child imports, which is every module handing a spawned process one of its own functions, is otherwise
-# measured as source.
+# threads. Each worker then writes its own data file for the 'coverage' task to combine. The test corpus is omitted
+# because a spawned child re-reads this file without the '--cov' package restriction its parent was launched with. A
+# test module that a child imports, which is every module handing a spawned process one of its own functions, is
+# otherwise measured as source.
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
@@ -276,11 +278,6 @@ directory = "reports/coverage_html"
 [tool.coverage.report]
 fail_under = 100     # Requires the test suite to cover every measured statement
 show_missing = true  # Lists the statements missed by the test suite, so a failed check names the lines to cover
-# Every entry is a regex matched anywhere in a line, and an excluded line belonging to a multi-line statement excludes
-# that whole statement. The '__repr__' and '__del__' entries of the shared corpus are therefore dropped here, because
-# the suite calls every one of those members and the entries hid 19 statements it already covers. The bare 'pass' entry
-# is anchored for the same reason: unanchored, it also matched the word inside seven message and docstring lines that
-# happen to contain 'passes' or 'pass', excluding the six statements holding them.
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

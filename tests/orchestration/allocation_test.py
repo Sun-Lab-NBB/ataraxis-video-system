@@ -57,7 +57,7 @@ def _expected_memory_mb(archive_bytes: int, cores: int) -> int:
     return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB * readers + per_reader * readers)
 
 
-def _write_archive(archive_path, source_id: int = 1) -> None:
+def _write_archive(archive_path, source_id=1):
     """Writes a small readable log archive holding five frame messages and two data messages."""
     create_test_archive(
         archive_path=archive_path,
@@ -263,7 +263,9 @@ def test_estimate_job_memory_mb_scales_with_cores():
 
     assert estimates == sorted(estimates)
     assert estimates[0] < estimates[-1]
-    assert estimates == [_expected_memory_mb(archive_bytes=footprint.archive_bytes, cores=c) for c in core_counts]
+    assert estimates == [
+        _expected_memory_mb(archive_bytes=footprint.archive_bytes, cores=cores) for cores in core_counts
+    ]
     assert estimates == [3072, 8192, 13312, 23552]
     assert all(estimate % _MEGABYTES_PER_GIGABYTE == 0 for estimate in estimates)
 
