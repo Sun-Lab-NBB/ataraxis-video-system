@@ -118,7 +118,7 @@ def check_gpu_availability() -> bool:
             text=True,
             check=True,
         )
-    except Exception:  # pragma: no cover
+    except Exception:
         return False
     else:
         return True
@@ -135,7 +135,7 @@ def check_ffmpeg_availability() -> bool:
     try:
         # Runs the ffmpeg version command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
-    except Exception:  # pragma: no cover
+    except Exception:
         return False
     else:
         return True
@@ -368,7 +368,7 @@ class VideoSaver:
         # Waits for the FFMPEG process to terminate. Terminates forcefully if it exceeds the timeout.
         try:
             self._ffmpeg_process.wait(timeout=600)
-        except TimeoutExpired:  # pragma: no cover
+        except TimeoutExpired:
             self._ffmpeg_process.kill()
             self._ffmpeg_process.wait()
 
@@ -447,7 +447,7 @@ class VideoSaver:
                 self._ffmpeg_process.stdin.write(frame.data)  # type: ignore[union-attr]
             else:
                 self._ffmpeg_process.stdin.write(frame.tobytes())  # type: ignore[union-attr]
-        except Exception as error:  # pragma: no cover
+        except Exception as error:
             message = (
                 f"The FFMPEG process of the VideoSaver instance for the VideoSystem with id {self._system_id} "
                 f"has failed to process the input frame's data with error: {error}"
@@ -456,6 +456,8 @@ class VideoSaver:
 
     def _drain_stderr(self) -> None:
         """Reads all stderr output from the FFMPEG process to prevent pipe buffer saturation."""
+        # Narrows both handles for mypy. The thread running this method is started immediately after the process and
+        # its stderr pipe are created, so neither handle is ever None for the duration of the read below.
         if self._ffmpeg_process is None or self._ffmpeg_process.stderr is None:  # pragma: no cover
             return
         self._stderr_output = self._ffmpeg_process.stderr.read()

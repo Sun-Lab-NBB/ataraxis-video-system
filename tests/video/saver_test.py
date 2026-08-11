@@ -1,5 +1,6 @@
 """Contains tests for classes and methods provided by the saver.py module."""
 
+from contextlib import suppress
 import subprocess
 
 import numpy as np
@@ -15,8 +16,30 @@ from ataraxis_video_system import (
     check_gpu_availability,
     check_ffmpeg_availability,
 )
+from ataraxis_video_system.video import saver as saver_module
 from ataraxis_video_system.video.saver import VideoSaver
 from ataraxis_video_system.video.camera import MockCamera
+
+
+class _NoEofStdin:
+    """Wraps the encoder's real stdin pipe so that closing it does not signal EOF to the FFMPEG process."""
+
+    def __init__(self, stream) -> None:
+        self.real = stream
+
+    def close(self) -> None:
+        """Ignores the close request, keeping the wrapped pipe open so that FFMPEG never exits on its own."""
+
+
+class _FailingStdin:
+    """Stands in for the encoder's stdin pipe and fails every write with a preset error."""
+
+    def __init__(self, error) -> None:
+        self._error = error
+
+    def write(self, _data) -> int:
+        """Raises the preset error instead of accepting the frame's data."""
+        raise self._error
 
 
 def test_check_gpu_availability() -> None:
@@ -57,6 +80,62 @@ def test_check_ffmpeg_availability() -> None:
         assert result
     except Exception:
         assert not result
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        FileNotFoundError(2, "No such file or directory", "nvidia-smi"),
+        subprocess.CalledProcessError(returncode=9, cmd=["nvidia-smi"]),
+    ],
+    ids=["missing_binary", "rejecting_driver"],
+)
+def test_check_gpu_availability_degrades_when_the_probe_fails(monkeypatch, probe_error) -> None:
+    """Verifies that check_gpu_availability() reports False instead of propagating a failing probe command."""
+    probe_calls = []
+
+    def _failing_run(*args, **kwargs):
+        """Records the probe invocation and fails it the way a missing or rejecting nvidia-smi binary would."""
+        probe_calls.append(kwargs)
+        raise probe_error
+
+    monkeypatch.setattr(saver_module.subprocess, "run", _failing_run)
+
+    # The CLI, the MCP camera tools, and VideoSystem all treat this probe as a boolean gate, so a propagated error
+    # would abort a runtime that is meant to fall back to CPU encoding.
+    assert check_gpu_availability() is False
+
+    # The probe interrogates the NVIDIA driver and relies on 'check' to turn a driver-level rejection into an
+    # exception rather than a silent success.
+    assert probe_calls[0]["args"][0] == "nvidia-smi"
+    assert probe_calls[0]["check"] is True
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        FileNotFoundError(2, "No such file or directory", "ffmpeg"),
+        subprocess.CalledProcessError(returncode=1, cmd=["ffmpeg"]),
+    ],
+    ids=["missing_binary", "failing_binary"],
+)
+def test_check_ffmpeg_availability_degrades_when_the_probe_fails(monkeypatch, probe_error) -> None:
+    """Verifies that check_ffmpeg_availability() reports False instead of propagating a failing probe command."""
+    probe_calls = []
+
+    def _failing_run(*args, **kwargs):
+        """Records the probe invocation and fails it the way a missing or broken FFMPEG installation would."""
+        probe_calls.append(kwargs)
+        raise probe_error
+
+    monkeypatch.setattr(saver_module.subprocess, "run", _failing_run)
+
+    # The has_ffmpeg test fixture and the recording gates of the CLI and VideoSystem all call this probe directly. A
+    # propagated error would take down every caller instead of degrading them to 'FFMPEG is not installed'.
+    assert check_ffmpeg_availability() is False
+
+    assert probe_calls[0]["args"][0] == "ffmpeg"
+    assert probe_calls[0]["check"] is True
 
 
 def test_video_saver_init_repr(tmp_path, has_ffmpeg) -> None:
@@ -451,3 +530,112 @@ def test_video_saver_save_frame_ffmpeg_crash(tmp_path, has_ffmpeg) -> None:
 
     # Cleans up the dead process reference to prevent stop() from failing.
     saver._ffmpeg_process = None
+
+
+def test_video_saver_stop_kills_an_unresponsive_encoder(tmp_path, has_ffmpeg) -> None:
+    """Verifies that stop() force-kills and reaps an FFMPEG process that outlives the shutdown grace period."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "unresponsive_test.mp4"
+    saver = VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    )
+    saver.start()
+    process = saver._ffmpeg_process
+
+    # Without this wrapper, the stdin close inside stop() hands FFMPEG an EOF and it exits on its own, so the kill
+    # would land on an already-dead process and prove nothing.
+    stdin_stub = _NoEofStdin(stream=process.stdin)
+    process.stdin = stdin_stub
+
+    real_wait = process.wait
+    wait_timeouts = []
+
+    def _unresponsive_wait(timeout=None):
+        """Ignores the grace period, then reaps the process that the kill escalation terminates."""
+        wait_timeouts.append(timeout)
+        if len(wait_timeouts) == 1:
+            # An unbounded first wait would hang the whole session here, as the wrapped stdin keeps FFMPEG alive.
+            if timeout is None:
+                pytest.fail("VideoSaver.stop() waited on the FFMPEG process without a bounded timeout.")
+            raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=timeout)
+        return real_wait(timeout=30)
+
+    process.wait = _unresponsive_wait
+
+    try:
+        saver.stop()
+
+        # The grace period is bounded, so a wedged encoder cannot stall VideoSystem shutdown indefinitely.
+        assert wait_timeouts[0] == 600
+
+        # The child was force-killed and then reaped, rather than left behind as a zombie process.
+        assert process.poll() is not None
+        assert process.returncode != 0
+
+        assert saver._ffmpeg_process is None
+        assert not saver.is_active
+
+        # A forced shutdown leaves the instance in the same state a clean one does: stopping again is a no-op, and
+        # the saver remains usable for another recording.
+        saver.stop()
+        assert saver._ffmpeg_process is None
+        saver.start()
+        assert saver.is_active
+    finally:
+        # The no-op close transferred the ownership of the real pipe to this test.
+        with suppress(OSError):
+            stdin_stub.real.close()
+        saver.stop()
+
+
+@pytest.mark.parametrize(
+    "write_error",
+    [BrokenPipeError(32, "Broken pipe"), ValueError("I/O operation on closed file")],
+    ids=["severed_pipe", "closed_pipe"],
+)
+def test_video_saver_save_frame_reports_a_broken_encoder_pipe(tmp_path, has_ffmpeg, write_error) -> None:
+    """Verifies that save_frame() translates any encoder stdin write failure into a diagnosable BrokenPipeError."""
+    if not has_ffmpeg:
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
+    output_file = tmp_path / "broken_pipe_test.mp4"
+    saver = VideoSaver(
+        system_id=1,
+        output_file=output_file,
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    )
+    saver.start()
+
+    # The FFMPEG process stays alive, so the termination guard passes and execution reaches the pipe write. Both
+    # simulated failures are what a real severed pipe produces: EPIPE when FFMPEG dies mid-write and a ValueError
+    # when the pipe object is already closed.
+    real_stdin = saver._ffmpeg_process.stdin
+    saver._ffmpeg_process.stdin = _FailingStdin(error=write_error)
+
+    try:
+        message = (
+            f"The FFMPEG process of the VideoSaver instance for the VideoSystem with id 1 has failed to process the "
+            f"input frame's data with error: {write_error}"
+        )
+        with pytest.raises(BrokenPipeError, match=error_format(message)):
+            saver.save_frame(np.zeros((100, 100, 3), dtype=np.uint8))
+
+        # The write failure is reported to the caller, but the encoder process is deliberately left running, so the
+        # consumer process can decide whether to drop the frame or shut the saver down.
+        assert saver.is_active
+        assert saver._ffmpeg_process.poll() is None
+    finally:
+        # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub would instead
+        # leave FFMPEG running until the grace period expires.
+        saver._ffmpeg_process.stdin = real_stdin
+        saver.stop()

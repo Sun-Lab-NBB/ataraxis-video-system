@@ -2,6 +2,7 @@
 is built with.
 """
 
+import os
 from pathlib import Path
 from threading import Thread
 from concurrent.futures import Future
@@ -55,6 +56,13 @@ _MANAGER_TIMEOUT_SECONDS: int = 180
 
 _UNRECORDED_JOB_MESSAGE: str = "Job terminated without updating tracker status."
 """Stores the message the engine records against a job whose body ended without reaching its tracker."""
+
+_PINNED_THREAD_VARIABLES: tuple[str, ...] = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+"""Stores the threading-layer variables a pinned pool worker is checked against.
+
+These are the three variables the numeric backends bundled with NumPy read, which is the subset of the wider set
+initialize_worker_threads() writes that determines how wide a pool an extraction worker opens.
+"""
 
 
 class _RecordingPool:
@@ -1075,3 +1083,28 @@ def test_abandon_batch_fails_the_jobs_a_caller_already_drained_from_the_state(tm
     )
 
     assert ProcessingTracker(file_path=tracker_path).snapshot()[job.job_id].status is ProcessingStatus.FAILED
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_pin_pool_worker_pins_the_backends_and_meets_the_barrier(monkeypatch):
+    """Verifies that a pool worker constrains its numeric backends and reports itself started before it takes work."""
+    # The initializer writes the threading-layer variables into the live process environment, so each one is bound
+    # through monkeypatch beforehand and the value this process held is restored once the test ends.
+    for variable in _PINNED_THREAD_VARIABLES:
+        monkeypatch.setenv(variable, "unpinned")
+
+    # The pool hands its initializer the ceiling every worker shares, and the sole worker of a single-party barrier is
+    # the whole party, so the call returns as soon as it has met it.
+    barrier = execution._MULTIPROCESSING_CONTEXT.Barrier(parties=1)
+
+    execution._pin_pool_worker(thread_count=execution._POOL_WORKER_THREAD_CEILING, barrier=barrier)
+
+    # A worker that skipped the pin opens one thread pool per numeric backend, oversubscribing the host by the pool
+    # size squared once every worker does the same, which is the failure this initializer exists to prevent.
+    for variable in _PINNED_THREAD_VARIABLES:
+        assert os.environ[variable] == str(execution._POOL_WORKER_THREAD_CEILING)
+
+    # Meeting the barrier is what releases the pool builder waiting on the same one, so a worker that never reached it
+    # would stall the batch until the warm-up timeout broke the barrier for everyone.
+    assert barrier.n_waiting == 0
+    assert not barrier.broken

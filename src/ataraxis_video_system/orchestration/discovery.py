@@ -120,7 +120,7 @@ class JobSet:
         console.error(message=message, error=ValueError)
 
         # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
-        raise ValueError(message)  # pragma: no cover
+        raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
 
 
 def resolve_jobs(log_directory: Path) -> JobUniverse:

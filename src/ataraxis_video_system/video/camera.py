@@ -172,7 +172,7 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
     # Attempts to discover Harvesters-compatible cameras. Skips if no CTI file is configured.
     try:
         harvesters_cameras = _get_harvesters_ids()
-    except FileNotFoundError:  # pragma: no cover
+    except FileNotFoundError:
         # No CTI file configured, skips Harvesters discovery.
         harvesters_cameras = ()
 
@@ -191,7 +191,7 @@ def genicam_runtime_available() -> bool:
     return Harvester is not None
 
 
-def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
+def add_cti_file(cti_path: Path) -> None:
     """Configures the 'harvesters' camera interface to use the provided .cti file during all future runtimes.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -235,7 +235,7 @@ def add_cti_file(cti_path: Path) -> None:  # pragma: no cover
         file.write(str(cti_path))
 
 
-def check_cti_file() -> Path | None:  # pragma: no cover
+def check_cti_file() -> Path | None:
     """Checks whether the library is configured to use a GenTL Producer interface (.cti) file.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
@@ -355,7 +355,7 @@ class OpenCVCamera:
                 camera rejects the user-defined frame height, width, or acquisition rate parameters.
         """
         # Prevents re-connecting to an already connected camera.
-        if self._camera is not None:  # pragma: no cover
+        if self._camera is not None:  # pragma: no cover - defensive guard, no caller reconnects a connected interface.
             return
 
         # Instantiates the OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
@@ -372,7 +372,7 @@ class OpenCVCamera:
             # rejected by the cast. Any genuine deviation is rejected below, since the library performs no software
             # decimation and would otherwise stamp the requested rate onto a stream acquired at a different one.
             actual_frame_rate = round(self._camera.get(propId=cv2.CAP_PROP_FPS))
-            if actual_frame_rate != self._frame_rate:  # pragma: no cover
+            if actual_frame_rate != self._frame_rate:
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames at the rate of {self._frame_rate} "
@@ -387,7 +387,7 @@ class OpenCVCamera:
         if self._frame_width != 0:
             self._camera.set(propId=cv2.CAP_PROP_FRAME_WIDTH, value=float(self._frame_width))
             actual_frame_width = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_WIDTH))
-            if actual_frame_width != self._frame_width:  # pragma: no cover
+            if actual_frame_width != self._frame_width:
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames with the width of {self._frame_width} pixels, "
@@ -401,7 +401,7 @@ class OpenCVCamera:
         if self._frame_height != 0:
             self._camera.set(propId=cv2.CAP_PROP_FRAME_HEIGHT, value=float(self._frame_height))
             actual_frame_height = int(self._camera.get(propId=cv2.CAP_PROP_FRAME_HEIGHT))
-            if actual_frame_height != self._frame_height:  # pragma: no cover
+            if actual_frame_height != self._frame_height:
                 message = (
                     f"Unable to configure the OpenCVCamera interface for the VideoSystem with id {self._system_id}. "
                     f"Attempted configuring the camera to acquire frames with the height of {self._frame_height} "
@@ -599,7 +599,7 @@ class HarvestersCamera:
             OSError: If the configured .cti file is not a loadable GenTL Producer.
         """
         # Prevents connecting to an already connected camera.
-        if self._camera is not None:  # pragma: no cover
+        if self._camera is not None:
             return
 
         _require_genicam_runtime(action=f"connect to the GenICam camera at index {self._camera_index}")
@@ -653,10 +653,6 @@ class HarvestersCamera:
         # Stops image acquisition only if it was started.
         if self._camera.is_acquiring():
             self._camera.stop()
-
-        # Discards any unconsumed buffers to ensure proper memory release.
-        while self._camera.num_holding_filled_buffers:
-            _ = self._camera.fetch()  # pragma: no cover
 
         self._camera.destroy()
         self._camera = None
@@ -863,7 +859,7 @@ class HarvestersCamera:
         # place of the diagnostic error below.
         buffer = self._camera.fetch()
 
-        if buffer is None:  # pragma: no cover
+        if buffer is None:
             message = (
                 f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has failed to grab "
                 f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
@@ -891,7 +887,7 @@ class HarvestersCamera:
                 return out_array
 
             # For color data, evaluates the input format and reshapes the data as necessary.
-            if data_format in _COLOR_FORMATS:  # pragma: no cover
+            if data_format in _COLOR_FORMATS:
                 # Reshapes the 1D data array into the (height, width, channels) format.
                 reshaped_data: NDArray[np.integer[Any]] = content.data.reshape(
                     height,
@@ -899,8 +895,8 @@ class HarvestersCamera:
                     int(content.num_components_per_pixel),
                 )
 
-                # Swaps every R and B value (RGB -> BGR) to produce BGR / BGRA images. This ensures consistency
-                # with the OpenCVCamera API. Only applies to RGB formats; BGR formats are used as-is.
+                # Swaps every R and B value (RGB -> BGR) to produce BGR images. This ensures consistency with the
+                # OpenCVCamera API. Only applies to RGB formats; BGR formats are used as-is.
                 if data_format in _ALL_RGB_FORMATS:
                     frame: NDArray[np.integer[Any]] = reshaped_data[:, :, ::-1].copy()
                 else:
@@ -915,15 +911,15 @@ class HarvestersCamera:
             message = (
                 f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has acquired an image "
                 f"with an unsupported data (color) format {data_format}. Currently, only the following unpacked "
-                f"families of color formats are supported: Monochrome, RGB, RGBA, BGR, and BGRA."
-            )  # pragma: no cover
-            console.error(message=message, error=ValueError)  # pragma: no cover
+                f"families of color formats are supported: Monochrome, RGB, and BGR."
+            )
+            console.error(message=message, error=ValueError)
             # Unreachable: console.error() is NoReturn, but ruff cannot trace NoReturn through method calls (RET503).
-            raise ValueError(message)  # pragma: no cover
+            raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
 
 
 @contextmanager
-def harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None, None]:  # pragma: no cover
+def harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None, None]:
     """Opens a temporary connection to the target GenICam camera for the duration of the managed block.
 
     Notes:
@@ -1115,8 +1111,9 @@ class MockCamera:
         Raises:
             ConnectionError: If the method is called for a class not currently 'connected' to a camera.
         """
-        # Prevents calling this method before connecting to the camera's hardware.
-        if not self._camera:
+        # Prevents calling this method before connecting to the camera's hardware. connect() creates the timer
+        # alongside the connection, so the two are checked together and the checked state narrows the timer for mypy.
+        if not self._camera or self._timer is None:
             message = (
                 f"The MockCamera instance for the VideoSystem with id {self._system_id} is not currently simulating "
                 f"connection to the camera hardware, and cannot simulate image acquisition. Call the connect() method "
@@ -1127,10 +1124,6 @@ class MockCamera:
         # Flips the acquiring flag the first time this method is called.
         if not self._acquiring:
             self._acquiring = True
-
-        # Falls back to re-initialization to appease mypy; the timer should always be initialized at this point.
-        if self._timer is None:  # pragma: no cover
-            self._timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # Simulates the blocking behavior of physical camera interfaces by using the timer class to enforce a certain
         # frame rate. Sleeping all but the final millisecond releases the logical core the way a physical interface
@@ -1209,7 +1202,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                     with _suppress_output():
                         camera.release()  # Guarantees camera release even if an exception occurs.
 
-            except Exception as error:  # pragma: no cover
+            except Exception as error:
                 # Marks any ID that raises a runtime error as non-working and notifies the user.
                 console.echo(
                     message=f"OpenCV camera discovery: Failed to evaluate camera index {evaluated_id}. Error: {error}",
@@ -1339,7 +1332,7 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
             finally:
                 camera.destroy()  # Guarantees camera resource release.
 
-        except Exception as error:  # pragma: no cover
+        except Exception as error:
             # Skips any device that cannot be connected or queried for any reason and notifies the user.
             console.echo(
                 message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {error}",
@@ -1399,7 +1392,7 @@ def _get_cti_path() -> Path:
     cti_path_file = application_directory / "cti_path.txt"
 
     # Aborts with an error if the path file does not exist.
-    if not cti_path_file.exists():  # pragma: no cover
+    if not cti_path_file.exists():
         message = (
             "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
             "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti set' CLI "

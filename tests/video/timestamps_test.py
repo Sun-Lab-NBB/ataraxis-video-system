@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
-from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, PARALLEL_PROCESSING_THRESHOLD
+from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, PARALLEL_PROCESSING_THRESHOLD, LogArchiveReader
 
 from ataraxis_video_system.video import timestamps as timestamps_module
 from ataraxis_video_system.video.timestamps import extract_logged_camera_timestamps
@@ -157,6 +157,32 @@ def test_extract_logged_camera_timestamps_resolves_the_worker_count(tmp_path, mo
 
     assert resolution_requests == [-1]
     np.testing.assert_array_equal(extracted, _expected_timestamps(frame_timestamps_us=frame_timestamps_us))
+
+
+def test_process_frame_message_batch_uses_the_supplied_onset(tmp_path):
+    """Verifies that the batch worker offsets the payload-free frame messages of its batch by the onset it is given."""
+    archive_path = tmp_path / f"{_SOURCE_ID}{LOG_ARCHIVE_SUFFIX}"
+    frame_timestamps_us = [10, 30]
+    _build_archive(archive_path=archive_path, frame_timestamps_us=frame_timestamps_us, data_timestamps_us=[20])
+
+    # A below-threshold archive yields a single batch, which already excludes the onset message key.
+    keys = LogArchiveReader(archive_path=archive_path).get_batches(workers=1)[0]
+
+    # Deliberately differs from the archive's own onset. A worker that rediscovers the onset by rescanning the
+    # archive, instead of honoring the value the caller pre-discovered, produces the archive's onset here instead.
+    override_onset_us = np.uint64(_ONSET_US + 5_000)
+
+    extracted = timestamps_module._process_frame_message_batch(
+        log_path=archive_path, keys=keys, onset_us=override_onset_us
+    )
+
+    # The 20 us data message carries a payload, so it must not appear among the extracted frame timestamps.
+    expected = np.array([override_onset_us + elapsed_us for elapsed_us in frame_timestamps_us], dtype=np.uint64)
+    np.testing.assert_array_equal(extracted, expected)
+
+    # The caller concatenates the returned batches, which requires a contiguous uint64 buffer from every worker.
+    assert extracted.dtype == np.uint64
+    assert extracted.flags["C_CONTIGUOUS"]
 
 
 @pytest.mark.xdist_group(name="orchestration")

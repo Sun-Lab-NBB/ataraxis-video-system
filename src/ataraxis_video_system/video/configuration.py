@@ -245,11 +245,11 @@ def enumerate_genicam_nodes(
         # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
         try:
             name: str = node.node.name
-        except Exception:  # noqa: S112  # pragma: no cover
+        except Exception:  # noqa: S112
             continue
 
         # Skips already-visited nodes to avoid cycles in the category tree.
-        if name in visited:  # pragma: no cover
+        if name in visited:
             continue
         visited.add(name)
 
@@ -260,7 +260,7 @@ def enumerate_genicam_nodes(
         # Resolves the node's principal interface type to determine how to handle it.
         try:
             type_code = int(node.node.principal_interface_type)
-        except Exception:  # noqa: S112  # pragma: no cover
+        except Exception:  # noqa: S112
             continue
 
         # Descends into Category nodes by pushing their children onto the stack.
@@ -349,7 +349,7 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
 
     # Rejects nodes that are not readable value nodes.
     type_code = int(raw_node.principal_interface_type)
-    if type_code not in _VALUE_NODE_TYPES:  # pragma: no cover
+    if type_code not in _VALUE_NODE_TYPES:
         message = (
             f"Unable to read GenICam node '{name}'. The node must be a value type (Integer, Float, Boolean, "
             f"String, or Enumeration), but got type code {type_code}."
@@ -357,7 +357,7 @@ def read_genicam_node(node_map: NodeMap, name: str) -> GenicamNodeInfo:
         console.error(message=message, error=ValueError)
 
     access_code = int(raw_node.get_access_mode())
-    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):  # pragma: no cover
+    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
         message = (
             f"Unable to read GenICam node '{name}'. The node must have ReadWrite or ReadOnly access, "
             f"but got access code {access_code}."
@@ -392,14 +392,14 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
     access_code = int(raw_node.get_access_mode())
 
     # Rejects nodes that are not readable value nodes.
-    if type_code not in _VALUE_NODE_TYPES:  # pragma: no cover
+    if type_code not in _VALUE_NODE_TYPES:
         message = (
             f"Unable to format GenICam node '{name}'. The node must be a value type (Integer, Float, Boolean, "
             f"String, or Enumeration), but got type code {type_code}."
         )
         console.error(message=message, error=ValueError)
 
-    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):  # pragma: no cover
+    if access_code not in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
         message = (
             f"Unable to format GenICam node '{name}'. The node must have ReadWrite or ReadOnly access, "
             f"but got access code {access_code}."
@@ -476,7 +476,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
 
     # Rejects nodes that are not writable.
     access_code = int(feature.node.get_access_mode())
-    if access_code != _AccessMode.READ_WRITE:  # pragma: no cover
+    if access_code != _AccessMode.READ_WRITE:
         message = (
             f"Unable to write to GenICam node '{name}'. The node must have ReadWrite access, "
             f"but got access code {access_code}."
@@ -497,7 +497,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
 
     try:
         feature.value = typed_value
-    except Exception as error:  # pragma: no cover
+    except Exception as error:
         message = f"Unable to write value '{typed_value}' to GenICam node '{name}': {error}"
         console.error(message=message, error=RuntimeError)
 
@@ -620,7 +620,7 @@ def apply_genicam_configuration(
             try:
                 _apply_selectors(node_map=node_map, selectors=node_info.selectors)
                 getattr(node_map, name).value = node_info.value
-            except Exception as error:  # pragma: no cover
+            except Exception as error:
                 message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
                 console.error(message=message, error=RuntimeError)
 
@@ -672,8 +672,9 @@ def _write_apply_phase(
                 _apply_selectors(node_map=node_map, selectors=node_info.selectors)
                 getattr(node_map, name).value = value
             except Exception as error:
-                # Reset-phase failures are non-fatal, as the node may not exist on this camera model.
-                if use_reset_values:  # pragma: no cover
+                # Reset-phase failures are non-fatal, as the reset value only has to unlock the constraints the
+                # later phases write through. A camera that rejects it is written its target value regardless.
+                if use_reset_values:
                     continue
                 message = f"Unable to apply GenICam configuration. Failed to write node '{name}': {error}"
                 console.error(message=message, error=RuntimeError)
@@ -717,7 +718,7 @@ def _coerce_boolean(name: str, value: str) -> bool:
     console.error(message=message, error=ValueError)
 
     # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
-    raise ValueError(message)  # pragma: no cover
+    raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
 
 
 def _get_selecting_features(node_map: NodeMap, name: str) -> list[str]:
@@ -733,7 +734,7 @@ def _get_selecting_features(node_map: NodeMap, name: str) -> list[str]:
     try:
         feature = getattr(node_map, name)
         return sorted(str(selector.node.name) for selector in feature.node.selecting_features)
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover - every supported genicam build exposes selecting_features.
         return []
 
 
@@ -756,7 +757,7 @@ def _get_selector_values(selector: Any) -> list[str | int]:
             with suppress(Exception):
                 if int(entry.node.get_access_mode()) in (_AccessMode.READ_WRITE, _AccessMode.READ_ONLY):
                     values.append(str(entry.symbolic))
-    elif type_code == _NodeType.INTEGER:  # pragma: no cover
+    elif type_code == _NodeType.INTEGER:
         with suppress(Exception):
             values.extend(range(int(selector.min), int(selector.max) + 1, max(int(selector.inc), 1)))
 
@@ -780,10 +781,11 @@ def _expand_selectors(node_map: NodeMap, name: str) -> list[dict[str, str | int]
     axes: list[list[tuple[str, str | int]]] = []
     for selector_name in _get_selecting_features(node_map=node_map, name=name):
         selector = getattr(node_map, selector_name, None)
-        if selector is None:  # pragma: no cover
+        if selector is None:  # pragma: no cover - a selector the node map names always resolves on that node map.
             continue
 
-        # A selector the camera does not allow writing cannot be stepped, so the node keeps its current instance.
+        # A selector the camera does not allow writing cannot be stepped, so the node keeps its current instance. No
+        # self-consistent camera reaches this state, since a camera that gates a selector also gates what it addresses.
         with suppress(Exception):
             if int(selector.node.get_access_mode()) != _AccessMode.READ_WRITE:  # pragma: no cover
                 continue
@@ -796,7 +798,7 @@ def _expand_selectors(node_map: NodeMap, name: str) -> list[dict[str, str | int]
         return [{}]
 
     combinations = [dict(combination) for combination in product(*axes)]
-    if len(combinations) > _MAXIMUM_SELECTOR_COMBINATIONS:  # pragma: no cover
+    if len(combinations) > _MAXIMUM_SELECTOR_COMBINATIONS:
         message = (
             f"The GenICam node '{name}' is addressed by {len(combinations)} selector combinations, which exceeds the "
             f"ceiling of {_MAXIMUM_SELECTOR_COMBINATIONS}. Only the first {_MAXIMUM_SELECTOR_COMBINATIONS} "

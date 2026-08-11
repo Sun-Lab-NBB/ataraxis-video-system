@@ -152,7 +152,6 @@ class JobDescriptor:
                 f"values cannot be read as the type its field declares: {error}."
             )
             console.error(message=message, error=ValueError)
-            raise  # pragma: no cover - console.error always raises, this satisfies the linter's return analysis.
 
     @property
     def dispatch_key(self) -> tuple[str, str]:

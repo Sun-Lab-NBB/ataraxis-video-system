@@ -113,9 +113,6 @@ def extract_logged_camera_timestamps(
     # for over-batching, which improves load distribution when processing times vary.
     batches = reader.get_batches(workers=workers, batch_multiplier=4)
 
-    if not batches:  # pragma: no cover
-        return np.array([], dtype=np.uint64)
-
     # Passes the pre-discovered onset timestamp to worker processes so each can construct a lightweight reader that
     # skips redundant onset scanning.
     onset_us = reader.onset_timestamp_us
@@ -167,9 +164,7 @@ def extract_logged_camera_timestamps(
     return np.concatenate(batch_arrays)
 
 
-def _process_frame_message_batch(
-    log_path: Path, keys: list[str], onset_us: np.uint64
-) -> NDArray[np.uint64]:  # pragma: no cover
+def _process_frame_message_batch(log_path: Path, keys: list[str], onset_us: np.uint64) -> NDArray[np.uint64]:
     """Processes a batch of messages from a VideoSystem log archive to extract frame timestamps.
 
     Runs in parallel via ProcessPoolExecutor. Each worker creates its own LogArchiveReader instance with the

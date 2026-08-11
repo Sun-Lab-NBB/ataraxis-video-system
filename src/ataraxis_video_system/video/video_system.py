@@ -373,7 +373,7 @@ class VideoSystem:
             console.error(message=message, error=TypeError)
 
         # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
-        if display_frame_rate is not None and "darwin" in sys.platform:  # pragma: no cover
+        if display_frame_rate is not None and "darwin" in sys.platform:
             warnings.warn(
                 message=(
                     f"Displaying frames is currently not supported for Apple Silicon devices. See README for details. "
@@ -433,7 +433,7 @@ class VideoSystem:
 
             # VideoSaver relies on the FFMPEG library to be available on the system Path. Ensures that FFMPEG is
             # available for this runtime.
-            if not check_ffmpeg_availability():  # pragma: no cover
+            if not check_ffmpeg_availability():
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. VideoSaver "
                     f"requires a third-party software, FFMPEG, to be available on the system's Path. Make sure FFMPEG "
@@ -444,7 +444,7 @@ class VideoSystem:
 
             # Since GPU encoding is currently only supported for NVIDIA GPUs, verifies that nvidia-smi is callable
             # for the host system. This is used as a proxy to determine whether the system has an Nvidia GPU.
-            if gpu >= 0 and not check_gpu_availability():  # pragma: no cover
+            if gpu >= 0 and not check_gpu_availability():
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. The saver is "
                     f"configured to use the GPU video encoder, which currently only supports NVIDIA GPUs. Calling "
@@ -558,7 +558,7 @@ class VideoSystem:
         # Waits for the processes to report that they have been successfully initialized.
         for _ in initialization_timer.poll(
             interval=_PROCESS_INITIALIZATION_POLL_INTERVAL, allow_sleep=True, block=False
-        ):  # pragma: no cover
+        ):
             # Exits once both processes have reported successful initialization.
             if self._terminator_array[2] == 1 and (self._consumer_process is None or self._terminator_array[3] == 1):
                 break
@@ -697,7 +697,7 @@ class VideoSystem:
     def _frame_display_loop(
         display_queue: Queue,  # type: ignore[type-arg]
         system_id: np.uint8,
-    ) -> None:  # pragma: no cover
+    ) -> None:  # pragma: no cover - GUI-only, requires a display server.
         """Continuously fetches frame images from the display_queue and displays them via OpenCV's imshow()
         function.
 
@@ -747,7 +747,7 @@ class VideoSystem:
         saver_queue: MPQueue,  # type: ignore[type-arg]
         logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
-    ) -> None:  # pragma: no cover
+    ) -> None:
         """Continuously grabs frames from the managed camera and queues them up to be saved by the consumer process.
 
         If the VideoSystem instance is configured to display acquired frame data, this method also uses a separate
@@ -872,7 +872,7 @@ class VideoSystem:
         saver_queue: MPQueue,  # type: ignore[type-arg]
         logger_queue: MPQueue,  # type: ignore[type-arg]
         terminator_array: SharedMemoryArray,
-    ) -> None:  # pragma: no cover
+    ) -> None:
         """Continuously grabs the frames from the saver_queue and saves them as an .mp4 video file.
 
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
@@ -947,7 +947,7 @@ class VideoSystem:
             # Stops the encoder process.
             saver.stop()
 
-    def _watchdog(self) -> None:  # pragma: no cover
+    def _watchdog(self) -> None:
         """Monitors the producer and consumer processes to ensure they remain alive during runtime.
 
         Verifies the process state in 20-millisecond cycles and releases the GIL between state verifications.

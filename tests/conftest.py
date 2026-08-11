@@ -12,6 +12,7 @@ from collections.abc import Generator
 
 import pytest
 import filelock
+import platformdirs
 
 from ataraxis_video_system import (
     CameraInterfaces,
@@ -99,6 +100,21 @@ def gentl_simulator(simulator_cti_path: Path | None, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setenv(_CTI_PATH_VARIABLE, str(simulator_cti_path))
     return simulator_cti_path
+
+
+@pytest.fixture
+def persisted_cti_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirects the persisted GenTL Producer path file into a temporary directory for a single test.
+
+    The runtime override is removed alongside the redirection, so that the path resolution under test reaches the
+    persisted file rather than the environment. Both together keep a test that configures a Producer away from the one
+    the developer's own machine has configured.
+    """
+    monkeypatch.delenv(_CTI_PATH_VARIABLE, raising=False)
+    directory = tmp_path / "user_data"
+    directory.mkdir()
+    monkeypatch.setattr(platformdirs, "user_data_dir", lambda **_kwargs: str(directory))
+    return directory
 
 
 @pytest.fixture(scope="session")
