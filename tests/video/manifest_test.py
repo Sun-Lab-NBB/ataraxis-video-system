@@ -61,6 +61,34 @@ def test_write_camera_manifest_new(tmp_path) -> None:
     assert loaded.sources[0].name == "test_camera"
 
 
+def test_write_camera_manifest_replaces_a_repeated_source(tmp_path) -> None:
+    """Verifies that re-registering a source replaces its entry instead of adding a second one for the same camera."""
+    write_camera_manifest(log_directory=tmp_path, source_id=112, name="live_camera")
+    write_camera_manifest(log_directory=tmp_path, source_id=112, name="renamed_camera")
+
+    loaded = CameraManifest.from_yaml(file_path=tmp_path / CAMERA_MANIFEST_FILENAME)
+
+    # Two entries for one source leave every reader keyed by that id silently dropping one of them, so the repeat
+    # registration refreshes the row the source already owns.
+    assert len(loaded.sources) == 1
+    assert loaded.sources[0].id == 112
+    assert loaded.sources[0].name == "renamed_camera"
+
+
+def test_write_camera_manifest_keeps_sibling_sources(tmp_path) -> None:
+    """Verifies that replacing one source's entry leaves every other registered source untouched."""
+    write_camera_manifest(log_directory=tmp_path, source_id=51, name="face_camera")
+    write_camera_manifest(log_directory=tmp_path, source_id=62, name="body_camera")
+    write_camera_manifest(log_directory=tmp_path, source_id=51, name="face_camera_v2")
+
+    loaded = CameraManifest.from_yaml(file_path=tmp_path / CAMERA_MANIFEST_FILENAME)
+
+    assert len(loaded.sources) == 2
+    assert {source.id: source.name for source in loaded.sources} == {51: "face_camera_v2", 62: "body_camera"}
+    # The replaced entry keeps the position it was first registered at, so the manifest order stays stable.
+    assert loaded.sources[0].id == 51
+
+
 def test_write_camera_manifest_append(tmp_path) -> None:
     """Verifies that write_camera_manifest appends to an existing manifest."""
     write_camera_manifest(log_directory=tmp_path, source_id=51, name="face_camera")

@@ -406,6 +406,75 @@ def test_write_genicam_node_synthetic_float() -> None:
     assert isinstance(node_map.values["ExposureTime"], float)
 
 
+@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", "Yes"])
+def test_write_genicam_node_accepts_every_true_literal(value) -> None:
+    """Verifies that write_genicam_node coerces each accepted true literal, whatever case it is written in."""
+    node_map = SyntheticNodeMap(overrides={"ReverseX": False})
+    write_genicam_node(node_map=node_map, name="ReverseX", value=value)
+
+    assert node_map.values["ReverseX"] is True
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no", "FALSE", "No"])
+def test_write_genicam_node_accepts_every_false_literal(value) -> None:
+    """Verifies that write_genicam_node coerces each accepted false literal, whatever case it is written in."""
+    node_map = SyntheticNodeMap(overrides={"ReverseX": True})
+    write_genicam_node(node_map=node_map, name="ReverseX", value=value)
+
+    assert node_map.values["ReverseX"] is False
+
+
+@pytest.mark.parametrize("value", ["On", "Off", "enabled", "banana", ""])
+def test_write_genicam_node_rejects_an_unrecognized_boolean_literal(value) -> None:
+    """Verifies that a Boolean literal outside the accepted vocabulary raises instead of silently writing False."""
+    node_map = SyntheticNodeMap(overrides={"ReverseX": True})
+
+    message = (
+        f"Unable to write to GenICam node 'ReverseX'. The node is a Boolean, so the written value must be one of "
+        f"0, 1, false, no, true, yes, but got '{value}'."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        write_genicam_node(node_map=node_map, name="ReverseX", value=value)
+
+    # A rejected write leaves the node holding the value it already had, rather than the False a bare membership
+    # test would have produced.
+    assert node_map.values["ReverseX"] is True
+
+
+def test_apply_configuration_skips_a_blacklisted_reset_phase_node() -> None:
+    """Verifies that a blacklisted node is skipped by the reset phases, which write a default to an absent node."""
+    node_map = SyntheticNodeMap(overrides={"ExposureAuto": "Continuous"})
+
+    apply_genicam_configuration(
+        node_map=node_map,
+        config=_synthetic_configuration(nodes={"ExposureAuto": "Continuous"}),
+        strict=True,
+        blacklisted_nodes=frozenset({"ExposureAuto"}),
+        **_SYNTHETIC_IDENTITY,
+    )
+
+    # The unlock phase writes 'Off' to every reset-phase node the configuration omits, and the blacklist removes the
+    # node from that configuration, so a blacklist applied to node_lookup alone would disengage the auto-control.
+    assert node_map.values["ExposureAuto"] == "Continuous"
+    assert "ExposureAuto" not in node_map.writes
+
+
+def test_apply_configuration_skips_a_blacklisted_offset() -> None:
+    """Verifies that blacklisting an offset leaves it where the camera had it, rather than zeroing it."""
+    node_map = SyntheticNodeMap(overrides={"BinningHorizontal": 1, "OffsetX": 1000, "Width": 900})
+
+    apply_genicam_configuration(
+        node_map=node_map,
+        config=_synthetic_configuration(nodes={"Height": 500}),
+        strict=True,
+        blacklisted_nodes=frozenset({"OffsetX", "OffsetY"}),
+        **_SYNTHETIC_IDENTITY,
+    )
+
+    assert node_map.values["OffsetX"] == 1000
+    assert node_map.values["Height"] == 500
+
+
 def test_apply_configuration_phase_ordering() -> None:
     """Verifies that apply_configuration satisfies the SFNC dimension and offset dependency chain."""
     target = {

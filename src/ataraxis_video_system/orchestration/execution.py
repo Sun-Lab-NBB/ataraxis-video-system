@@ -114,6 +114,12 @@ class JobExecutionState:
     is charged, since a break fails every in-flight job whatever caused it."""
 
 
+_execution_lock: Lock = Lock()
+"""Serializes the check-and-reserve that admits one batch execution session at a time. The test of the reference below
+and its replacement sit on opposite sides of a bytecode boundary, so two callers finding the slot free would otherwise
+both publish a session, and the second would strand the first session's worker pool beyond the reach of every
+cancellation tool."""
+
 _execution_state: JobExecutionState | None = None
 """Stores the active execution state for batch log processing jobs, or None when no session exists."""
 
@@ -130,7 +136,41 @@ def set_execution_state(state: JobExecutionState | None) -> None:
         state: The execution state to store, or None to clear the active session.
     """
     global _execution_state
-    _execution_state = state
+
+    with _execution_lock:
+        _execution_state = state
+
+
+def start_execution_session(state: JobExecutionState) -> bool:
+    """Publishes one execution state as the session of record and starts the thread that manages it.
+
+    Notes:
+        The incumbent test, the publication, and the thread start all happen under one lock. A thread reports itself
+        alive only once it has started, so a state published before its thread runs reads as a finished session, and
+        splitting these steps lets two callers each start a manager and double-commit the host's cores and memory.
+
+        A session whose manager thread has ended is replaced, so a completed or an abandoned batch does not block
+        every later batch.
+
+    Args:
+        state: The execution state to publish. Its manager thread is created, recorded, and started here.
+
+    Returns:
+        True when this state became the session of record, and False when a live session already holds that place.
+    """
+    global _execution_state
+
+    with _execution_lock:
+        active = _execution_state
+        if active is not None and active.manager_thread is not None and active.manager_thread.is_alive():
+            return False
+
+        manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+        state.manager_thread = manager
+        _execution_state = state
+        manager.start()
+
+    return True
 
 
 def job_execution_manager(state: JobExecutionState) -> None:
@@ -409,6 +449,10 @@ def _handle_broken_pool(state: JobExecutionState, executor: ProcessPoolExecutor)
         which is the one case the break is attributable and the case an oversized job reaches. Every other requeued
         job returns to the queue free of charge.
 
+        A canceled session admits nothing further, so a job the break killed has no run left to return to and is
+        failed rather than requeued. Requeuing it instead would leave it reading scheduled in the tracker, which is
+        the only channel a status reader consults, after the manager had already exited.
+
     Args:
         state: The active job execution state, mutated in place.
         executor: The broken pool, shut down here.
@@ -423,6 +467,20 @@ def _handle_broken_pool(state: JobExecutionState, executor: ProcessPoolExecutor)
         state.broken_jobs.clear()
         state.pool_broken = False
         rebuilds = state.pool_rebuilds
+        canceled = state.canceled
+
+    # Skips the rebuild entirely for a canceled session, since the replacement pool would be warmed and then
+    # discarded on the very next iteration of the manager's loop.
+    if canceled:
+        _abandon_batch(
+            state=state,
+            orphaned=broken,
+            reason=(
+                "The batch's shared worker pool broke after the batch was canceled. Every job the break killed was "
+                "failed rather than retried, since a canceled batch admits no further work."
+            ),
+        )
+        return None
 
     if rebuilds >= _MAXIMUM_POOL_REBUILDS:
         _abandon_batch(

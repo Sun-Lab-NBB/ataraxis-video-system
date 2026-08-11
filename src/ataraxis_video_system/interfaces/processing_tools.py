@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 from pathlib import Path
-from threading import Thread
 from dataclasses import replace
 
 import numpy as np
@@ -33,10 +32,9 @@ from ..orchestration import (
     get_execution_state,
     resolve_core_budget,
     resolve_job_workers,
-    set_execution_state,
     group_jobs_by_tracker,
-    job_execution_manager,
     estimate_job_memory_mb,
+    start_execution_session,
     resolve_memory_budget_mb,
 )
 
@@ -194,15 +192,6 @@ def execute_log_processing_jobs_tool(
         'message_count', and 'modeled', and any invalid jobs. Returns an error dictionary when an execution session
         is already active, and one carrying 'invalid_jobs' when no submitted job is valid.
     """
-    # Enforces single-session constraint.
-    existing_state = get_execution_state()
-    if (
-        existing_state is not None
-        and existing_state.manager_thread is not None
-        and existing_state.manager_thread.is_alive()
-    ):
-        return {"error": "An execution session is already active. Cancel it first or wait for completion."}
-
     # Resolves both budgets before sizing, since the core budget bounds the width any single job receives.
     resolved_cores = resolve_core_budget(requested_budget=core_budget)
     resolved_memory = resolve_memory_budget_mb(requested_budget_mb=memory_budget_mb)
@@ -261,7 +250,9 @@ def execute_log_processing_jobs_tool(
     if not pending:
         return {"error": "No valid jobs to execute.", "invalid_jobs": invalid_jobs}
 
-    # Creates execution state and starts the manager thread.
+    # Creates the execution state and reserves the single session slot. The reservation performs the incumbent check,
+    # the publication, and the thread start as one atomic step, since two callers splitting those steps would each
+    # start a manager and double-commit the host's cores and memory.
     pool_size = resolve_pool_size(job_count=len(pending), core_budget=resolved_cores, memory_budget_mb=resolved_memory)
     state = JobExecutionState(
         all_jobs=all_jobs,
@@ -270,11 +261,9 @@ def execute_log_processing_jobs_tool(
         memory_budget_mb=resolved_memory,
         pool_size=pool_size,
     )
-    set_execution_state(state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
-    manager.start()
-    state.manager_thread = manager
+    if not start_execution_session(state=state):
+        return {"error": "An execution session is already active. Cancel it first or wait for completion."}
 
     result: dict[str, Any] = {
         "started": True,

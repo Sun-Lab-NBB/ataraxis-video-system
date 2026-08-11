@@ -144,6 +144,12 @@ phases in which nodes must be written to satisfy all known dependency chains. No
 listed in any phase are written after all phases complete.
 """
 
+_BOOLEAN_TRUE_VALUES: frozenset[str] = frozenset({"true", "1", "yes"})
+"""The literals a Boolean node write accepts as True, compared against the lowered input value."""
+
+_BOOLEAN_FALSE_VALUES: frozenset[str] = frozenset({"false", "0", "no"})
+"""The literals a Boolean node write accepts as False, compared against the lowered input value."""
+
 _MAXIMUM_SELECTOR_COMBINATIONS: int = 64
 """The largest number of selector combinations enumerated for a single node.
 
@@ -485,7 +491,7 @@ def write_genicam_node(node_map: NodeMap, name: str, value: str) -> None:
     elif type_code == _NodeType.FLOAT:
         typed_value = float(value)
     elif type_code == _NodeType.BOOLEAN:
-        typed_value = value.lower() in ("true", "1", "yes")
+        typed_value = _coerce_boolean(name=name, value=value)
     else:
         typed_value = value
 
@@ -575,7 +581,12 @@ def apply_genicam_configuration(
     # Runs the unlock phase ahead of the writability check, because an engaged auto-control holds its manual
     # counterpart at ReadOnly until it is disengaged.
     _write_apply_phase(
-        node_map=node_map, phase=_APPLY_PHASE_ORDER[0], node_lookup=node_lookup, written=written, use_reset_values=True
+        node_map=node_map,
+        phase=_APPLY_PHASE_ORDER[0],
+        node_lookup=node_lookup,
+        written=written,
+        blacklisted_nodes=blacklisted_nodes,
+        use_reset_values=True,
     )
 
     # Validates that all nodes in the lookup are writable now that the auto-controls have been disengaged.
@@ -596,6 +607,7 @@ def apply_genicam_configuration(
             phase=phase,
             node_lookup=node_lookup,
             written=written,
+            blacklisted_nodes=blacklisted_nodes,
             use_reset_values=phase_index < _RESET_PHASE_COUNT,
         )
 
@@ -618,6 +630,7 @@ def _write_apply_phase(
     phase: tuple[str, ...],
     node_lookup: dict[str, list[GenicamNodeInfo]],
     written: set[str],
+    blacklisted_nodes: frozenset[str],
     *,
     use_reset_values: bool,
 ) -> None:
@@ -629,6 +642,7 @@ def _write_apply_phase(
         node_lookup: The target values of every non-blacklisted node, keyed by node name.
         written: The names of the nodes that have received their target value. Nodes this call writes with their
             target value are added to it.
+        blacklisted_nodes: The node names this call writes nothing to, whatever phase it is running.
         use_reset_values: Determines whether nodes covered by ``_PHASE_RESET_VALUES`` receive their reset value
             instead of their target value.
 
@@ -636,6 +650,12 @@ def _write_apply_phase(
         RuntimeError: If a node write outside a reset phase fails.
     """
     for name in phase:
+        # A blacklisted node is skipped by every phase, including the reset phases. Filtering it out of node_lookup
+        # alone leaves it matching the branch below that writes a safe default to a node the configuration omits,
+        # which is exactly the hardware write the caller asked this function not to perform.
+        if name in blacklisted_nodes:
+            continue
+
         if name not in node_lookup:
             # Handles nodes that exist on the camera but are absent from the configuration (e.g., the
             # configuration was dumped from a camera without CenterX support). Reset-phase nodes are still
@@ -661,6 +681,43 @@ def _write_apply_phase(
         # Only marks nodes as written when their target value was applied (not the reset value).
         if not use_reset_values:
             written.add(name)
+
+
+def _coerce_boolean(name: str, value: str) -> bool:
+    """Coerces the string representation of a Boolean node's value into the boolean the node accepts.
+
+    Notes:
+        A literal outside both vocabularies is rejected rather than coerced. A bare membership test maps every
+        unrecognized literal to False, so a caller asking for 'On' would silently disable the feature and be told the
+        write succeeded.
+
+    Args:
+        name: The feature name of the node the value is written to.
+        value: The string representation of the value to coerce.
+
+    Returns:
+        The coerced boolean value.
+
+    Raises:
+        ValueError: If the value names neither a true nor a false literal.
+    """
+    lowered = value.lower()
+
+    if lowered in _BOOLEAN_TRUE_VALUES:
+        return True
+
+    if lowered in _BOOLEAN_FALSE_VALUES:
+        return False
+
+    accepted = ", ".join(sorted(_BOOLEAN_TRUE_VALUES | _BOOLEAN_FALSE_VALUES))
+    message = (
+        f"Unable to write to GenICam node '{name}'. The node is a Boolean, so the written value must be one of "
+        f"{accepted}, but got '{value}'."
+    )
+    console.error(message=message, error=ValueError)
+
+    # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
+    raise ValueError(message)  # pragma: no cover
 
 
 def _get_selecting_features(node_map: NodeMap, name: str) -> list[str]:

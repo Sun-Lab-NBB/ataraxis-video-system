@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from dataclasses import field, dataclass
 
+from filelock import FileLock
 from ataraxis_data_structures import YamlConfig
 
 if TYPE_CHECKING:
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
 
 CAMERA_MANIFEST_FILENAME: str = "camera_manifest.yaml"
 """The filename used for camera log manifest files within DataLogger output directories."""
+
+_MANIFEST_LOCK_TIMEOUT: float = 10.0
+"""The maximum time, in seconds, to wait for the manifest's .lock file before aborting the registration."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,21 +49,41 @@ class CameraManifest(YamlConfig):
 def write_camera_manifest(log_directory: Path, source_id: int, name: str) -> None:
     """Writes or updates the camera manifest file in the specified log directory.
 
-    If the manifest file already exists (another VideoSystem instance has already registered), reads the
-    existing manifest, appends the new source entry, and writes it back. Otherwise, creates a new manifest
-    with a single entry.
+    If the manifest file already exists (another VideoSystem instance has already registered), reads the existing
+    manifest, replaces the entry registered under the same source_id or appends a new entry when the manifest carries
+    none, and writes it back. Otherwise, creates a new manifest with a single entry.
+
+    Notes:
+        The read, the replacement, and the write are performed under a lock file held beside the manifest, since the
+        three steps do not form an atomic sequence on their own. Both the threads that concurrent MCP tool calls run on
+        and the separate processes that each VideoSystem instance registers from reach this function, so the lock is a
+        file lock rather than a thread lock.
 
     Args:
         log_directory: The path to the DataLogger output directory where the manifest file is stored.
         source_id: The source_id of the VideoSystem instance to register.
         name: The colloquial human-readable name for the camera source.
+
+    Raises:
+        Timeout: If the manifest's .lock file cannot be acquired within the timeout period.
     """
     manifest_path = log_directory / CAMERA_MANIFEST_FILENAME
+    lock = FileLock(lock_file=str(manifest_path.with_suffix(manifest_path.suffix + ".lock")))
 
-    # Reads the existing manifest if one has already been written by another VideoSystem instance sharing
-    # this DataLogger.
-    manifest = CameraManifest.from_yaml(file_path=manifest_path) if manifest_path.exists() else CameraManifest()
+    with lock.acquire(timeout=_MANIFEST_LOCK_TIMEOUT):
+        # Reads the existing manifest if one has already been written by another VideoSystem instance sharing
+        # this DataLogger.
+        manifest = CameraManifest.from_yaml(file_path=manifest_path) if manifest_path.exists() else CameraManifest()
 
-    # Appends the new source entry and writes the updated manifest back to disk.
-    manifest.sources.append(CameraSourceData(id=source_id, name=name))
-    manifest.to_yaml(file_path=manifest_path)
+        # Replaces the entry a re-registering source already owns, since two entries sharing one source_id leave every
+        # downstream reader keyed by that id silently dropping one of them.
+        replaced_index = next(
+            (index for index, source in enumerate(manifest.sources) if source.id == source_id),
+            None,
+        )
+        if replaced_index is None:
+            manifest.sources.append(CameraSourceData(id=source_id, name=name))
+        else:
+            manifest.sources[replaced_index] = CameraSourceData(id=source_id, name=name)
+
+        manifest.to_yaml(file_path=manifest_path)

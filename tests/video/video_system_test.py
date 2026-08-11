@@ -1,11 +1,14 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
 import sys
+from queue import Queue
 from random import randint
 
+import cv2
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer
+from tests.fake_opencv import FakeVideoCapture, build_capture_factory
 from tests.log_archives import create_test_archive
 from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, DataLogger, assemble_log_archives
@@ -18,7 +21,9 @@ from ataraxis_video_system import (
     EncoderSpeedPresets,
     check_ffmpeg_availability,
 )
+from ataraxis_video_system.video.camera import MockCamera, OpenCVCamera
 from ataraxis_video_system.video.timestamps import extract_logged_camera_timestamps
+from ataraxis_video_system.video.video_system import _empty_display_queue
 
 
 @pytest.fixture
@@ -93,6 +98,82 @@ def test_init_errors(data_logger) -> None:
             output_directory=invalid_output_directory,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
+
+
+@pytest.mark.parametrize("invalid_name", ["", None, 5])
+def test_init_rejects_an_invalid_name(data_logger, tmp_path, invalid_name) -> None:
+    """Verifies that VideoSystem rejects a camera name that is not a non-empty string."""
+    message = (
+        f"Unable to initialize the VideoSystem instance with id 1. Expected a non-empty string as the 'name' "
+        f"argument value, but encountered {invalid_name!r} of type {type(invalid_name).__name__}."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name=invalid_name,  # type: ignore[arg-type]
+            output_directory=tmp_path / "test_output_directory",
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+
+def test_init_rejects_a_camera_acquiring_wider_than_eight_bit_frames(data_logger, tmp_path, monkeypatch) -> None:
+    """Verifies that a camera acquiring frames above 8 bits per component is rejected at construction."""
+
+    def _wide_frame(self):
+        """Returns the 16-bit frame a GenICam camera configured for Mono12 or Mono16 delivers."""
+        return np.zeros((4, 4), dtype=np.uint16)
+
+    monkeypatch.setattr(MockCamera, "grab_frame", _wide_frame)
+
+    # Every InputPixelFormats member describes 8 bits per component, so a wider frame hands the saver twice the bytes
+    # the FFMPEG command declares and is demuxed as two frames, breaking frame-to-timestamp alignment.
+    message = (
+        "Unable to configure the camera interface for the VideoSystem with id 1. The managed camera acquires frames "
+        "using the 'uint16' data type, but this library encodes 8-bit frames only. Reconfigure the camera to use an "
+        "8-bit pixel format, such as Mono8 or BGR8."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=tmp_path / "test_output_directory",
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+
+def test_init_builds_the_opencv_interface(data_logger, monkeypatch) -> None:
+    """Verifies that the OpenCV branch of the interface selection builds, validates, and queries its camera."""
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+
+    # The output directory is left unset, so the selection is exercised without requiring FFMPEG on the host.
+    video_system = VideoSystem(
+        system_id=np.uint8(60),
+        data_logger=data_logger,
+        name="test_camera",
+        output_directory=None,
+        camera_interface=CameraInterfaces.OPENCV,
+        camera_index=0,
+    )
+
+    assert isinstance(video_system._camera, OpenCVCamera)
+    assert video_system._camera.frame_width == 640
+    assert video_system._camera.frame_height == 480
+    assert not video_system._camera.is_connected
+
+
+def test_empty_display_queue_releases_every_retained_frame() -> None:
+    """Verifies that the frames a departed display thread never consumed are released rather than retained."""
+    display_queue: Queue = Queue()
+    for _ in range(5):
+        display_queue.put(np.zeros((4, 4, 3), dtype=np.uint8))
+
+    _empty_display_queue(display_queue=display_queue)
+
+    assert display_queue.empty()
+    # The unfinished-task count is what a join() on the queue waits for, so each discarded frame is also retired.
+    assert display_queue.unfinished_tasks == 0
 
 
 def test_camera_configuration_errors(data_logger, tmp_path) -> None:
@@ -278,7 +359,7 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
     invalid_qp = "str"
     message = (
         f"Unable to configure the video saver for the VideoSystem with id 1. Expected an "
-        f"integer between -1 and 51 as the 'quantization_parameter' argument value, but got "
+        f"integer between 0 and 51 as the 'quantization_parameter' argument value, but got "
         f"{invalid_qp} of type {type(invalid_qp).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
@@ -288,6 +369,22 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
             name="test_camera",
             output_directory=output_directory,
             quantization_parameter=invalid_qp,  # type: ignore[arg-type]
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+    # The encoder rejects a negative quantization parameter outright, so the guard admits 0 through 51 alone rather
+    # than deferring the choice to the encoder.
+    message = (
+        "Unable to configure the video saver for the VideoSystem with id 1. Expected an "
+        "integer between 0 and 51 as the 'quantization_parameter' argument value, but got -1 of type int."
+    )
+    with pytest.raises(TypeError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=output_directory,
+            quantization_parameter=-1,
             camera_interface=CameraInterfaces.MOCK,
         )
 
