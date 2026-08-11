@@ -329,19 +329,19 @@ instead of re-deriving them.
 
 This library provides the `axvs` CLI that exposes the following commands:
 
-| Command               | Description                                                          |
-|-----------------------|----------------------------------------------------------------------|
-| `cti set`             | Configures the library to use a specified GenTL Producer (.cti) file |
-| `cti check`           | Checks whether a valid .cti file is configured                       |
-| `check devices`       | Discovers all compatible cameras on the system                       |
-| `check compatibility` | Verifies FFMPEG and GPU availability for video encoding              |
-| `run`                 | Starts an interactive video capture session                          |
+| Command               | Description                                                                    |
+|-----------------------|--------------------------------------------------------------------------------|
+| `cti set`             | Configures the library to use a specified GenTL Producer (.cti) file           |
+| `cti check`           | Checks whether a valid .cti file is configured                                 |
+| `check devices`       | Discovers all compatible cameras on the system                                 |
+| `check compatibility` | Verifies FFMPEG and GPU availability for video encoding                        |
+| `run`                 | Starts an interactive video capture session                                    |
 | `process`             | Processes one recording's log archives to extract frame acquisition timestamps |
-| `mcp`                 | Starts the MCP server for AI agent integration                       |
-| `configure read`      | Reads a GenICam node value from a connected camera                   |
-| `configure write`     | Writes a value to a GenICam node on a connected camera               |
-| `configure dump`      | Dumps GenICam configuration from a camera to a YAML file             |
-| `configure load`      | Loads GenICam configuration from a YAML file to a camera             |
+| `mcp`                 | Starts the MCP server for AI agent integration                                 |
+| `configure read`      | Reads a GenICam node value from a connected camera                             |
+| `configure write`     | Writes a value to a GenICam node on a connected camera                         |
+| `configure dump`      | Dumps GenICam configuration from a camera to a YAML file                       |
+| `configure load`      | Loads GenICam configuration from a YAML file to a camera                       |
 
 Use `axvs --help` or `axvs COMMAND --help` for detailed usage information.
 
@@ -425,10 +425,13 @@ human-readable YAML file, tagged with the camera model and serial number. The `a
 saved configuration onto a camera, with optional `--strict` mode that aborts on camera identity mismatches instead of
 issuing a warning. Saved configuration files can also be edited manually before loading.
 
-The `axvs configure` group excludes a default set of vendor nodes (`CustomerIDKey`, `CustomerValueKey`, and
-`TestPattern`) from the read, dump, and load operations, because some cameras report them as writable and then reject
-the write at the hardware level. Pass `-b/--blacklisted-node` to replace that set, or `--no-blacklist` to disable the
-filtering entirely. An explicitly named node passed to `axvs configure write` is always written.
+The `axvs configure` group parses the options its subcommands share, so they must be given before the subcommand name.
+Every subcommand requires `-c/--camera-index` to name the camera it operates on, and `axvs configure SUBCOMMAND --help`
+stays reachable without it. The group also excludes a default set of vendor nodes (`CustomerIDKey`, `CustomerValueKey`,
+and `TestPattern`) from the read, dump, and load operations, because some cameras report them as writable and then
+reject the write at the hardware level. Pass `-b/--blacklisted-node` to replace that set, or `--no-blacklist` to disable
+the filtering entirely. The two are mutually exclusive. An explicitly named node passed to `axvs configure write` is
+always written.
 
 ***Note,*** configurations are independent of video capture sessions. The camera is configured first, and the
 VideoSystem respects the active configuration for every node it does not set itself. Supplying `frame_width`,

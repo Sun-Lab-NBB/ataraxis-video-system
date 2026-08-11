@@ -2,6 +2,7 @@
 
 from typing import Literal
 from pathlib import Path
+from dataclasses import dataclass
 
 import click
 import numpy as np
@@ -34,6 +35,42 @@ console.enable()
 
 _CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}
 """Ensures that displayed Click help messages are formatted according to the lab standard."""
+
+
+@dataclass(frozen=True, slots=True)
+class _SharedConfigurationParameters:
+    """Bundles the options parsed on the ``configure`` group and shared across its ``read``, ``write``, ``dump``, and
+    ``load`` subcommands.
+
+    The group callback builds one of these from its options and stores it on the Click context, and each subcommand
+    reads it back through the ``_pass_shared_parameters`` decorator. The ``write`` subcommand uses only
+    ``camera_index``, since it names the single node it targets on its own command line.
+    """
+
+    camera_index: int | None
+    """The index of the Harvesters camera every subcommand operates on, or None when the option was omitted."""
+
+    blacklisted_nodes: frozenset[str]
+    """The GenICam node names excluded from the read, dump, and load operations."""
+
+    def require_camera_index(self) -> int:
+        """Returns the index of the target camera, raising a Click usage error when ``--camera-index`` was not
+        supplied.
+
+        The option cannot be marked required on the group without also blocking ``axvs configure SUBCOMMAND --help``,
+        so each subcommand enforces it through this accessor when it actually runs.
+        """
+        if self.camera_index is None:
+            message = (
+                "Unable to resolve the target camera for the 'configure' command. The '-c' / '--camera-index' option "
+                "must be supplied before the subcommand name, but it was omitted."
+            )
+            console.error(message=message, error=click.UsageError)
+        return self.camera_index
+
+
+_pass_shared_parameters = click.make_pass_decorator(_SharedConfigurationParameters)
+"""Injects the ``configure`` group's ``_SharedConfigurationParameters`` as each subcommand's first argument."""
 
 
 @click.group("axvs", context_settings=_CONTEXT_SETTINGS)
@@ -410,11 +447,13 @@ def live_run(
     "processed sequentially. Set to a value below 1 (default -1) to resolve the ceiling from the host.",
 )
 @click.option(
-    "-p",
-    "--progress/--no-progress",
-    default=True,
+    "-np",
+    "--no-progress",
+    is_flag=True,
+    default=False,
     show_default=True,
-    help="Determines whether to display progress bars during timestamp extraction.",
+    help="Determines whether to suppress the progress bars during timestamp extraction. The progress bars are "
+    "displayed by default.",
 )
 def process_log_archives(
     log_directory: Path,
@@ -423,7 +462,7 @@ def process_log_archives(
     specifier: tuple[str, ...],
     *,
     workers: int,
-    progress: bool,
+    no_progress: bool,
 ) -> None:
     """Processes the VideoSystem log archives of one recording to extract frame timestamps.
 
@@ -439,7 +478,7 @@ def process_log_archives(
         job_id=job_id,
         source_ids=list(specifier) if specifier else None,
         workers=workers,
-        display_progress=progress,
+        display_progress=not no_progress,
     )
 
 
@@ -473,6 +512,13 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
 
 @axvs_cli.group("configure")
 @click.option(
+    "-c",
+    "--camera-index",
+    type=int,
+    default=None,
+    help="The index of the target camera in the list of all cameras discoverable through the Harvesters interface.",
+)
+@click.option(
     "-b",
     "--blacklisted-node",
     type=str,
@@ -481,32 +527,42 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     show_default=True,
     help="GenICam node name to exclude from the read, dump, and load operations. Repeat to specify multiple nodes. "
     "Some vendor-specific nodes report ReadWrite access but reject writes at the hardware level. Modify this list to "
-    "match your camera hardware. An explicitly named node passed to 'configure write' is always written. Use "
-    "--no-blacklist to disable all blacklisting.",
+    "match your camera hardware. An explicitly named node passed to 'configure write' is always written. Mutually "
+    "exclusive with --no-blacklist.",
 )
 @click.option(
     "--no-blacklist",
     is_flag=True,
     default=False,
     help="Disables all node blacklisting. When set, all ReadWrite nodes are included in the read, dump, and load "
-    "operations regardless of the --blacklisted-node values.",
+    "operations. Mutually exclusive with --blacklisted-node.",
 )
 @click.pass_context
-def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool) -> None:
-    """Allows working with the configuration of GenTL (Harvesters) compatible cameras."""
-    context.ensure_object(dict)
-    context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
+def configure_group(
+    context: click.Context, camera_index: int | None, blacklisted_node: tuple[str, ...], *, no_blacklist: bool
+) -> None:
+    """Allows working with the configuration of GenTL (Harvesters) compatible cameras.
+
+    The camera index and the node blacklist are parsed on this group and shared by every subcommand, so they must be
+    given before the subcommand name.
+    """
+    # Consults the parameter source rather than the parsed tuple, since --blacklisted-node carries a non-empty default
+    # and therefore arrives populated whether or not the operator named a node.
+    blacklist_supplied = context.get_parameter_source("blacklisted_node") is not click.ParameterSource.DEFAULT
+    if blacklist_supplied and no_blacklist:
+        message = (
+            "Unable to run the 'configure' command. The '-b' / '--blacklisted-node' and '--no-blacklist' options are "
+            "mutually exclusive, but both were supplied."
+        )
+        console.error(message=message, error=click.UsageError)
+
+    context.obj = _SharedConfigurationParameters(
+        camera_index=camera_index,
+        blacklisted_nodes=frozenset() if no_blacklist else frozenset(blacklisted_node),
+    )
 
 
 @configure_group.command("read")
-@click.option(
-    "-c",
-    "--camera-index",
-    type=int,
-    default=0,
-    show_default=True,
-    help="The index of the Harvesters camera to read the configuration from.",
-)
 @click.option(
     "-n",
     "--node-name",
@@ -515,22 +571,20 @@ def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *
     help="The name of a specific GenICam node to read. If omitted, lists every writable (ReadWrite) node that is not "
     "blacklisted.",
 )
-@click.pass_context
-def read_genicam_configuration(context: click.Context, camera_index: int, node_name: str) -> None:
+@_pass_shared_parameters
+def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str) -> None:
     """Reads GenICam node information from a connected Harvesters camera.
 
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists every
     writable (ReadWrite) node that is not blacklisted, with its current value.
     """
-    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
-
-    with harvester_connection(camera_index=camera_index) as camera:
+    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
         if node_name:
             description = format_genicam_node(node_map=camera.node_map, name=node_name)
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
         else:
             node_map = camera.node_map
-            names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=blacklist)
+            names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=shared.blacklisted_nodes)
             console.echo(message=f"Found {len(names)} writable GenICam nodes:", level=LogLevel.SUCCESS)
             for name in names:
                 try:
@@ -541,14 +595,6 @@ def read_genicam_configuration(context: click.Context, camera_index: int, node_n
 
 
 @configure_group.command("write")
-@click.option(
-    "-c",
-    "--camera-index",
-    type=int,
-    default=0,
-    show_default=True,
-    help="The index of the Harvesters camera to write the configuration to.",
-)
 @click.option(
     "-n",
     "--node-name",
@@ -563,26 +609,19 @@ def read_genicam_configuration(context: click.Context, camera_index: int, node_n
     required=True,
     help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
-def write_genicam_configuration(camera_index: int, node_name: str, value: str) -> None:
+@_pass_shared_parameters
+def write_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str, value: str) -> None:
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
     based on the node's type.
     """
-    with harvester_connection(camera_index=camera_index) as camera:
+    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
         camera.set_node_value(name=node_name, value=value)
         console.echo(message=f"Node '{node_name}' set to {value}.", level=LogLevel.SUCCESS)
 
 
 @configure_group.command("dump")
-@click.option(
-    "-c",
-    "--camera-index",
-    type=int,
-    default=0,
-    show_default=True,
-    help="The index of the Harvesters camera to dump the configuration from.",
-)
 @click.option(
     "-o",
     "--output-file",
@@ -590,17 +629,15 @@ def write_genicam_configuration(camera_index: int, node_name: str, value: str) -
     type=click.Path(exists=False, file_okay=True, dir_okay=False, writable=True, path_type=Path),
     help="The path to the output YAML file to write the configuration to.",
 )
-@click.pass_context
-def dump_genicam_configuration(context: click.Context, camera_index: int, output_file: Path) -> None:
+@_pass_shared_parameters
+def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_file: Path) -> None:
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
     The output YAML includes every writable (ReadWrite) node that is not blacklisted, with its current value, as well
     as the camera model and serial number for identity validation.
     """
-    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
-
-    with harvester_connection(camera_index=camera_index) as camera:
-        config = camera.get_configuration(blacklisted_nodes=blacklist)
+    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+        config = camera.get_configuration(blacklisted_nodes=shared.blacklisted_nodes)
         config.to_yaml(file_path=output_file)
         console.echo(
             message=f"Configuration saved: {len(config.nodes)} nodes written to {output_file}.",
@@ -609,14 +646,6 @@ def dump_genicam_configuration(context: click.Context, camera_index: int, output
 
 
 @configure_group.command("load")
-@click.option(
-    "-c",
-    "--camera-index",
-    type=int,
-    default=0,
-    show_default=True,
-    help="The index of the Harvesters camera to load the configuration onto.",
-)
 @click.option(
     "-f",
     "--config-file",
@@ -632,16 +661,14 @@ def dump_genicam_configuration(context: click.Context, camera_index: int, output
     help="If set, aborts the operation when a camera identity mismatch is detected between the configuration file "
     "and the connected camera.",
 )
-@click.pass_context
-def load_genicam_configuration(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
+@_pass_shared_parameters
+def load_genicam_configuration(shared: _SharedConfigurationParameters, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
     Applies every non-blacklisted writable node from the configuration file to the camera. Optionally validates that
     the camera model and serial number match the configuration file.
     """
-    blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
-
-    with harvester_connection(camera_index=camera_index) as camera:
+    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
         config = GenicamConfiguration.from_yaml(file_path=config_file)
-        camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=blacklist)
+        camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=shared.blacklisted_nodes)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
