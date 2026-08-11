@@ -108,15 +108,16 @@ def dump_genicam_config_tool(
             disable blacklisting.
 
     Returns:
-        A confirmation with the number of nodes saved, or an error description.
+        A confirmation with the number of node entries saved, counting one entry per selector combination for
+        selector-addressed nodes, or an error description.
     """
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
     try:
         with harvester_connection(camera_index=camera_index) as camera:
             # Reads every writable (ReadWrite) value node from the camera's GenICam node map and packages them into a
-            # GenicamConfiguration object that stores the camera's model and serial number along with the name and
-            # current value of each node.
+            # GenicamConfiguration object that stores the camera's model and serial number along with the name,
+            # current value, and addressing selectors of each node entry.
             config = camera.get_configuration(blacklisted_nodes=blacklist)
 
             # Serializes the configuration to a YAML file that can later be loaded back onto this or another camera

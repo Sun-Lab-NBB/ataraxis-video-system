@@ -129,8 +129,8 @@ def check_runtime_requirements_tool() -> str:
         "None". The CTI field instead reads "Unsupported" when the GenICam camera runtime is unavailable.
     """
     # Probes the system for each runtime dependency independently. FFMPEG is required for any video encoding, GPU is
-    # optional (enables hardware-accelerated H.264/H.265 encoding via NVENC), and the CTI file is only needed for
-    # Harvesters camera discovery.
+    # optional (enables hardware-accelerated H.264/H.265 encoding via NVENC), and the CTI file is needed for every
+    # Harvesters operation, from camera discovery through connecting and acquiring frames.
     ffmpeg_available = check_ffmpeg_availability()
     gpu_available = check_gpu_availability()
     cti_path = check_cti_file()

@@ -4,7 +4,7 @@ import importlib.metadata
 # -- Project information -----------------------------------------------------
 project = 'ataraxis-video-system'
 copyright = '2026, Sun (NeuroAI) lab'
-authors = ['Ivan Kondratyev', 'Jacob Groner', 'Natalie Yeung']
+author = 'Ivan Kondratyev, Jacob Groner, Natalie Yeung'
 # Extracts the project version from the metadata .toml file.
 release = importlib.metadata.version("ataraxis-video-system")
 

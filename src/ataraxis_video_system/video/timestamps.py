@@ -83,7 +83,8 @@ def extract_logged_camera_timestamps(
         microseconds elapsed since the UTC epoch onset.
 
     Raises:
-        ValueError: If the target path does not exist, does not have a .npz suffix, or does not point to a file.
+        ValueError: If the target path does not exist, does not have a .npz suffix, does not point to a file, or if
+            the archive carries no onset timestamp message.
     """
     # Validates the archive path. LogArchiveReader checks existence, but not the .npz suffix or file type.
     if not log_path.exists() or log_path.suffix != ".npz" or not log_path.is_file():

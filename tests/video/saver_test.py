@@ -130,8 +130,9 @@ def test_check_ffmpeg_availability_degrades_when_the_probe_fails(monkeypatch, pr
 
     monkeypatch.setattr(saver_module.subprocess, "run", _failing_run)
 
-    # The has_ffmpeg test fixture and the recording gates of the CLI and VideoSystem all call this probe directly. A
-    # propagated error would take down every caller instead of degrading them to 'FFMPEG is not installed'.
+    # The has_ffmpeg test fixture, the CLI's compatibility check, the MCP camera tools, and the VideoSystem saver gate
+    # all call this probe directly. A propagated error would take down every caller instead of degrading them to
+    # 'FFMPEG is not installed'.
     assert check_ffmpeg_availability() is False
 
     assert probe_calls[0]["args"][0] == "ffmpeg"

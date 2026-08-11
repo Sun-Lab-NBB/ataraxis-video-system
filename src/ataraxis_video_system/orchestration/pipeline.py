@@ -40,9 +40,10 @@ def run_log_processing_pipeline(
         independent external jobs share one tracker without resetting each other's state. That is what supports
         running every source of one recording in parallel under an external scheduler.
 
-        Each job runs at the requested worker ceiling, and the extraction narrows that to what its own archive
-        repays. A sequential run commits one job's resources at a time, so it weighs nothing against a budget and
-        reads no archive before dispatching it.
+        Each job runs at the requested worker ceiling, and the extraction falls back to a sequential run only for an
+        archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages. This path runs no sizing pass, so a job
+        whose archive passes that threshold opens a pool at the full ceiling. A sequential run commits one job's
+        resources at a time, so it weighs nothing against a budget and reads no archive before dispatching it.
 
     Args:
         log_directory: The path to the root directory to search for .npz log archives. The directory is searched
@@ -66,6 +67,9 @@ def run_log_processing_pipeline(
             requested source or job identifier is not registered, or if the resolved archives span several
             directories.
         OSError: If any directory beneath the log directory cannot be read.
+        YAMLError: If the camera manifest does not hold a well-formed YAML document.
+        MissingValueError: If the camera manifest omits a field the CameraManifest class requires.
+        TimeoutError: If the tracker's .lock file cannot be acquired within the timeout period.
     """
     job_set = prepare_jobs(
         log_directory=log_directory,

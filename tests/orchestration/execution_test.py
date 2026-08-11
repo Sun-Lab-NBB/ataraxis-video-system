@@ -60,8 +60,8 @@ _UNRECORDED_JOB_MESSAGE: str = "Job terminated without updating tracker status."
 _PINNED_THREAD_VARIABLES: tuple[str, ...] = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
 """Stores the threading-layer variables a pinned pool worker is checked against.
 
-These are the three variables the numeric backends bundled with NumPy read, which is the subset of the wider set
-initialize_worker_threads() writes that determines how wide a pool an extraction worker opens.
+These are the three BLAS threading variables every supported host reads, checked as a representative sample of the
+eight variables initialize_worker_threads() writes.
 """
 
 
@@ -69,8 +69,8 @@ class _RecordingPool:
     """Stands in for the session's shared process pool, recording every submission it accepts.
 
     Notes:
-        Only the admission pass is exercised through this stand-in. The manager itself is tested end to end against a
-        real spawned pool, so the pool's own behavior is never simulated.
+        The admission pass and the broken-pool rebuild are exercised through this stand-in. The manager itself is
+        tested end to end against a real spawned pool, so the pool's own behavior is never simulated.
     """
 
     def __init__(self, error=None):
@@ -324,8 +324,8 @@ def test_select_admissible_jobs_credits_the_occupied_pool_slot(tmp_path):
     first = _build_entry(directory=tmp_path, source_id="1", core_weight=1, memory_mb=1000)
     second = _build_entry(directory=tmp_path, source_id="2", core_weight=1, memory_mb=1000)
 
-    # Both jobs together hold 2000 MB, which passes the budget. Each one releases the baseline of the slot it takes
-    # over, so the pair charges 1800 MB and both are admitted.
+    # Both jobs together hold 2000 MB, which passes the budget. Each admitted job releases the baseline of the slot it
+    # takes over before the next is weighed, so the second job is weighed at 1800 MB and both are admitted.
     admitted, deferred = _select_admissible_jobs(
         pending=[first, second],
         core_budget=8,

@@ -158,8 +158,8 @@ class VideoSystem:
         _started: Tracks whether the system is currently running (has active subprocesses).
         _shutdown_lock: Stores the lock that serializes the teardown between the stop() method and the watchdog
             thread, so exactly one of the two releases the shared memory buffer.
-        _mp_manager: Stores the SyncManager instance used to control the multiprocessing assets (Queue and Lock
-            instances).
+        _mp_manager: Stores the SyncManager instance used to create the multiprocessing Queue that pipes frames from
+            the producer process to the consumer process.
         _system_id: Stores the unique identifier code of the VideoSystem instance.
         _output_file: Stores the path to the output .mp4 video file to be generated at runtime or None, if the instance
             is not configured to save acquired camera frames.
@@ -183,6 +183,13 @@ class VideoSystem:
             that do not use the 8-bit unsigned integer data type.
         RuntimeError: If the host system does not have access to FFMPEG or Nvidia GPU (when the instance is configured
             to use hardware encoding).
+        OverflowError: If 'system_id' falls outside the 0 to 255 range the uint8 identifier supports.
+        NotImplementedError: If the Harvesters camera interface is requested where the GenICam runtime is absent,
+            which is every macOS host.
+        FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured.
+        OSError: If the configured .cti file is not a loadable GenTL Producer.
+        BrokenPipeError: If the validation frame grab from the managed camera fails.
+        Timeout: If the camera manifest's .lock file cannot be acquired within the timeout period.
     """
 
     def __init__(
@@ -259,7 +266,9 @@ class VideoSystem:
                 f"zero or positive integer as the 'camera_index' argument value, but got {camera_index} of type "
                 f"{type(camera_index).__name__}."
             )
-            console.error(message=message, error=TypeError)
+            # A wrong type and an out-of-range value fail the same guard, so the class is selected from the half that
+            # rejected the argument. That keeps the two documented failure modes distinguishable to a caller.
+            console.error(message=message, error=TypeError if not isinstance(camera_index, int) else ValueError)
         if (frame_rate is not None and not isinstance(frame_rate, int)) or (
             isinstance(frame_rate, int) and frame_rate <= 0
         ):
@@ -268,7 +277,7 @@ class VideoSystem:
                 f"positive integer or None as the 'frame_rate' argument value, but got "
                 f"{frame_rate} of type {type(frame_rate).__name__}."
             )
-            console.error(message=message, error=TypeError)
+            console.error(message=message, error=TypeError if not isinstance(frame_rate, int) else ValueError)
         if (frame_width is not None and not isinstance(frame_width, int)) or (
             isinstance(frame_width, int) and frame_width <= 0
         ):
@@ -277,7 +286,7 @@ class VideoSystem:
                 f"positive integer or None as the 'frame_width' argument value, but got {frame_width} of type "
                 f"{type(frame_width).__name__}."
             )
-            console.error(message=message, error=TypeError)
+            console.error(message=message, error=TypeError if not isinstance(frame_width, int) else ValueError)
         if (frame_height is not None and not isinstance(frame_height, int)) or (
             isinstance(frame_height, int) and frame_height <= 0
         ):
@@ -286,7 +295,7 @@ class VideoSystem:
                 f"positive integer or None as the 'frame_height' argument value, but got {frame_height} of type "
                 f"{type(frame_height).__name__}."
             )
-            console.error(message=message, error=TypeError)
+            console.error(message=message, error=TypeError if not isinstance(frame_height, int) else ValueError)
 
         self._camera: OpenCVCamera | HarvestersCamera | MockCamera
 
@@ -370,7 +379,7 @@ class VideoSystem:
                 f"{type(display_frame_rate).__name__}. The display frame rate override has to be None or a positive "
                 f"integer that does not exceed the camera acquisition frame rate ({self._camera.frame_rate})."
             )
-            console.error(message=message, error=TypeError)
+            console.error(message=message, error=TypeError if not isinstance(display_frame_rate, int) else ValueError)
 
         # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
         if display_frame_rate is not None and "darwin" in sys.platform:
@@ -429,7 +438,10 @@ class VideoSystem:
                     f"integer between 0 and {MAXIMUM_QUANTIZATION_VALUE} as the 'quantization_parameter' argument "
                     f"value, but got {quantization_parameter} of type {type(quantization_parameter).__name__}."
                 )
-                console.error(message=message, error=TypeError)
+                console.error(
+                    message=message,
+                    error=TypeError if not isinstance(quantization_parameter, int) else ValueError,
+                )
 
             # VideoSaver relies on the FFMPEG library to be available on the system Path. Ensures that FFMPEG is
             # available for this runtime.

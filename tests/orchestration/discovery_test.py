@@ -136,7 +136,7 @@ def test_resolve_jobs_archives_property(tmp_path):
 
 
 def test_resolve_jobs_deduplicates_repeated_sources(tmp_path):
-    """Verifies that resolve_jobs collapses repeated manifest entries for the same source into one job."""
+    """Verifies that a source re-registered under a new name resolves to one job carrying the last name written."""
     write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1")
     write_camera_manifest(log_directory=tmp_path, source_id=1, name="cam1_again")
     _build_archive(directory=tmp_path, source_id=1)

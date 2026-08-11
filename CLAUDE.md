@@ -164,7 +164,7 @@ video encoding using CPU or GPU.
 | `src/.../interfaces/`                 | CLI and MCP server subpackage                                                     |
 | `src/.../interfaces/cli.py`           | Click-based `axvs` CLI with subcommand groups                                     |
 | `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs MCPServer                     |
-| `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and cross-tool helper functions                         |
+| `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and a cross-tool helper function                        |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
 | `tests/`                              | Test suite mirroring the video and orchestration subpackages, plus shared helpers |
 | `docs/`                               | Sphinx API documentation source                                                   |
@@ -178,8 +178,10 @@ video encoding using CPU or GPU.
   SharedMemoryArray controls termination and frame-saving toggles via IPC.
 - **GenICam Platform Support**: `harvesters` and `genicam` carry a `sys_platform != 'darwin'` marker, because `genicam`
   publishes no macOS wheel for every supported Python version. macOS therefore does not support the GenICam camera
-  interface at all. `camera.py` imports both inside a top-of-file `try/except ImportError` that falls back to `None`,
-  keeping the module usable for the OpenCV and Mock interfaces there. `genicam_runtime_available()` reports the state,
+  interface at all. `camera.py` imports the `harvesters` names inside a top-of-file `try/except ImportError` that falls
+  back to `None` for `Harvester` and `ImageAcquirer` and to empty tuples for the pixel-format collections, while
+  `genicam` is imported only under `TYPE_CHECKING` and so never executes at runtime. That keeps the module usable for
+  the OpenCV and Mock interfaces there. `genicam_runtime_available()` reports the state,
   `_require_genicam_runtime()` aborts with `NotImplementedError` at every entry point that reaches GenICam hardware
   (`HarvestersCamera.connect()` and `add_cti_file()`), and `discover_camera_ids()` and `check_cti_file()` report the
   interface as absent instead of failing. A `[[tool.mypy.overrides]]` block marks both modules
@@ -221,7 +223,8 @@ video encoding using CPU or GPU.
 ### Key patterns
 
 - **Multiprocessing Spawn**: `mp.set_start_method("spawn")` is set globally in `__init__.py` for cross-platform
-  consistency. All spawned processes are daemon processes requiring explicit `stop()` calls.
+  consistency. The VideoSystem's producer and consumer processes are daemon processes requiring explicit `stop()`
+  calls, while the log processing pools spawn non-daemon workers that their owners shut down explicitly.
 - **FFMPEG Stderr Draining**: A dedicated thread reads FFMPEG's stderr continuously. Without this, the pipe buffer
   fills and blocks FFMPEG, deadlocking the encoding pipeline.
 - **Camera Reconnection**: Cameras connect/disconnect during VideoSystem `__init__()` to validate parameters.
@@ -295,7 +298,7 @@ video encoding using CPU or GPU.
 2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` and returns `NDArray[np.uint64]`
 3. `run_log_processing_pipeline()` runs one recording sequentially, or one job by identifier, and imports no engine
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
-5. `_process_frame_message_batch()` runs in subprocess workers and is excluded from coverage (`# pragma: no cover`)
+5. `_process_frame_message_batch()` runs in subprocess workers, which the `parallel` and `concurrency` keys measure
 6. Log discovery uses manifest-based routing via `camera_manifest.yaml` files
 
 **Adding or modifying MCP tools:**

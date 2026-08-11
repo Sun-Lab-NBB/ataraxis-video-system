@@ -170,13 +170,14 @@ def has_opencv(_all_cameras: tuple[CameraInformation, ...]) -> bool:
 def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[bool, None, None]:
     """Checks for Harvesters camera availability and sandboxes the camera configuration for the whole session.
 
-    Captures the complete set of writable GenICam nodes before any test runs and writes it back once every test has
-    finished, so that tests which reconfigure the camera leave no trace on the hardware.
+    Captures every writable GenICam node outside the default blacklist before any test runs and writes it back once
+    every test has finished, so that tests which reconfigure the camera leave no trace on the hardware.
     """
     harvesters_cameras = [camera for camera in _all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
     has = bool(harvesters_cameras)
 
-    # Captures the full writable configuration so that every node a test may touch can be restored.
+    # Captures the writable configuration outside the default blacklist, so that every node a test writes through the
+    # configuration API can be restored.
     saved_configuration: GenicamConfiguration | None = None
     if has:
         camera = HarvestersCamera(system_id=222, camera_index=0)

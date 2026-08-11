@@ -1,9 +1,9 @@
 """Provides a Model Context Protocol (MCP) server for agentic interaction with the library.
 
 Exposes camera discovery, CTI file management, runtime requirements checking, video session management, GenICam
-configuration, camera manifest management, log archive assembly, video and log validation, recording discovery, and
-batch log processing functionality through the MCP protocol, enabling AI agents to programmatically interact with the
-library's core features.
+configuration, camera manifest management, log archive assembly, video file validation, recording discovery, batch log
+processing, and processed timestamp analysis and cleanup through the MCP protocol, enabling AI agents to
+programmatically interact with the library's core features.
 """
 
 from __future__ import annotations

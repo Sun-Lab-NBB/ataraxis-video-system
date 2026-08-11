@@ -542,7 +542,8 @@ def apply_genicam_configuration(
     Raises:
         ValueError: If ``strict`` is True and a camera identity mismatch is detected, or if any non-blacklisted
             node in the configuration is missing or not writable on the target device.
-        RuntimeError: If any non-blacklisted node write operation fails.
+        RuntimeError: If a non-blacklisted node write outside the two reset phases fails. Reset-phase write failures
+            are non-fatal, since the later phases write the node's target value regardless.
     """
     # Checks camera identity against the configuration metadata.
     mismatches: list[str] = []

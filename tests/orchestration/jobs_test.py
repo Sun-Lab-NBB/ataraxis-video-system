@@ -456,7 +456,7 @@ def test_job_sizing_stores_every_field():
 
 def test_job_sizing_baseline_figures():
     """Verifies that JobSizing carries the unmodeled flag when the figures fall back to the job baseline."""
-    sizing = JobSizing(memory_mb=230, message_count=0, archive_bytes=0, modeled=False)
+    sizing = JobSizing(memory_mb=1024, message_count=0, archive_bytes=0, modeled=False)
 
     assert not sizing.modeled
     assert sizing.message_count == 0

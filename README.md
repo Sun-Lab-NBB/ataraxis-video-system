@@ -312,7 +312,7 @@ One recording writes one VideoSystem to one DataLogger, so exactly one camera ma
 log directory tree holding several manifests, or archives written by several DataLogger instances, spans several
 recordings and is rejected with a diagnostic naming the topology it detected rather than processed in part.
 
-Processing is split across two entry points that share their job resolution and sizing but not their execution. The
+Processing is split across two entry points that share their job resolution but not their sizing or execution. The
 `axvs process` CLI command and the `run_log_processing_pipeline()` function target a single recording and run its
 archives one at a time in the calling process, which suits manual runs and small recordings. The
 [MCP server](#mcp-server) log processing tools orchestrate batches spanning many recordings, admitting jobs against a
@@ -320,11 +320,13 @@ core budget and a memory budget and running them in one shared process pool. Bot
 tracker that manages job lifecycle (scheduled, running, succeeded, or failed), and both write every output file into
 a `camera_timestamps/` subdirectory under the specified output directory.
 
-Each job targets exactly one log archive and is sized from that archive rather than from a single width chosen for the
-whole run. An archive below the parallel processing threshold takes one worker, and a larger archive takes the declared
-stage width narrowed to the workers its own message count repays and to the cores the host supplies. The job resolution
-and the sizing model are exported as callable functions, so an external scheduler derives the same figures this library
-dispatches with instead of re-deriving them.
+Each job targets exactly one log archive. On the batch path, every job is sized from its own archive rather than from a
+single width chosen for the whole run, so an archive below the parallel processing threshold takes one worker, and a
+larger archive takes the declared stage width narrowed to the workers its own message count repays and to the cores the
+host supplies. The sequential path runs no sizing pass and dispatches every job at the resolved core ceiling, which the
+extraction collapses to a single worker only for an archive below that threshold. The job resolution and the sizing
+model are exported as callable functions, so an external scheduler derives the same figures this library dispatches
+with instead of re-deriving them.
 
 ### CLI
 
@@ -420,12 +422,17 @@ CLI (`axvs configure`) or the [MCP server](#mcp-server).
 The `axvs configure read` command lists all writable nodes on a connected camera, or displays detailed metadata for a
 specific node (type, current value, access mode, valid range, step increment, enumeration entries, unit, and
 description). The `axvs configure write` command sets a single node to a new value, with automatic type conversion for
-integer, float, boolean, and enumeration nodes.
+integer, float, and boolean nodes. String and enumeration values are written as supplied.
 
 To support reproducible configurations, the `axvs configure dump` command saves all current camera parameters to a
 human-readable YAML file, tagged with the camera model and serial number. The `axvs configure load` command restores a
 saved configuration onto a camera, with optional `--strict` mode that aborts on camera identity mismatches instead of
 issuing a warning. Saved configuration files can also be edited manually before loading.
+
+The `axvs configure` group excludes a default set of vendor nodes (`CustomerIDKey`, `CustomerValueKey`, and
+`TestPattern`) from the read, dump, and load operations, because some cameras report them as writable and then reject
+the write at the hardware level. Pass `-b/--blacklisted-node` to replace that set, or `--no-blacklist` to disable the
+filtering entirely. An explicitly named node passed to `axvs configure write` is always written.
 
 ***Note,*** configurations are independent of video capture sessions. The camera is configured first, and the
 VideoSystem respects the active configuration for every node it does not set itself. Supplying `frame_width`,

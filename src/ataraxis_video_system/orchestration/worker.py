@@ -27,8 +27,8 @@ def run_extraction_job(job: JobDescriptor) -> None:
         This is the picklable entry point a process pool submits. It takes one flat descriptor, so the only state
         crossing the process boundary is paths, strings, and integers.
 
-        Opens the tracker from the descriptor's own path, because a tracker holds a file lock that cannot cross a
-        process boundary.
+        Opens the tracker from the descriptor's own path, because a tracker instance caches an in-memory job registry
+        that would arrive in the child already stale.
 
     Args:
         job: The descriptor of the job to run.

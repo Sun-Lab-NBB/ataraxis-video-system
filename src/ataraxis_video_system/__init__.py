@@ -10,7 +10,8 @@ Authors: Ivan Kondratyev (Inkaros), Jacob Groner, Natalie Yeung
 import os
 import multiprocessing as mp
 
-# Applies important library-wide configurations to optimize runtime performance.
+# Applies library-wide configurations that keep multiprocessing and frame display behaving consistently across
+# platforms.
 if mp.get_start_method(allow_none=True) is None:
     # Makes the library behave the same way across all platforms.
     mp.set_start_method("spawn")

@@ -218,7 +218,8 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
         A dictionary containing 'file', 'valid', 'codec', 'codec_long_name', 'width', 'height', 'frame_count',
         'duration_seconds', 'bit_rate_bps', 'file_size_bytes', 'pixel_format', and 'frame_rate' on success, where
         the frame count, duration, and bit rate are None when ffprobe does not report them. Returns an error
-        dictionary if the file cannot be read or ffprobe is not available.
+        dictionary if the file cannot be read, if ffprobe is not available, if its output cannot be parsed, or if the
+        file holds no video stream.
     """
     file_path = Path(video_file)
 
@@ -336,9 +337,10 @@ def assemble_log_archives_tool(
             removing sources.
 
     Returns:
-        A dictionary containing the assembly status, directory path, list of created archive filenames, extracted
-        source IDs, and archive count. Returns an error dictionary if the directory does not exist, if it holds no
-        .npy log entries of its own while its subdirectories do, or if assembly fails.
+        A dictionary containing the assembly status, directory path, the list of the archive filenames present in the
+        directory after assembly, extracted source IDs, and archive count. Returns an error dictionary if the
+        directory does not exist or is not a directory, if it holds no .npy log entries of its own while its
+        subdirectories do, or if assembly fails.
     """
     directory_path = Path(log_directory)
 
@@ -370,7 +372,7 @@ def assemble_log_archives_tool(
     except Exception as error:
         return {"error": f"Archive assembly failed: {error}"}
 
-    # Scans for created archives and extracts source IDs from filenames.
+    # Scans the directory for assembled archives and extracts source IDs from filenames.
     source_ids = scan_archive_source_ids(directory=directory_path)
     archives = [f"{source_id}{LOG_ARCHIVE_SUFFIX}" for source_id in source_ids]
 

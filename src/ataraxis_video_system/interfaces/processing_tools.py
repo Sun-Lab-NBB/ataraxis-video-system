@@ -63,7 +63,8 @@ def prepare_log_processing_batch_tool(
             Accepts paths from the 'log_directories' list returned by discover_camera_data_tool.
         source_ids: The list of confirmed source IDs to process. Accepts IDs from the 'source_id' field of
             entries in the 'sources' list returned by discover_camera_data_tool. Applied uniformly: each log
-            directory creates jobs for every source ID in this list that has a matching archive on disk.
+            directory creates jobs for every source ID in this list that has a matching archive on disk. Passing an
+            empty list prepares every source the log directory's camera_manifest.yaml registers.
         output_directories: The list of absolute paths for per-log-directory output. Must match the length of
             log_directories. Each output directory receives a ``camera_timestamps/`` subdirectory containing
             the processing tracker and feather output files.
@@ -172,7 +173,8 @@ def execute_log_processing_jobs_tool(
     recording and a short one are admitted at their own sizes. A job runs at the declared stage width narrowed to the
     workers its own archive repays, and an archive below the parallel processing threshold takes a single core. The
     manager admits a job once the running set has room for both its cores and its memory, and it admits an oversized
-    job alone rather than leaving it queued forever.
+    job alone rather than leaving it queued forever. A job whose estimated memory passes the host's total physical
+    memory is failed on its tracker instead of being admitted, since it cannot complete wherever it is dispatched.
 
     Important:
         Only one execution session can be active at a time. Use cancel_log_processing_tool to cancel an active
@@ -360,7 +362,8 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     Returns:
         A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary carrying
         'total_elapsed_seconds', 'completed_count', 'failed_count', 'running_count', and 'pending_count', plus
-        'throughput_jobs_per_hour' once at least one job has completed.
+        'throughput_jobs_per_hour' once at least one job has completed. Returns an 'active' flag of False with a
+        'message' and neither 'jobs' nor 'session' when no execution session exists.
     """
     state = get_execution_state()
     if state is None:
@@ -469,7 +472,8 @@ def cancel_log_processing_tool() -> dict[str, Any]:
 
     Returns:
         A dictionary containing a 'canceled' flag, a 'message', and 'final_state' with counts for succeeded,
-        failed, and active jobs at the time of cancellation.
+        failed, and active jobs at the time of cancellation. Returns a 'canceled' flag of False with a 'message' and
+        no 'final_state' when no execution session is active.
     """
     state = get_execution_state()
     if state is None:
@@ -520,8 +524,9 @@ def reset_log_processing_jobs_tool(
         source_ids: An optional list of source IDs whose jobs should be reset. If not provided, all jobs are reset.
 
     Returns:
-        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses. Returns an error
-        dictionary when the tracker file is absent or cannot be read.
+        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses. Returns a 'reset'
+        flag of False with a 'message' and no job counts when no job matches the requested source IDs. Returns an
+        error dictionary when the tracker file is absent or cannot be read.
     """
     path = Path(tracker_path)
 
@@ -558,17 +563,18 @@ def reset_log_processing_jobs_tool(
 
 @mcp.tool()
 def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
-    """Discovers and summarizes processing status for all log directories under a root directory.
+    """Discovers and summarizes processing status for all camera timestamp output directories under a root directory.
 
-    Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker
-    corresponds to a single DataLogger output directory.
+    Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker sits in
+    the ``camera_timestamps/`` subdirectory of one output directory, so every entry reports that subdirectory under
+    its 'output_directory' key rather than the DataLogger log directory the archives came from.
 
     Args:
         root_directory: The absolute path to the root directory to search for tracker files.
 
     Returns:
-        A dictionary containing per-log-directory status summaries and aggregate counts. Returns an error dictionary
-        when the root directory does not exist, is not a directory, or cannot be searched.
+        A dictionary containing per-output-directory status summaries and aggregate counts. Returns an error
+        dictionary when the root directory does not exist, is not a directory, or cannot be searched.
     """
     root_path = Path(root_directory)
 
@@ -578,7 +584,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    log_directory_statuses: list[dict[str, Any]] = []
+    output_directory_statuses: list[dict[str, Any]] = []
     aggregate_succeeded = 0
     aggregate_failed = 0
     aggregate_running = 0
@@ -590,7 +596,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
         return {"error": f"Unable to search '{root_directory}': {error}"}
 
     for tracker_path in tracker_paths:
-        log_directory = str(tracker_path.parent)
+        output_directory = str(tracker_path.parent)
         try:
             status = _read_tracker_status(tracker_path=tracker_path)
             summary = status.get("summary", {})
@@ -602,18 +608,18 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
 
             directory_status = ProcessingTracker.resolve_status(summary=summary).value
 
-            log_directory_statuses.append(
+            output_directory_statuses.append(
                 {
-                    "log_directory": log_directory,
+                    "output_directory": output_directory,
                     "tracker_path": str(tracker_path),
                     "status": directory_status,
                     **status,
                 }
             )
         except Exception:
-            log_directory_statuses.append(
+            output_directory_statuses.append(
                 {
-                    "log_directory": log_directory,
+                    "output_directory": output_directory,
                     "tracker_path": str(tracker_path),
                     "status": "error",
                     "error": "Unable to read tracker file.",
@@ -621,8 +627,8 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             )
 
     return {
-        "log_directories": log_directory_statuses,
-        "total_log_directories": len(log_directory_statuses),
+        "output_directories": output_directory_statuses,
+        "total_output_directories": len(output_directory_statuses),
         "summary": {
             "succeeded": aggregate_succeeded,
             "failed": aggregate_failed,
@@ -678,8 +684,8 @@ def clean_log_processing_output_tool(output_directories: list[str]) -> dict[str,
     Removes each ``camera_timestamps/`` subdirectory and all of its contents, including processed feather files
     and the processing tracker. Uses ``delete_directory`` from ataraxis-data-structures for parallel file deletion
     with platform-safe retry logic. After cleanup, the output directories can be passed to
-    prepare_log_processing_batch_tool to reinitialize from scratch. Accepts the 'log_directories' list returned
-    by discover_camera_data_tool.
+    prepare_log_processing_batch_tool to reinitialize from scratch. Accepts the same output directory paths that were
+    supplied to prepare_log_processing_batch_tool, which the user nominates rather than discovery reporting them.
 
     Args:
         output_directories: The list of absolute paths to output directories containing ``camera_timestamps/``

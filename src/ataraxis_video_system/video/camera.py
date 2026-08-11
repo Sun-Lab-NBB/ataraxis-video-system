@@ -117,7 +117,7 @@ class CameraInterfaces(StrEnum):
     and primarily compatible with consumer-grade cameras that use the USB interface.
     """
     MOCK = "mock"
-    """The mock backend used exclusively for internal library testing."""
+    """The mock backend that simulates frame acquisition without camera hardware, used for testing and dry runs."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +156,7 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
         function or the 'axvs cti set' CLI command. If no CTI file is configured, Harvesters camera discovery is
-        skipped. Harvesters discovery is also skipped on macOS, which does not support the GenICam camera interface.
+        skipped. Harvesters discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
@@ -208,7 +208,7 @@ def add_cti_file(cti_path: Path) -> None:
             See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
 
     Raises:
-        NotImplementedError: If the host platform does not support the GenICam camera interface.
+        NotImplementedError: If the GenICam camera runtime is not available in this environment.
         FileNotFoundError: If the supplied .cti file does not exist.
         OSError: If the supplied .cti file is not a loadable GenTL Producer.
     """
@@ -244,8 +244,8 @@ def check_cti_file() -> Path | None:
     the resolution order applied when connecting to a camera.
 
     Returns:
-        The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None on macOS,
-        which does not support the GenICam camera interface that consumes the Producer.
+        The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None where the
+        GenICam runtime that consumes the Producer is absent, which is every macOS host.
     """
     # Reports the unusable state rather than raising, since this function answers whether the interface is ready to use
     # and an unsupported platform is one of the ways it is not.
@@ -522,7 +522,8 @@ class HarvestersCamera:
             interface with at runtime.
         frame_rate: The desired rate, in frames per second, at which to capture the data. Note; whether the requested
             rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
-            this argument is not explicitly provided, the instance uses the default frame rate of the connected camera.
+            this argument is not explicitly provided, the instance adopts the camera's AcquisitionFrameRate value, or
+            reports 0 for cameras that do not implement that optional feature.
         frame_width: The desired width of the acquired frames, in pixels. Note; the requested width must be compatible
             with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
             provided, the instance uses the default frame width of the connected camera.
@@ -594,9 +595,10 @@ class HarvestersCamera:
         """Connects to the managed camera hardware.
 
         Raises:
-            NotImplementedError: If the host platform does not support the GenICam camera interface.
+            NotImplementedError: If the GenICam camera runtime is not available in this environment.
             FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
             OSError: If the configured .cti file is not a loadable GenTL Producer.
+            IndexError: If the camera index exceeds the number of cameras the configured GenTL Producer discovers.
         """
         # Prevents connecting to an already connected camera.
         if self._camera is not None:
@@ -608,7 +610,8 @@ class HarvestersCamera:
         self._harvester = Harvester()
         # Adds the .cti file to the class. This also verifies the file's existence and validity.
         self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
-        # Discovers compatible cameras using the GenTL interface. Suppresses stdout to avoid verbose CTI printouts.
+        # Discovers compatible cameras using the GenTL interface. Suppresses stdout and stderr to avoid verbose CTI
+        # printouts.
         with _suppress_output():
             self._harvester.update()
 
@@ -1000,9 +1003,10 @@ class MockCamera:
         # Creates a random number generator for reproducible frame generation.
         random_generator = np.random.default_rng(seed=42)
 
-        # Statically generates a pool of 10 images for reproducible testing during grab_frame() method calls.
+        # Statically generates the frame pool used for reproducible testing during grab_frame() method calls. The pool
+        # is built from _FRAME_POOL_SIZE, because grab_frame() wraps its index against the same constant.
         frames_list: list[NDArray[np.uint8]] = []
-        for _ in range(10):
+        for _ in range(_FRAME_POOL_SIZE):
             if self._color:
                 frame = random_generator.integers(
                     low=0,
@@ -1298,7 +1302,8 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     harvester = Harvester()
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
-    # Gets the list of accessible cameras. Suppresses stdout to avoid verbose printouts about missing CTI features.
+    # Gets the list of accessible cameras. Suppresses stdout and stderr to avoid verbose printouts about missing CTI
+    # features.
     with _suppress_output():
         harvester.update()
 
@@ -1382,7 +1387,9 @@ def _get_cti_path() -> Path:
         FileNotFoundError: If the function is unable to resolve the path to the .cti file.
     """
     # Honors the runtime override before consulting the persisted path. The override is resolved, so that a relative
-    # value reaches every spawned child process as the same file the parent resolved.
+    # value is interpreted against the working directory in effect when it is read rather than reaching
+    # harvester.add_file() unresolved. Every spawned child inherits that working directory, so each child resolves the
+    # variable to the same file the parent did.
     override = os.environ.get(_CTI_PATH_VARIABLE)
     if override:
         return Path(override).expanduser().resolve()

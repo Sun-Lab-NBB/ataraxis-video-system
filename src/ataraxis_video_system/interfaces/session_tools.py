@@ -71,7 +71,8 @@ def start_video_session_tool(
         display_frame_rate: The rate at which to display acquired frames in a preview window. Set to None to
             disable frame display. The display rate cannot exceed the acquisition frame rate. Frame display is
             not supported on macOS.
-        monochrome: Determines whether to capture in grayscale.
+        monochrome: Determines whether to capture in grayscale. Applies to the 'opencv' and 'mock' interfaces only,
+            as the 'harvesters' interface takes the color mode from the camera's own configuration.
         video_encoder: The video encoder to use. Must be 'H264' or 'H265'.
         encoder_speed_preset: The encoder speed preset from 1 (fastest) to 7 (slowest). Higher values produce
             better compression at the expense of CPU time.
@@ -160,8 +161,9 @@ def start_video_session_tool(
             # not yet saved to disk (saving requires an explicit start_frame_saving_tool call).
             _active_session.start()
 
-            # Captures session configuration for status reporting. VideoSystem does not expose constructor parameters
-            # as public properties, so they are stored here at creation time.
+            # Captures session configuration for status reporting. VideoSystem exposes only system_id, started, and
+            # video_file_path as public properties, so the acquisition and encoding parameters are stored here at
+            # creation time.
             _session_info = {
                 "name": "live_camera",
                 "interface": interface.lower(),

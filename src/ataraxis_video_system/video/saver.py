@@ -329,7 +329,7 @@ class VideoSaver:
 
     @property
     def is_active(self) -> bool:
-        """Returns True if the instance's encoder process is active (running)."""
+        """Returns True if the instance's encoder process has been started and not yet stopped."""
         return self._ffmpeg_process is not None
 
     def start(self) -> None:

@@ -27,7 +27,9 @@ same name omit the simulator, so the EMVA package is the only source.
 | `windows_amd64/VirtualFG.dll`       | `a822df43f60a9dd9751620b5ce9647aa6fed72c254721f836df27b2937503c49` |
 
 The macOS binaries are universal (`x86_64` and `arm64`). The EMVA package ships no Linux `aarch64` build, so the
-simulator-backed tests skip on that platform.
+simulator-backed tests skip on that platform. They also skip on macOS, which installs no GenICam runtime to load a
+Producer with, so the bundled `macos_universal2` build stays in place only to cover every platform the EMVA package
+ships.
 
 To refresh, download the current `GenICam_Package_<version>.zip`, unpack the `PythonWheels` archive for each platform
 under `Reference Implementation/`, and copy `TLSimu.cti` together with its `VirtualFG` companion out of any wheel in the

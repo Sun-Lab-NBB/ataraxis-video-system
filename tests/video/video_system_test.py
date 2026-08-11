@@ -369,6 +369,64 @@ def test_camera_configuration_errors(data_logger, tmp_path) -> None:
             camera_interface=CameraInterfaces.MOCK,
         )
 
+    # Each camera guard above admits both a wrong type and an out-of-range value, and the two are reported apart. The
+    # cases below carry the correct type and fail the range half, so they raise ValueError rather than TypeError.
+    message = (
+        "Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
+        "zero or positive integer as the 'camera_index' argument value, but got -1 of type int."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=output_directory,
+            camera_index=-1,
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+    message = (
+        "Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
+        "positive integer or None as the 'frame_rate' argument value, but got 0 of type int."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=output_directory,
+            frame_rate=0,
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+    message = (
+        "Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
+        "positive integer or None as the 'frame_width' argument value, but got 0 of type int."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=output_directory,
+            frame_width=0,
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
+    message = (
+        "Unable to configure the camera interface for the VideoSystem with id 1. Expected a "
+        "positive integer or None as the 'frame_height' argument value, but got 0 of type int."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        VideoSystem(
+            system_id=np.uint8(1),
+            data_logger=data_logger,
+            name="test_camera",
+            output_directory=output_directory,
+            frame_height=0,
+            camera_interface=CameraInterfaces.MOCK,
+        )
+
     # Invalid camera interface
     invalid_interface = "invalid"
     message_pattern = "Unable to configure the camera interface.*unsupported camera_interface"
@@ -554,12 +612,13 @@ def test_video_saver_configuration_errors(data_logger, tmp_path) -> None:
         )
 
     # The encoder rejects a negative quantization parameter outright, so the guard admits 0 through 51 alone rather
-    # than deferring the choice to the encoder.
+    # than deferring the choice to the encoder. The value carries the correct type, so the range half of the guard
+    # reports it as a ValueError.
     message = (
         "Unable to configure the video saver for the VideoSystem with id 1. Expected an "
         "integer between 0 and 51 as the 'quantization_parameter' argument value, but got -1 of type int."
     )
-    with pytest.raises(TypeError, match=error_format(message)):
+    with pytest.raises(ValueError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
@@ -1216,7 +1275,8 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
             display_frame_rate=invalid_display_rate,  # type: ignore[arg-type]
         )
 
-    # Tests display frame rate exceeding acquisition rate
+    # Tests display frame rate exceeding acquisition rate. The value carries the correct type, so the range half of
+    # the guard reports it as a ValueError.
     excessive_display_rate = 60
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Encountered "
@@ -1224,7 +1284,7 @@ def test_display_frame_rate_validation(data_logger, tmp_path) -> None:
         f"{type(excessive_display_rate).__name__}. The display frame rate override has to be None or a positive "
         f"integer that does not exceed the camera acquisition frame rate (30)."
     )
-    with pytest.raises(TypeError, match=error_format(message)):
+    with pytest.raises(ValueError, match=error_format(message)):
         VideoSystem(
             system_id=np.uint8(1),
             data_logger=data_logger,
