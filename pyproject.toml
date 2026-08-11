@@ -244,11 +244,13 @@ pythonpath = ["."]
 # MCP server tools, which are covered by the tests written for the library functions they wrap. The 'parallel' and
 # 'concurrency' keys extend measurement to the spawned producer and consumer processes, to the log processing pool
 # workers that run run_extraction_job, and to the watchdog, frame display, and stderr drain threads, giving each worker
-# its own data file for the 'coverage' task to combine.
+# its own data file for the 'coverage' task to combine. The test corpus is omitted because a spawned child re-reads
+# this file without the '--cov' package restriction its parent was launched with, so a test module that a child
+# imports, which is every module handing a spawned process one of its own functions, is otherwise measured as source.
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
-omit = ["*/ataraxis_video_system/interfaces/*"]
+omit = ["*/ataraxis_video_system/interfaces/*", "*/tests/*"]
 
 # Used by the 'coverage' tox task to merge the coverage data files the '{py}-test' tasks produce.
 [tool.coverage.paths]
@@ -272,12 +274,15 @@ directory = "reports/coverage_html"
 [tool.coverage.report]
 fail_under = 100     # Requires the test suite to cover every measured statement
 show_missing = true  # Lists the statements missed by the test suite, so a failed check names the lines to cover
+# Every entry is a regex matched anywhere in a line, and an excluded line belonging to a multi-line statement excludes
+# that whole statement. The '__repr__' and '__del__' entries of the shared corpus are therefore dropped here, because
+# the suite calls every one of those members and the entries hid 19 statements it already covers. The bare 'pass' entry
+# is anchored for the same reason: unanchored, it also matched the word inside six message and docstring lines that
+# happen to contain 'passes' or 'pass', excluding the statements holding them.
 exclude_lines = [
     "pragma: no cover",
-    "def __repr__",
-    "def __del__",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
-    "pass",
+    '^\s*pass$',
 ]

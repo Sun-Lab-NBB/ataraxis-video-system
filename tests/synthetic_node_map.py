@@ -4,7 +4,10 @@ The bundled GenTL Producer simulator exposes ten writable nodes whose only inter
 single-entry EventSelector and EventNotification pair, so it cannot exercise the dependency chains that
 ``apply_genicam_configuration`` orders its write phases around. This module models those chains directly: binning
 rescales the addressable sensor area, offsets and dimensions compete for that area, the auto-controls lock their
-manual counterparts, exposure bounds the attainable frame rate, and a selector addresses one value per channel.
+manual counterparts, exposure bounds the attainable frame rate, an enumeration selector addresses one value per
+color channel, and an integer selector addresses one value per lookup table index. It also models the states that
+make a camera refuse an operation: a gated node the camera reports as NotAvailable, a vendor node typed differently
+from the literal the apply phases reset it with, and a node whose descriptor cannot be interrogated at all.
 """
 
 from typing import Any
@@ -28,6 +31,9 @@ _CATEGORY: int = 8
 _ENUMERATION: int = 9
 """Stores the GenICam principal interface type code for Enumeration nodes."""
 
+_NOT_AVAILABLE: int = 1
+"""Stores the GenICam access mode code for nodes the camera implements but currently gates off."""
+
 _READ_ONLY: int = 3
 """Stores the GenICam access mode code for ReadOnly nodes."""
 
@@ -39,6 +45,21 @@ SENSOR_WIDTH: int = 1920
 
 SENSOR_HEIGHT: int = 1080
 """Stores the full addressable sensor height of the synthetic camera, in pixels."""
+
+LUT_INDEX_MAXIMUM: int = 3
+"""Stores the largest lookup table index the synthetic camera addresses unless a test asks for a deeper table."""
+
+HOSTILE_NODE_NAME: str = "UnreadableFeature"
+"""Stores the feature name of the hostile node whose type, rather than whose name, is unreadable."""
+
+_LUT_VALUE_MAXIMUM: int = 4095
+"""Stores the largest value a lookup table entry of the synthetic camera accepts."""
+
+_LUT_VALUE_STEP: int = 10
+"""Stores the spacing between the values the lookup table entries hold before a test writes its own.
+
+The entries differ so that a configuration collapsing them into a single entry is detectable.
+"""
 
 
 @dataclass(slots=True)
@@ -59,6 +80,12 @@ class _NodeSpec:
     """The step increment reported for an Integer node."""
     read_only: bool = False
     """Determines whether the node is permanently ReadOnly regardless of the state of any other node."""
+    extra_categories: tuple[str, ...] = ()
+    """The names of the additional category nodes that reference this node without owning it.
+
+    A GenICam category references its features by pointer, so a vendor grouping category lists features another
+    category already owns. Such a node is reachable through more than one branch of the category tree.
+    """
 
 
 _NODE_SPECS: dict[str, _NodeSpec] = {
@@ -76,12 +103,22 @@ _NODE_SPECS: dict[str, _NodeSpec] = {
     "Height": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
     "OffsetX": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
     "OffsetY": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
+    # Centering is a vendor extension rather than an SFNC Boolean on every camera, so this camera types it as an
+    # Enumeration and rejects the Boolean literal the apply phases reset it with.
+    "CenterX": _NodeSpec(type_code=_ENUMERATION, category="ImageFormatControl", entries=("Off", "On")),
+    "LUTIndex": _NodeSpec(type_code=_INTEGER, category="LUTControl"),
+    "LUTValue": _NodeSpec(type_code=_INTEGER, category="LUTControl"),
     "ExposureAuto": _NodeSpec(
         type_code=_ENUMERATION, category="AcquisitionControl", entries=("Off", "Once", "Continuous")
     ),
     "ExposureTime": _NodeSpec(
-        type_code=_FLOAT, category="AcquisitionControl", description="Exposure duration.", unit="us"
+        type_code=_FLOAT,
+        category="AcquisitionControl",
+        description="Exposure duration.",
+        unit="us",
+        extra_categories=("QuickSetupControl",),
     ),
+    "AcquisitionFrameRateEnable": _NodeSpec(type_code=_BOOLEAN, category="AcquisitionControl"),
     "AcquisitionFrameRate": _NodeSpec(type_code=_FLOAT, category="AcquisitionControl", unit="Hz"),
     "GainAuto": _NodeSpec(type_code=_ENUMERATION, category="AnalogControl", entries=("Off", "Once", "Continuous")),
     "Gain": _NodeSpec(type_code=_FLOAT, category="AnalogControl", unit="dB"),
@@ -94,6 +131,7 @@ _NODE_SPECS: dict[str, _NodeSpec] = {
 
 _SELECTED_BY: dict[str, tuple[str, ...]] = {
     "BalanceRatio": ("BalanceRatioSelector",),
+    "LUTValue": ("LUTIndex",),
 }
 """Maps each selector-addressed node to the selector nodes that address it.
 
@@ -107,11 +145,24 @@ _SELECTED_DEFAULTS: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = {
 }
 """Stores the distinct value each selector-addressed instance holds before a test applies its own starting state.
 
-The three balance ratios differ so that a configuration collapsing them into one entry is detectable.
+The three balance ratios differ so that a configuration collapsing them into one entry is detectable. The lookup
+table instances are seeded by the constructor instead, because how many of them exist depends on the depth of the
+table the camera implements.
 """
 
-_CATEGORY_ORDER: tuple[str, ...] = ("DeviceControl", "ImageFormatControl", "AcquisitionControl", "AnalogControl")
-"""Orders the category nodes as they appear under the synthetic root node."""
+_CATEGORY_ORDER: tuple[str, ...] = (
+    "DeviceControl",
+    "ImageFormatControl",
+    "LUTControl",
+    "AcquisitionControl",
+    "AnalogControl",
+    "QuickSetupControl",
+)
+"""Orders the category nodes as they appear under the synthetic root node.
+
+QuickSetupControl is a vendor convenience grouping that owns no node of its own and instead re-references nodes the
+SFNC categories own, which is how a real node map exposes the same feature through two branches of the tree.
+"""
 
 _DEFAULT_VALUES: dict[str, Any] = {
     "DeviceModelName": "SyntheticCamera",
@@ -122,8 +173,11 @@ _DEFAULT_VALUES: dict[str, Any] = {
     "Height": SENSOR_HEIGHT,
     "OffsetX": 0,
     "OffsetY": 0,
+    "CenterX": "Off",
+    "LUTIndex": 0,
     "ExposureAuto": "Off",
     "ExposureTime": 5000.0,
+    "AcquisitionFrameRateEnable": True,
     "AcquisitionFrameRate": 30.0,
     "GainAuto": "Off",
     "Gain": 0.0,
@@ -181,6 +235,48 @@ class _RawNode:
 
 
 @dataclass(slots=True)
+class _HostileRawNode:
+    """Exposes a node descriptor that raises instead of reporting the metadata field the hostile mode names.
+
+    Notes:
+        A device that drops off the bus, or whose XML entry is malformed, makes the GenApi accessors raise for the
+        nodes the enumeration walk has not reached yet. This class reproduces that state for a single node.
+    """
+
+    mode: str
+    """The descriptor field that raises when it is read: 'name' or 'type'."""
+
+    @property
+    def name(self) -> str:
+        """Returns the feature name of the node, or raises when the node models an unreadable name."""
+        if self.mode == "name":
+            message = "The name of this node is unreadable, as the device dropped off the bus."
+            raise RuntimeError(message)
+        return HOSTILE_NODE_NAME
+
+    @property
+    def principal_interface_type(self) -> int:
+        """Returns the type code of the node, or raises when the node models an unreadable type."""
+        if self.mode == "type":
+            message = "The type of this node is unreadable, as the device dropped off the bus."
+            raise RuntimeError(message)
+        return _INTEGER
+
+
+@dataclass(slots=True)
+class _HostileFeature:
+    """Exposes a node whose descriptor cannot be interrogated, mirroring a feature of a device that vanished."""
+
+    mode: str
+    """The descriptor field that raises when it is read: 'name' or 'type'."""
+
+    @property
+    def node(self) -> _HostileRawNode:
+        """Returns the descriptor of the node."""
+        return _HostileRawNode(mode=self.mode)
+
+
+@dataclass(slots=True)
 class _EnumEntry:
     """Exposes a single symbolic entry of a synthetic Enumeration node."""
 
@@ -210,18 +306,33 @@ class SyntheticNodeMap:
 
     Args:
         overrides: The node values to apply on top of the defaults, establishing the starting state of the camera.
+        hostile_modes: The descriptor fields that raise when the enumeration walk reads them. Each entry adds one
+            node to the root category whose name ('name') or type ('type') cannot be interrogated.
+        lut_index_maximum: The largest lookup table index the camera addresses, which sets the depth of the table.
 
     Attributes:
         values: The current value of every node no selector addresses, keyed by feature name.
         selected_values: The current value of every selector-addressed node instance, keyed by the node name paired
             with the selector positions that address it.
         writes: The feature name of every successful write, in the order the writes occurred.
+        lut_index_maximum: The largest lookup table index the camera addresses.
     """
 
-    def __init__(self, overrides: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        overrides: dict[str, Any] | None = None,
+        hostile_modes: tuple[str, ...] = (),
+        lut_index_maximum: int = LUT_INDEX_MAXIMUM,
+    ) -> None:
         self.values: dict[str, Any] = dict(_DEFAULT_VALUES)
         self.selected_values: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = dict(_SELECTED_DEFAULTS)
         self.writes: list[str] = []
+        self.lut_index_maximum = lut_index_maximum
+        self._hostile_modes = hostile_modes
+
+        # Seeds one lookup table entry per index the table implements, as the depth of the table is not fixed.
+        for index in range(lut_index_maximum + 1):
+            self.selected_values[("LUTValue", (("LUTIndex", index),))] = index * _LUT_VALUE_STEP
 
         # Seeds the starting state without constraint checking so that a test can describe any camera state directly.
         if overrides is not None:
@@ -252,7 +363,8 @@ class SyntheticNodeMap:
 
         Notes:
             The manual counterpart of an engaged auto-control reports ReadOnly, which is how a camera prevents the
-            manual value from being written while the auto-control owns it.
+            manual value from being written while the auto-control owns it. A node the camera gates off entirely
+            reports NotAvailable instead, which is how a camera hides a feature its current mode does not provide.
         """
         if _NODE_SPECS[name].read_only:
             return _READ_ONLY
@@ -260,6 +372,8 @@ class SyntheticNodeMap:
             return _READ_ONLY
         if name == "ExposureTime" and self.values["ExposureAuto"] != "Off":
             return _READ_ONLY
+        if name == "AcquisitionFrameRate" and not self.values["AcquisitionFrameRateEnable"]:
+            return _NOT_AVAILABLE
         return _READ_WRITE
 
     def bounds(self, name: str) -> tuple[int | float, int | float]:
@@ -277,6 +391,10 @@ class SyntheticNodeMap:
             return 0, SENSOR_HEIGHT - self.values["Height"]
         if name == "BinningHorizontal":
             return 1, 4
+        if name == "LUTIndex":
+            return 0, self.lut_index_maximum
+        if name == "LUTValue":
+            return 0, _LUT_VALUE_MAXIMUM
         if name == "ExposureTime":
             return 10.0, 1000000.0
         if name == "AcquisitionFrameRate":
@@ -292,11 +410,12 @@ class SyntheticNodeMap:
         """Writes a value to the named node after enforcing every constraint the node participates in.
 
         Raises:
-            SyntheticNodeMapError: If the node is currently ReadOnly, the value falls outside the bounds the node
+            SyntheticNodeMapError: If the node is not currently writable, the value falls outside the bounds the node
                 accepts, or the value is not a valid entry of an Enumeration node.
         """
-        if self.access_mode(name=name) != _READ_WRITE:
-            message = f"The node '{name}' is ReadOnly while its auto-control is engaged."
+        access_mode = self.access_mode(name=name)
+        if access_mode != _READ_WRITE:
+            message = f"The node '{name}' is not writable, as it currently reports access mode {access_mode}."
             raise SyntheticNodeMapError(message)
 
         specification = _NODE_SPECS[name]
@@ -342,6 +461,14 @@ class SyntheticNodeMap:
         for node_name, specification in _NODE_SPECS.items():
             categories[specification.category].features.append(_Feature(node_map=self, name=node_name))
 
+            # A category that references a node another category owns puts the same node on two branches of the
+            # tree, which is what makes the walk reach it twice.
+            for category_name in specification.extra_categories:
+                categories[category_name].features.append(_Feature(node_map=self, name=node_name))
+
+        features: list[Any] = [categories[category_name] for category_name in _CATEGORY_ORDER]
+        features.extend(_HostileFeature(mode=mode) for mode in self._hostile_modes)
+
         return _Category(
             node=_RawNode(
                 name="Root",
@@ -350,7 +477,7 @@ class SyntheticNodeMap:
                 access_mode=_READ_ONLY,
                 node_map=self,
             ),
-            features=[categories[category_name] for category_name in _CATEGORY_ORDER],
+            features=features,
         )
 
 

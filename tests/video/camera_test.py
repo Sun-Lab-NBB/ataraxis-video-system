@@ -1,22 +1,29 @@
 """Contains tests for classes and methods provided by the camera.py module."""
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
 from tests.fake_opencv import FakeVideoCapture, build_capture_factory
+from tests.fake_harvesters import FakeImageAcquirer, build_frame_buffer
 from ataraxis_base_utilities import error_format
 
 from ataraxis_video_system import CameraInterfaces, InputPixelFormats
 from ataraxis_video_system.video import camera as camera_module
 from ataraxis_video_system.video.camera import (
+    _MAXIMUM_NON_WORKING_IDS,
     GENICAM_UNAVAILABLE_REASON,
     MockCamera,
     OpenCVCamera,
     HarvestersCamera,
+    add_cti_file,
+    _get_cti_path,
     check_cti_file,
     _get_opencv_ids,
     _get_harvesters_ids,
     discover_camera_ids,
+    harvester_connection,
     genicam_runtime_available,
 )
 
@@ -51,6 +58,13 @@ def test_mock_camera_init(color, frame_rate, frame_width, frame_height) -> None:
     assert camera.frame_rate == frame_rate
     assert camera._system_id == 222
     assert not camera.is_acquiring
+
+    # The representation reports the acquisition state alongside the geometry, which is what distinguishes a mock that
+    # is standing by from one a VideoSystem has already connected and started.
+    assert repr(camera) == (
+        f"MockCamera(system_id=222, frame_rate={frame_rate} frames / second, frame_width={frame_width} pixels, "
+        f"frame_height={frame_height} pixels, connected=False, acquiring=False)"
+    )
     assert not camera.is_connected
 
 
@@ -362,6 +376,44 @@ def test_get_opencv_ids_collapses_duplicate_device_nodes(monkeypatch) -> None:
     assert [camera.camera_index for camera in cameras] == [0]
 
 
+def test_get_opencv_ids_skips_an_index_whose_driver_raises(monkeypatch) -> None:
+    """Verifies that an index whose driver raises is skipped rather than aborting the whole discovery sweep."""
+    factory = build_capture_factory(captures={1: FakeVideoCapture()})
+
+    def _open_capture(index, apiPreference=None):  # noqa: N803 - mirrors the cv2.VideoCapture argument name.
+        """Refuses the first index the way a driver that cannot open its device node does."""
+        if index == 0:
+            message = "V4L2: failed to open /dev/video0"
+            raise RuntimeError(message)
+        return factory(index, apiPreference)
+
+    monkeypatch.setattr(cv2, "VideoCapture", _open_capture)
+
+    cameras = _get_opencv_ids()
+
+    # One unusable device node costs the caller that node alone, leaving the healthy camera behind it discoverable.
+    assert [camera.camera_index for camera in cameras] == [1]
+
+
+def test_get_opencv_ids_stops_after_five_raising_indices(monkeypatch) -> None:
+    """Verifies that an index whose driver raises counts as non-working, ending the sweep after five of them."""
+    probed: list[int] = []
+
+    def _open_capture(index, apiPreference=None):  # noqa: N803 - mirrors the cv2.VideoCapture argument name.
+        """Refuses every index the way a host whose capture stack is broken does."""
+        probed.append(index)
+        message = "V4L2: failed to open the capture device"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(cv2, "VideoCapture", _open_capture)
+
+    assert _get_opencv_ids() == ()
+
+    # A raise that did not count toward the non-working tally would leave discovery probing all 100 indices, which on
+    # a host with a broken capture stack stalls every command that lists cameras.
+    assert probed == list(range(_MAXIMUM_NON_WORKING_IDS))
+
+
 def test_harvesters_camera_init_repr() -> None:
     """Verifies the functioning of the HarvestersCamera __init__() and __repr__() methods."""
     # Construction resolves no GenTL Producer, so this test needs neither hardware nor the simulator.
@@ -405,6 +457,30 @@ def test_harvesters_camera_connect_disconnect() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_connect_is_idempotent() -> None:
+    """Verifies that reconnecting an already connected camera opens no second GenTL handle."""
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
+    camera.connect()
+    try:
+        acquirer = camera._camera
+        harvester = camera._harvester
+
+        camera.connect()
+
+        # Replacing either handle would orphan a live GenTL resource that only garbage collection releases, and a
+        # camera that grants exclusive access would refuse to hand out the second one at all.
+        assert camera._camera is acquirer
+        assert camera._harvester is harvester
+
+        # The identity the first connection resolved survives the re-entry.
+        assert camera.model == _SIMULATED_MONOCHROME_MODEL
+    finally:
+        camera.disconnect()
+
+    assert not camera.is_connected
+
+
+@pytest.mark.usefixtures("gentl_simulator")
 def test_get_harvesters_ids() -> None:
     """Verifies that Harvesters discovery reports every device the configured GenTL Producer exposes."""
     cameras = _get_harvesters_ids()
@@ -419,6 +495,34 @@ def test_get_harvesters_ids() -> None:
 
     # The simulated devices omit the optional AcquisitionFrameRate feature, so discovery reports no rate for them.
     assert all(camera.acquisition_frame_rate == 0 for camera in cameras)
+
+
+@pytest.mark.usefixtures("gentl_simulator")
+def test_get_harvesters_ids_skips_an_unqueryable_device(monkeypatch) -> None:
+    """Verifies that a device that cannot be queried costs the caller that device alone."""
+    original_create = camera_module.Harvester.create
+    attempted: list[int] = []
+
+    def _create(self, search_key):
+        """Refuses the second device the way a camera already opened by another process does."""
+        attempted.append(search_key)
+        if search_key == 1:
+            message = "device is in use"
+            raise RuntimeError(message)
+        return original_create(self, search_key=search_key)
+
+    monkeypatch.setattr(camera_module.Harvester, "create", _create)
+
+    cameras = _get_harvesters_ids()
+
+    # A busy or half-initialized camera must not blank the listing every command that selects a camera reads.
+    assert [camera.camera_index for camera in cameras] == [0, 2, 3]
+    assert len(cameras) == _SIMULATED_DEVICE_COUNT - 1
+    assert cameras[0].serial_number == _SIMULATED_MONOCHROME_SERIAL
+
+    # Discovery moved past the refusal instead of ending at it, which a returned tuple of the right length alone
+    # would not distinguish.
+    assert attempted == list(range(_SIMULATED_DEVICE_COUNT))
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -535,8 +639,72 @@ def test_harvesters_camera_grab_frame_errors() -> None:
     with pytest.raises(ConnectionError, match=error_format(message)):
         _ = camera.grab_frame()
 
-    # Other GrabFrame errors cannot be readily reproduced under a test environment and are likely not possible to
-    # encounter under most real-world conditions.
+
+def test_harvesters_camera_grab_frame_reports_a_failed_fetch() -> None:
+    """Verifies that a fetch answering with no buffer raises the documented acquisition failure."""
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+
+    # The runtime discards a buffer whose metadata it cannot parse and answers the fetch with nothing, which the
+    # bundled Producer simulator never does.
+    camera._camera = FakeImageAcquirer(buffers=[None])
+
+    message = (
+        f"The HarvestersCamera instance for the VideoSystem with id {camera._system_id} has failed to grab "
+        f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
+        f"connectivity issues."
+    )
+    # Entering the missing buffer's context directly would report an opaque TypeError, which is the whole diagnostic
+    # the spawned producer process forwards to the user in place of this message.
+    with pytest.raises(BrokenPipeError, match=error_format(message)):
+        _ = camera.grab_frame()
+
+
+@pytest.mark.parametrize(
+    ("data_format", "expected_pixel"),
+    [
+        ("RGB8", [30, 20, 10]),
+        ("BGR8", [10, 20, 30]),
+    ],
+)
+def test_harvesters_camera_grab_frame_orders_color_channels(data_format, expected_pixel) -> None:
+    """Verifies that color frames are returned in the BGR channel order whichever order the camera streams."""
+    # The format tables the branch under test consults are empty where the GenICam runtime is absent, which leaves
+    # every format unsupported.
+    if not genicam_runtime_available():
+        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
+
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    streamed_frame = np.tile(np.array([10, 20, 30], dtype=np.uint8), (2, 3, 1))
+    camera._camera = FakeImageAcquirer(buffers=[build_frame_buffer(frame=streamed_frame, data_format=data_format)])
+
+    frame = camera.grab_frame()
+
+    assert frame.shape == (2, 3, 3)
+
+    # A swap that is dropped or applied twice leaves the recording color-inverted, which the frame dimensions the
+    # simulated color device pins do not reveal.
+    assert frame[0, 0].tolist() == expected_pixel
+
+    # The saver hands FFMPEG the format reported here, so it has to describe the frames the method returns rather
+    # than the ones the camera streamed.
+    assert camera.pixel_color_format == InputPixelFormats.BGR
+
+
+@pytest.mark.parametrize("data_format", ["BayerRG8", "RGBa8"])
+def test_harvesters_camera_grab_frame_rejects_an_unsupported_format(data_format) -> None:
+    """Verifies that a frame in an unsupported format is rejected by name with its buffer returned to the camera."""
+    camera = HarvestersCamera(system_id=222, camera_index=0)
+    buffer = build_frame_buffer(frame=np.zeros((2, 3, 3), dtype=np.uint8), data_format=data_format)
+    camera._camera = FakeImageAcquirer(buffers=[buffer])
+
+    # Naming the offending format is the entire diagnostic a user pointing the library at a Bayer-output or
+    # four-channel camera has to work from.
+    with pytest.raises(ValueError, match=data_format):
+        _ = camera.grab_frame()
+
+    # A camera streaming an unsupported format raises once per frame, so a buffer that is not re-queued here would
+    # exhaust the acquirer's buffer pool instead of failing cleanly.
+    assert buffer.exited
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -592,6 +760,36 @@ def test_harvesters_camera_pixel_color_format_both_branches() -> None:
     assert camera.pixel_color_format == InputPixelFormats.MONOCHROME
 
 
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvester_connection_yields_a_connected_camera() -> None:
+    """Verifies that the managed connection exposes a connected camera and releases it when the block ends."""
+    with harvester_connection(camera_index=0) as camera:
+        assert camera.is_connected
+        assert camera.model == _SIMULATED_MONOCHROME_MODEL
+
+        # Exposing the node map is the reason the helper exists, since every GenICam configuration entry point reads
+        # and writes the camera through it.
+        assert camera.node_map.Width.value > 0
+
+    # The GenTL handle is released for other processes rather than held until the interpreter exits.
+    assert not camera.is_connected
+    assert camera._harvester is None
+
+
+@pytest.mark.usefixtures("gentl_simulator")
+def test_harvester_connection_releases_the_camera_on_error() -> None:
+    """Verifies that an error raised inside the managed block reaches the caller with the camera released."""
+    message = "The configuration command failed while the camera was connected."
+
+    # Swallowing the error would leave a failed configuration command reporting success, and releasing the camera only
+    # on the success path would hold the GenTL handle for the rest of the runtime.
+    with pytest.raises(RuntimeError, match=message), harvester_connection(camera_index=0) as camera:
+        raise RuntimeError(message)
+
+    assert not camera.is_connected
+    assert camera._harvester is None
+
+
 def test_genicam_runtime_available_tracks_the_imported_runtime(monkeypatch) -> None:
     """Verifies that genicam_runtime_available() reports whether the GenICam runtime imported."""
     # Patches both states rather than reading the host's own, so the assertions hold on macOS too, where the library
@@ -631,8 +829,160 @@ def test_discover_camera_ids_skips_genicam_without_the_runtime(monkeypatch) -> N
     assert discover_camera_ids() == ()
 
 
+@pytest.mark.usefixtures("persisted_cti_directory")
+def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeypatch) -> None:
+    """Verifies that camera discovery reports OpenCV cameras alone where no GenTL Producer has been configured."""
+    # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
+    # since resolving the Producer path raises before Harvesters discovery constructs one.
+    monkeypatch.setattr(camera_module, "Harvester", object)
+    monkeypatch.setattr(cv2, "VideoCapture", build_capture_factory(captures={0: FakeVideoCapture()}))
+
+    cameras = discover_camera_ids()
+
+    # An unconfigured Producer costs the caller the GenICam half of discovery alone, which is what keeps every command
+    # that lists cameras usable on a machine that has a webcam and no vendor SDK.
+    assert [camera.camera_index for camera in cameras] == [0]
+    assert all(camera.interface == CameraInterfaces.OPENCV for camera in cameras)
+
+
 def test_check_cti_file_reports_an_unsupported_platform(monkeypatch) -> None:
     """Verifies that check_cti_file() reports an unusable configuration where the GenICam interface is unsupported."""
     monkeypatch.setattr(camera_module, "Harvester", None)
 
     assert check_cti_file() is None
+
+
+@pytest.mark.usefixtures("persisted_cti_directory")
+def test_check_cti_file_reports_no_configured_producer(monkeypatch) -> None:
+    """Verifies that a machine with no configured Producer reports one as absent instead of raising."""
+    # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
+    # since the absent path file answers before any Producer is loaded.
+    monkeypatch.setattr(camera_module, "Harvester", object)
+
+    assert check_cti_file() is None
+
+
+def test_check_cti_file_prefers_the_runtime_override(persisted_cti_directory, gentl_simulator) -> None:
+    """Verifies that the runtime override outranks the persisted path when the configured Producer is reported."""
+    (persisted_cti_directory / "cti_path.txt").write_text(str(persisted_cti_directory / "decoy.cti"))
+
+    # The override redirects every process of a runtime, so the reported Producer has to be the one a camera
+    # connection opened from the same runtime would load.
+    assert check_cti_file() == gentl_simulator.resolve()
+
+
+def test_check_cti_file_rejects_a_stale_persisted_producer(persisted_cti_directory, monkeypatch) -> None:
+    """Verifies that a persisted Producer the runtime can no longer load is reported as absent."""
+    (persisted_cti_directory / "cti_path.txt").write_text(str(persisted_cti_directory / "uninstalled.cti"))
+
+    class _UninstalledProducer:
+        """Stands in for the runtime refusing a Producer whose vendor SDK is no longer installed."""
+
+        def add_file(self, file_path: str, **_checks: bool) -> None:
+            """Refuses the Producer the way the runtime refuses one it cannot load."""
+            message = f"{file_path}: cannot open shared object file"
+            raise OSError(message)
+
+    monkeypatch.setattr(camera_module, "Harvester", _UninstalledProducer)
+
+    # Uninstalling the vendor SDK leaves the status query answering 'not configured' rather than propagating the
+    # loader's failure to the caller.
+    assert check_cti_file() is None
+
+
+def test_add_cti_file_requires_the_genicam_runtime(monkeypatch) -> None:
+    """Verifies that configuring a Producer aborts on a platform that does not support the GenICam interface."""
+    monkeypatch.setattr(camera_module, "Harvester", None)
+
+    # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
+    message = f"Unable to configure the GenTL Producer interface (.cti) file. {GENICAM_UNAVAILABLE_REASON}"
+    with pytest.raises(NotImplementedError, match=error_format(message)):
+        add_cti_file(cti_path=Path("TLSimu.cti"))
+
+
+def test_add_cti_file_persists_a_resolved_producer_path(
+    persisted_cti_directory, simulator_cti_path, monkeypatch
+) -> None:
+    """Verifies that a configured Producer is persisted as the absolute path every later runtime resolves."""
+    if not genicam_runtime_available():
+        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
+
+    if simulator_cti_path is None:
+        pytest.skip("Skipping this test as no GenTL Producer simulator is bundled for this platform.")
+
+    # A relative argument resolves against the directory the configuring command happened to run from, so the command
+    # is run from that directory rather than the one the test session started in.
+    monkeypatch.chdir(simulator_cti_path.parent)
+
+    add_cti_file(cti_path=Path(simulator_cti_path.name))
+
+    # Persisting the argument as given would leave every later runtime started from anywhere else unable to find the
+    # Producer this command validated.
+    resolved_path = simulator_cti_path.resolve()
+    assert (persisted_cti_directory / "cti_path.txt").read_text() == str(resolved_path)
+
+    # The three functions that share the path file agree on its format, so what one runtime configures is what the
+    # next one reports and connects through.
+    assert check_cti_file() == resolved_path
+    assert _get_cti_path() == resolved_path
+
+
+def test_add_cti_file_rejects_a_missing_producer(persisted_cti_directory, tmp_path) -> None:
+    """Verifies that configuring an absent Producer leaves the previously configured Producer in place."""
+    if not genicam_runtime_available():
+        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
+
+    path_file = persisted_cti_directory / "cti_path.txt"
+    configured_path = tmp_path / "configured.cti"
+    path_file.write_text(str(configured_path))
+
+    # The runtime reports an absent Producer with a bare FileNotFoundError, which carries no message to match against.
+    with pytest.raises(FileNotFoundError):
+        add_cti_file(cti_path=tmp_path / "absent.cti")
+
+    # A mistyped path must not cost the user the working configuration they already had.
+    assert path_file.read_text() == str(configured_path)
+
+
+def test_add_cti_file_rejects_a_file_that_is_not_a_producer(persisted_cti_directory, tmp_path) -> None:
+    """Verifies that configuring a file the runtime cannot load persists nothing."""
+    if not genicam_runtime_available():
+        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
+
+    fake_producer = tmp_path / "fake.cti"
+    fake_producer.write_text("not a shared library")
+
+    # The dynamic loader phrases its refusal differently on each platform, so only the failure itself is pinned.
+    with pytest.raises(OSError, match=r".*") as loader_error:
+        add_cti_file(cti_path=fake_producer)
+
+    # A file that exists but cannot be loaded is refused by the validity check rather than accepted as present, which
+    # is what separates a configured Producer from a merely present file.
+    assert not isinstance(loader_error.value, FileNotFoundError)
+    assert not (persisted_cti_directory / "cti_path.txt").exists()
+
+
+@pytest.mark.usefixtures("persisted_cti_directory")
+def test_get_cti_path_reports_an_unconfigured_producer() -> None:
+    """Verifies that resolving the Producer path on an unconfigured machine names the command that configures one."""
+    # Every runtime resolves the Producer through this function, including each spawned producer process, so this
+    # message is the only guidance a user whose recording refuses to start receives.
+    message = (
+        "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
+        "interface, as the .cti file has not been set. Set the .cti file path by calling the 'axvs cti set' CLI "
+        "command."
+    )
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
+        _get_cti_path()
+
+
+def test_get_cti_path_reads_the_persisted_producer(persisted_cti_directory) -> None:
+    """Verifies that the persisted Producer path is read back whole, without validation."""
+    configured_path = persisted_cti_directory / "vendor" / "Producer.cti"
+
+    # The trailing newline reproduces the file a text editor leaves behind, which must not become part of the path.
+    (persisted_cti_directory / "cti_path.txt").write_text(f"{configured_path}\n")
+
+    # Resolution performs no validation of its own, since callers validate the path through the Producer load that
+    # follows it.
+    assert _get_cti_path() == configured_path

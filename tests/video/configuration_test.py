@@ -2,11 +2,21 @@
 
 import pytest
 from ataraxis_base_utilities import error_format
-from tests.synthetic_node_map import SENSOR_WIDTH, SyntheticNodeMap, SyntheticNodeMapError
+from tests.synthetic_node_map import (
+    SENSOR_WIDTH,
+    HOSTILE_NODE_NAME,
+    LUT_INDEX_MAXIMUM,
+    SyntheticNodeMap,
+    SyntheticNodeMapError,
+)
 
 from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
 from ataraxis_video_system.video.camera import HarvestersCamera
 from ataraxis_video_system.video.configuration import (
+    _APPLY_PHASE_ORDER,
+    _PHASE_RESET_VALUES,
+    _MAXIMUM_SELECTOR_COMBINATIONS,
+    _expand_selectors,
     read_genicam_node,
     read_genicam_nodes,
     write_genicam_node,
@@ -654,7 +664,9 @@ def test_apply_configuration_restores_every_selected_instance() -> None:
         **_SYNTHETIC_IDENTITY,
     )
 
-    restored = {key[1][0][1]: value for key, value in node_map.selected_values.items()}
+    # The camera holds more than one selector-addressed node, so the restored instances are filtered to the one the
+    # collapse above damaged.
+    restored = {key[1][0][1]: value for key, value in node_map.selected_values.items() if key[0] == "BalanceRatio"}
     assert restored == {"Red": 1.0, "Green": 2.0, "Blue": 3.0}
     assert node_map.values["BalanceRatioSelector"] == "Red"
 
@@ -689,6 +701,219 @@ def test_apply_configuration_write_failure() -> None:
             blacklisted_nodes=frozenset(),
             **_SYNTHETIC_IDENTITY,
         )
+
+
+@pytest.mark.parametrize("hostile_mode", ["name", "type"])
+def test_enumerate_genicam_nodes_drops_a_node_it_cannot_interrogate(hostile_mode) -> None:
+    """Verifies that a node whose descriptor raises is skipped instead of aborting the enumeration of the camera."""
+    baseline = enumerate_genicam_nodes(node_map=SyntheticNodeMap(), blacklisted_nodes=frozenset())
+
+    hostile_map = SyntheticNodeMap(hostile_modes=(hostile_mode,))
+    names = enumerate_genicam_nodes(node_map=hostile_map, blacklisted_nodes=frozenset())
+
+    # The walk continues past the node it cannot interrogate, so every healthy node of the camera is still collected.
+    assert names == baseline
+    assert HOSTILE_NODE_NAME not in names
+
+
+def test_enumerate_genicam_nodes_reports_a_multi_parent_node_once() -> None:
+    """Verifies that a node reachable through two categories contributes a single name rather than a duplicate."""
+    node_map = SyntheticNodeMap()
+
+    # Guards the model: the vendor QuickSetupControl category references ExposureTime, which AcquisitionControl
+    # owns, so the walk must genuinely reach the node through two branches for the uniqueness contract to be tested.
+    reachable = [feature.node.name for category in node_map.Root.features for feature in category.features]
+    assert reachable.count("ExposureTime") == 2
+
+    names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=frozenset())
+    assert names.count("ExposureTime") == 1
+    assert len(names) == len(set(names))
+
+    # A duplicated name would be read once per branch that reaches it, and later written once per branch as well.
+    nodes = read_genicam_nodes(node_map=node_map, blacklisted_nodes=frozenset())
+    assert len([node for node in nodes if node.name == "ExposureTime"]) == 1
+
+
+@pytest.mark.parametrize(("function", "verb"), [(read_genicam_node, "read"), (format_genicam_node, "format")])
+def test_read_and_format_reject_a_non_value_node(function, verb) -> None:
+    """Verifies that naming a category node instead of a value node reports the type code the camera returned."""
+    message = (
+        f"Unable to {verb} GenICam node 'Root'. The node must be a value type (Integer, Float, Boolean, "
+        f"String, or Enumeration), but got type code 8."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        function(node_map=SyntheticNodeMap(), name="Root")
+
+
+@pytest.mark.parametrize(("function", "verb"), [(read_genicam_node, "read"), (format_genicam_node, "format")])
+def test_read_and_format_reject_a_gated_node(function, verb) -> None:
+    """Verifies that a node the camera gates off reports its access code instead of reaching the value accessor."""
+    gated_map = SyntheticNodeMap(overrides={"AcquisitionFrameRateEnable": False})
+
+    message = (
+        f"Unable to {verb} GenICam node 'AcquisitionFrameRate'. The node must have ReadWrite or ReadOnly access, "
+        f"but got access code 1."
+    )
+    with pytest.raises(ValueError, match=error_format(message)):
+        function(node_map=gated_map, name="AcquisitionFrameRate")
+
+    # The same node reports its value once the enable that gates it is set, so the refusal above describes the state
+    # of the camera rather than a node the library cannot handle at all.
+    enabled_map = SyntheticNodeMap(overrides={"AcquisitionFrameRateEnable": True})
+    reported = str(function(node_map=enabled_map, name="AcquisitionFrameRate"))
+    assert str(enabled_map.values["AcquisitionFrameRate"]) in reported
+
+
+@pytest.mark.parametrize(
+    ("overrides", "name", "value"),
+    [
+        ({"GainAuto": "Continuous", "Gain": 3.0}, "Gain", "5.0"),
+        ({}, "DeviceModelName", "Renamed"),
+    ],
+)
+def test_write_genicam_node_rejects_a_node_the_camera_holds_read_only(overrides, name, value) -> None:
+    """Verifies that writing a ReadOnly node reports its access code and leaves the camera untouched."""
+    node_map = SyntheticNodeMap(overrides=overrides)
+    original = node_map.values[name]
+
+    message = f"Unable to write to GenICam node '{name}'. The node must have ReadWrite access, but got access code 3."
+    with pytest.raises(ValueError, match=error_format(message)):
+        write_genicam_node(node_map=node_map, name=name, value=value)
+
+    # The refusal precedes the hardware access, so the node still holds the value the camera was found with.
+    assert node_map.values[name] == original
+    assert name not in node_map.writes
+
+
+def test_write_genicam_node_reports_a_rejected_write() -> None:
+    """Verifies that a write the camera rejects raises RuntimeError carrying the value and the camera's explanation."""
+    node_map = SyntheticNodeMap()
+    rejected_width = SENSOR_WIDTH * 2
+
+    # The message pairs the coerced value with the range the camera reported, which is what shows the user which
+    # bound they violated.
+    message = (
+        f"Unable to write value '{rejected_width}' to GenICam node 'Width': The value '{rejected_width}' falls "
+        f"outside the range [8, {SENSOR_WIDTH}] of the node 'Width'."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        write_genicam_node(node_map=node_map, name="Width", value=str(rejected_width))
+
+    assert node_map.values["Width"] == SENSOR_WIDTH
+
+
+def test_apply_configuration_reports_an_unphased_node_failure() -> None:
+    """Verifies that a rejected write in the pass that follows the phases aborts the apply and names the node."""
+    node_map = SyntheticNodeMap()
+
+    # The trailing pass is only under test while the node stays outside every write phase.
+    assert "BalanceRatioSelector" not in {name for phase in _APPLY_PHASE_ORDER for name in phase}
+
+    # A configuration dumped from a camera whose enumeration vocabulary differs carries an entry this camera has no
+    # equivalent for, which is the mismatch the non-strict identity path deliberately permits.
+    message = (
+        "Unable to apply GenICam configuration. Failed to write node 'BalanceRatioSelector': The value 'Purple' is "
+        "not a valid entry of the node 'BalanceRatioSelector'."
+    )
+    with pytest.raises(RuntimeError, match=error_format(message)):
+        apply_genicam_configuration(
+            node_map=node_map,
+            config=_synthetic_configuration(nodes={"BalanceRatioSelector": "Purple", "Height": 500}),
+            strict=True,
+            blacklisted_nodes=frozenset(),
+            **_SYNTHETIC_IDENTITY,
+        )
+
+    # The phased nodes were applied before the trailing pass aborted, which is how far the restore got.
+    assert node_map.values["Height"] == 500
+    assert node_map.values["BalanceRatioSelector"] == "Red"
+
+
+def test_apply_configuration_survives_a_rejected_reset_write() -> None:
+    """Verifies that a reset-phase write the camera rejects does not abort the apply of the whole configuration."""
+    node_map = SyntheticNodeMap()
+
+    # The unlock phase writes a Boolean literal to CenterX, which this camera exposes as an Enumeration and rejects.
+    assert _PHASE_RESET_VALUES["CenterX"] is False
+    assert "CenterX" in _APPLY_PHASE_ORDER[0]
+
+    apply_genicam_configuration(
+        node_map=node_map,
+        config=_synthetic_configuration(nodes={"CenterX": "On", "Height": 500}),
+        strict=True,
+        blacklisted_nodes=frozenset(),
+        **_SYNTHETIC_IDENTITY,
+    )
+
+    # The rejected reset write is not fatal, because the re-lock phase writes the node its target value regardless,
+    # and the single write proves the rejected value never reached the camera.
+    assert node_map.values["CenterX"] == "On"
+    assert node_map.writes.count("CenterX") == 1
+    assert node_map.values["Height"] == 500
+
+
+def test_read_genicam_nodes_expands_an_integer_selector(tmp_path) -> None:
+    """Verifies that an integer selector contributes one entry per index that survives a YAML roundtrip and apply."""
+    node_map = SyntheticNodeMap()
+    nodes = read_genicam_nodes(node_map=node_map, blacklisted_nodes=frozenset())
+
+    entries = [node for node in nodes if node.name == "LUTValue"]
+    assert len(entries) == LUT_INDEX_MAXIMUM + 1
+
+    # An integer selector addresses its instances by position rather than by symbolic name, so each entry carries an
+    # integer selector value and holds a value of its own.
+    assert all(isinstance(node.selectors["LUTIndex"], int) for node in entries)
+    captured = {node.selectors["LUTIndex"]: node.value for node in entries}
+    assert captured == {0: 0, 1: 10, 2: 20, 3: 30}
+
+    # Reading the instances steps the selector, which is returned to the position the camera was found in.
+    assert node_map.values["LUTIndex"] == 0
+
+    config = GenicamConfiguration(
+        camera_model=_SYNTHETIC_IDENTITY["current_model"],
+        camera_serial_number=_SYNTHETIC_IDENTITY["current_serial"],
+        nodes=nodes,
+    )
+    yaml_path = tmp_path / "lut_config.yaml"
+    config.to_yaml(file_path=yaml_path)
+    loaded = GenicamConfiguration.from_yaml(file_path=yaml_path)
+    assert all(isinstance(node.selectors["LUTIndex"], int) for node in loaded.nodes if node.name == "LUTValue")
+
+    # Collapses every index onto one value, which is the state a selector-blind restore would leave behind.
+    for index in range(LUT_INDEX_MAXIMUM + 1):
+        node_map.values["LUTIndex"] = index
+        node_map.write(name="LUTValue", value=4095)
+    node_map.values["LUTIndex"] = 0
+
+    apply_genicam_configuration(
+        node_map=node_map,
+        config=loaded,
+        strict=True,
+        blacklisted_nodes=frozenset(),
+        **_SYNTHETIC_IDENTITY,
+    )
+
+    restored = {key[1][0][1]: value for key, value in node_map.selected_values.items() if key[0] == "LUTValue"}
+    assert restored == captured
+
+
+def test_expand_selectors_caps_the_combination_count() -> None:
+    """Verifies that a selector addressing more instances than the ceiling covers is truncated to the ceiling."""
+    deep_lut_maximum = 255
+    node_map = SyntheticNodeMap(lut_index_maximum=deep_lut_maximum)
+
+    # A camera with a deep lookup table addresses more instances than the ceiling covers, which is the cost the
+    # ceiling exists to bound.
+    assert deep_lut_maximum + 1 > _MAXIMUM_SELECTOR_COMBINATIONS
+
+    combinations = _expand_selectors(node_map=node_map, name="LUTValue")
+    assert len(combinations) == _MAXIMUM_SELECTOR_COMBINATIONS
+    assert combinations[0] == {"LUTIndex": 0}
+    assert combinations[-1] == {"LUTIndex": _MAXIMUM_SELECTOR_COMBINATIONS - 1}
+
+    # The ceiling bounds the number of instances the dump reads from the camera, not just the expansion helper.
+    nodes = read_genicam_nodes(node_map=node_map, blacklisted_nodes=frozenset())
+    assert len([node for node in nodes if node.name == "LUTValue"]) == _MAXIMUM_SELECTOR_COMBINATIONS
 
 
 @pytest.mark.xdist_group(name="group2")
