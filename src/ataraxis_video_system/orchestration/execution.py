@@ -1,9 +1,5 @@
 """Provides the batch execution engine that admits sized extraction jobs against a core and a memory budget and runs
 each one in a worker of a single shared process pool.
-
-Notes:
-    This module serves the MCP server and any external scheduler that drives a batch. The command-line pipeline
-    processes one recording sequentially and never reaches it.
 """
 
 from __future__ import annotations
@@ -64,18 +60,6 @@ broke is the only job a break can be attributed to, so only such a job spends th
 
 
 @dataclass(slots=True)
-class _ActiveJob:
-    """Tracks one job executing in a worker of the shared job pool."""
-
-    job: JobDescriptor
-    """The descriptor the pool was handed."""
-    sizing: JobSizing
-    """The resource figures this job was admitted at."""
-    future: Future[None]
-    """The future the pool returned, which carries the job body's outcome."""
-
-
-@dataclass(slots=True)
 class JobExecutionState:
     """Tracks runtime state for one batch execution session budgeted by both cores and memory.
 
@@ -114,9 +98,21 @@ class JobExecutionState:
     is charged, since a break fails every in-flight job whatever caused it."""
 
 
-_execution_lock: Lock = Lock()
+@dataclass(slots=True)
+class _ActiveJob:
+    """Tracks one job executing in a worker of the shared job pool."""
+
+    job: JobDescriptor
+    """The descriptor the pool was handed."""
+    sizing: JobSizing
+    """The resource figures this job was admitted at."""
+    future: Future[None]
+    """The future the pool returned, which carries the job body's outcome."""
+
+
+_EXECUTION_LOCK: Lock = Lock()
 """Serializes the check-and-reserve that admits one batch execution session at a time. The test of the reference below
-and its replacement sit on opposite sides of a bytecode boundary, so two callers finding the slot free would otherwise
+and its replacement sit on opposite sides of a bytecode boundary. Two callers finding the slot free would otherwise
 both publish a session, and the second would strand the first session's worker pool beyond the reach of every
 cancellation tool."""
 
@@ -137,7 +133,7 @@ def set_execution_state(state: JobExecutionState | None) -> None:
     """
     global _execution_state
 
-    with _execution_lock:
+    with _EXECUTION_LOCK:
         _execution_state = state
 
 
@@ -146,8 +142,8 @@ def start_execution_session(state: JobExecutionState) -> bool:
 
     Notes:
         The incumbent test, the publication, and the thread start all happen under one lock. A thread reports itself
-        alive only once it has started, so a state published before its thread runs reads as a finished session, and
-        splitting these steps lets two callers each start a manager and double-commit the host's cores and memory.
+        alive only once it has started, so a state published before its thread runs reads as a finished session.
+        Splitting these steps lets two callers each start a manager and double-commit the host's cores and memory.
 
         A session whose manager thread has ended is replaced, so a completed or an abandoned batch does not block
         every later batch.
@@ -160,7 +156,7 @@ def start_execution_session(state: JobExecutionState) -> bool:
     """
     global _execution_state
 
-    with _execution_lock:
+    with _EXECUTION_LOCK:
         active = _execution_state
         if active is not None and active.manager_thread is not None and active.manager_thread.is_alive():
             return False
@@ -344,7 +340,7 @@ def _pin_pool_worker(thread_count: int, barrier: Barrier) -> None:
         thread_count: The threads this worker's numeric backends may open.
         barrier: The barrier every worker and the creating parent meet on.
     """
-    initialize_worker_threads(thread_count)
+    initialize_worker_threads(thread_count=thread_count)
     barrier.wait(timeout=_POOL_WARMUP_TIMEOUT_SECONDS)
 
 
@@ -428,7 +424,7 @@ def _admit_pending_jobs(state: JobExecutionState, executor: ProcessPoolExecutor)
 
     for index, (job, sizing) in enumerate(admitted):
         try:
-            future = executor.submit(run_extraction_job, job)
+            future = executor.submit(run_extraction_job, job=job)
         except BrokenProcessPool:
             state.pool_broken = True
             deferred.extend(admitted[index:])

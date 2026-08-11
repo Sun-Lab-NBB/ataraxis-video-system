@@ -18,22 +18,6 @@ _ONSET_US: int = 1_700_000_000_000_000
 """Stores the UTC epoch onset, in microseconds, used by every synthetic log archive built by this module."""
 
 
-def _build_archive(archive_path, frame_timestamps_us, data_timestamps_us=None):
-    """Builds a synthetic log archive holding the requested frame and data messages."""
-    create_test_archive(
-        archive_path=archive_path,
-        source_id=_SOURCE_ID,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=frame_timestamps_us,
-        data_timestamps_us=data_timestamps_us,
-    )
-
-
-def _expected_timestamps(frame_timestamps_us):
-    """Converts the elapsed frame timestamps of a synthetic archive into the absolute timestamps extraction returns."""
-    return np.array([_ONSET_US + elapsed_us for elapsed_us in frame_timestamps_us], dtype=np.uint64)
-
-
 def test_extract_logged_camera_timestamps_invalid_path(tmp_path):
     """Verifies that extract_logged_camera_timestamps rejects paths that do not point to an existing .npz file."""
     # A path that does not exist at all.
@@ -66,6 +50,17 @@ def test_extract_logged_camera_timestamps_invalid_path(tmp_path):
         extract_logged_camera_timestamps(log_path=directory_path)
 
 
+def test_extract_logged_camera_timestamps_empty_archive(tmp_path):
+    """Verifies that extraction returns an empty array for an archive that holds the onset message alone."""
+    # An archive holding the onset message alone is what a recording that acquired no frame produces.
+    archive_path = tmp_path / f"{_SOURCE_ID}{LOG_ARCHIVE_SUFFIX}"
+    _build_archive(archive_path=archive_path, frame_timestamps_us=[])
+
+    extracted = extract_logged_camera_timestamps(log_path=archive_path, workers=1)
+
+    assert extracted.size == 0
+
+
 def test_extract_logged_camera_timestamps_filters_data_messages(tmp_path):
     """Verifies that extraction returns the absolute timestamps of payload-free frame messages only."""
     archive_path = tmp_path / f"{_SOURCE_ID}{LOG_ARCHIVE_SUFFIX}"
@@ -93,7 +88,7 @@ def test_extract_logged_camera_timestamps_single_worker_skips_the_process_pool(t
         """Fails the test if the extraction function creates a process pool for a single-worker request."""
         pytest.fail("extract_logged_camera_timestamps created a process pool for a single-worker request.")
 
-    monkeypatch.setattr(timestamps_module, "ProcessPoolExecutor", _forbidden_pool)
+    monkeypatch.setattr(target=timestamps_module, name="ProcessPoolExecutor", value=_forbidden_pool)
 
     extracted = extract_logged_camera_timestamps(log_path=archive_path, workers=1)
 
@@ -151,7 +146,7 @@ def test_extract_logged_camera_timestamps_resolves_the_worker_count(tmp_path, mo
         resolution_requests.append(requested_workers)
         return 2
 
-    monkeypatch.setattr(timestamps_module, "resolve_worker_count", _resolve_worker_count)
+    monkeypatch.setattr(target=timestamps_module, name="resolve_worker_count", value=_resolve_worker_count)
 
     extracted = extract_logged_camera_timestamps(log_path=archive_path, workers=-1, display_progress=False)
 
@@ -207,3 +202,19 @@ def test_extract_logged_camera_timestamps_external_executor(tmp_path):
         assert executor.submit(abs, -5).result() == 5
     finally:
         executor.shutdown(wait=True)
+
+
+def _build_archive(archive_path, frame_timestamps_us, data_timestamps_us=None):
+    """Builds a synthetic log archive holding the requested frame and data messages."""
+    create_test_archive(
+        archive_path=archive_path,
+        source_id=_SOURCE_ID,
+        onset_us=_ONSET_US,
+        frame_timestamps_us=frame_timestamps_us,
+        data_timestamps_us=data_timestamps_us,
+    )
+
+
+def _expected_timestamps(frame_timestamps_us):
+    """Converts the elapsed frame timestamps of a synthetic archive into the absolute timestamps extraction returns."""
+    return np.array([_ONSET_US + elapsed_us for elapsed_us in frame_timestamps_us], dtype=np.uint64)

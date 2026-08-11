@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-DEFAULT_PROPERTIES: dict[int, float] = {
+_DEFAULT_PROPERTIES: dict[int, float] = {
     cv2.CAP_PROP_FPS: 30.0,
     cv2.CAP_PROP_FRAME_WIDTH: 640.0,
     cv2.CAP_PROP_FRAME_HEIGHT: 480.0,
@@ -39,7 +39,7 @@ class FakeVideoCapture:
         readable: bool = True,
         color: bool = True,
     ) -> None:
-        self.properties = dict(DEFAULT_PROPERTIES if properties is None else properties)
+        self.properties = dict(_DEFAULT_PROPERTIES if properties is None else properties)
         self.accepts_writes = accepts_writes
         self.opened = opened
         self.readable = readable
@@ -89,7 +89,10 @@ def build_capture_factory(captures: dict[int, FakeVideoCapture], default: FakeVi
         The callable that replaces cv2.VideoCapture for the duration of a test.
     """
 
-    def _open_capture(index: int, apiPreference: int | None = None) -> FakeVideoCapture:  # noqa: N803
+    def _open_capture(
+        index: int,
+        apiPreference: int | None = None,  # noqa: N803 - mirrors the cv2.VideoCapture argument name.
+    ) -> FakeVideoCapture:
         """Returns the stand-in bound to the requested camera index, marked as open again."""
         capture = captures.get(index, default)
         if capture is None:

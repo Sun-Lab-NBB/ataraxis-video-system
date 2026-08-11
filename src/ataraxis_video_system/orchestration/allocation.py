@@ -1,9 +1,5 @@
 """Provides the declared core allocation of the camera timestamp extraction stage, the archive-derived footprint model
 that sizes each job's cores and memory from the input it will read, and the batch-wide budget resolvers.
-
-Notes:
-    This module imports nothing from its own package, so a scheduler consuming the sizing model takes it without
-    also taking the manifest reader, the extraction leaf, or the batch engine.
 """
 
 from __future__ import annotations
@@ -83,8 +79,7 @@ def resolve_archive_footprint(archive_path: Path, *, read_message_count: bool = 
         Decodes no message and loads no payload. An archive that cannot be read yields an unmodeled footprint, which
         every consumer treats as a floor rather than as a measurement.
 
-        Reading the message count opens the archive, while the file size alone costs one stat call. Only the core
-        resolution consumes the count.
+        Reading the message count opens the archive, while the file size alone costs one stat call.
 
     Args:
         archive_path: The path to the .npz log archive to read.
@@ -167,8 +162,7 @@ def estimate_archive_job_memory_mb(archive_path: Path, cores: int) -> tuple[int,
     """Estimates the memory one extraction job holds, from the archive path alone.
 
     Notes:
-        Reads the archive's size without opening it, costing one stat call. The caller supplies the core count, so a
-        scheduler holding a fixed per-stage width sizes a job at the width it dispatches.
+        Reads the archive's size without opening it, costing one stat call.
 
     Args:
         archive_path: The path to the .npz log archive the job reads.

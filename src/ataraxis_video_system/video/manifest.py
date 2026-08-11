@@ -38,8 +38,7 @@ class CameraManifest(YamlConfig):
     """Stores camera source identification data for all VideoSystem instances sharing a DataLogger.
 
     Each entry in the ``sources`` list corresponds to one VideoSystem instance that logs frame timestamps
-    to the same DataLogger output directory. The manifest file enables downstream tools to identify which
-    log archives were produced by ataraxis-video-system and to associate source IDs with human-readable names.
+    to the same DataLogger output directory.
     """
 
     sources: list[CameraSourceData] = field(default_factory=list)

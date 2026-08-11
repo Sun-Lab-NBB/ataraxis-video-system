@@ -3,7 +3,6 @@ is built with.
 """
 
 import os
-from pathlib import Path
 from threading import Thread
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
@@ -60,18 +59,13 @@ _UNRECORDED_JOB_MESSAGE: str = "Job terminated without updating tracker status."
 _PINNED_THREAD_VARIABLES: tuple[str, ...] = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
 """Stores the threading-layer variables a pinned pool worker is checked against.
 
-These are the three variables the numeric backends bundled with NumPy read, which is the subset of the wider set
-initialize_worker_threads() writes that determines how wide a pool an extraction worker opens.
+These are the three BLAS threading variables every supported host reads, checked as a representative sample of the
+eight variables initialize_worker_threads() writes.
 """
 
 
 class _RecordingPool:
-    """Stands in for the session's shared process pool, recording every submission it accepts.
-
-    Notes:
-        Only the admission pass is exercised through this stand-in. The manager itself is tested end to end against a
-        real spawned pool, so the pool's own behavior is never simulated.
-    """
+    """Stands in for the session's shared process pool, recording every submission it accepts."""
 
     def __init__(self, error=None):
         self.submissions = []
@@ -324,8 +318,8 @@ def test_select_admissible_jobs_credits_the_occupied_pool_slot(tmp_path):
     first = _build_entry(directory=tmp_path, source_id="1", core_weight=1, memory_mb=1000)
     second = _build_entry(directory=tmp_path, source_id="2", core_weight=1, memory_mb=1000)
 
-    # Both jobs together hold 2000 MB, which passes the budget. Each one releases the baseline of the slot it takes
-    # over, so the pair charges 1800 MB and both are admitted.
+    # Both jobs together hold 2000 MB, which passes the budget. Each admitted job releases the baseline of the slot it
+    # takes over before the next is weighed, so the second job is weighed at 1800 MB and both are admitted.
     admitted, deferred = _select_admissible_jobs(
         pending=[first, second],
         core_budget=8,
@@ -431,7 +425,7 @@ def test_handle_broken_pool_charges_no_requeue_when_several_jobs_broke(tmp_path,
         requested_sizes.append(pool_size)
         return replacement
 
-    monkeypatch.setattr(execution, "_create_job_pool", _build_replacement)
+    monkeypatch.setattr(target=execution, name="_create_job_pool", value=_build_replacement)
 
     broken_pool = _RecordingPool()
     assert _handle_broken_pool(state=state, executor=broken_pool) is replacement
@@ -462,7 +456,7 @@ def test_handle_broken_pool_charges_the_sole_casualty(tmp_path, monkeypatch):
         assert pool_size == state.pool_size
         return _RecordingPool()
 
-    monkeypatch.setattr(execution, "_create_job_pool", _build_replacement)
+    monkeypatch.setattr(target=execution, name="_create_job_pool", value=_build_replacement)
 
     _handle_broken_pool(state=state, executor=_RecordingPool())
 
@@ -814,6 +808,33 @@ def test_abandon_batch_fails_every_unfinished_job(tmp_path):
 
 
 @pytest.mark.xdist_group(name="orchestration")
+def test_abandon_batch_fails_the_jobs_a_caller_already_drained_from_the_state(tmp_path):
+    """Verifies that jobs held outside the state queues still reach a terminal tracker status when a batch is
+    abandoned.
+    """
+    tracker_path = tmp_path / "tracker.yaml"
+    job = JobDescriptor.for_archive(
+        archive_path=tmp_path / "5.npz",
+        output_directory=tmp_path,
+        tracker_path=tracker_path,
+        source_id="5",
+    )
+    ProcessingTracker(file_path=tracker_path).align_jobs(
+        jobs=[(CAMERA_EXTRACTION_JOB_NAME, "5")],
+        universe=[(CAMERA_EXTRACTION_JOB_NAME, "5")],
+    )
+    state = JobExecutionState(pool_rebuilds=_MAXIMUM_POOL_REBUILDS)
+
+    _abandon_batch(
+        state=state,
+        reason="the pool broke",
+        orphaned=[(job, JobSizing(memory_mb=0, message_count=0, archive_bytes=0, modeled=False))],
+    )
+
+    assert ProcessingTracker(file_path=tracker_path).snapshot()[job.job_id].status is ProcessingStatus.FAILED
+
+
+@pytest.mark.xdist_group(name="orchestration")
 def test_job_execution_manager_runs_a_prepared_batch(tmp_path):
     """Verifies that the manager dispatches a prepared job into its shared pool and drains its queues when it ends."""
     job_set, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
@@ -999,7 +1020,7 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_rebuilt(tmp_path
     creations = []
     build_pool = execution._create_job_pool
 
-    def failing_rebuild(pool_size):
+    def _failing_rebuild(pool_size):
         """Builds the session's first pool and refuses every replacement it is asked for afterwards."""
         creations.append(pool_size)
         if len(creations) == 1:
@@ -1008,7 +1029,7 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_rebuilt(tmp_path
         message = "The host refused to spawn a worker."
         raise RuntimeError(message)
 
-    monkeypatch.setattr(execution, "_create_job_pool", failing_rebuild)
+    monkeypatch.setattr(target=execution, name="_create_job_pool", value=_failing_rebuild)
 
     state = JobExecutionState(
         all_jobs={descriptor.dispatch_key: descriptor},
@@ -1059,39 +1080,13 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_created(tmp_path
     assert not resolve_timestamps_path(output_directory=job_set.output_directory, source_id="1").exists()
 
 
-def test_abandon_batch_fails_the_jobs_a_caller_already_drained_from_the_state(tmp_path: Path) -> None:
-    """Verifies that jobs held outside the state queues still reach a terminal tracker status when a batch is
-    abandoned.
-    """
-    tracker_path = tmp_path / "tracker.yaml"
-    job = JobDescriptor.for_archive(
-        archive_path=tmp_path / "5.npz",
-        output_directory=tmp_path,
-        tracker_path=tracker_path,
-        source_id="5",
-    )
-    ProcessingTracker(file_path=tracker_path).align_jobs(
-        jobs=[(CAMERA_EXTRACTION_JOB_NAME, "5")],
-        universe=[(CAMERA_EXTRACTION_JOB_NAME, "5")],
-    )
-    state = JobExecutionState(pool_rebuilds=_MAXIMUM_POOL_REBUILDS)
-
-    _abandon_batch(
-        state=state,
-        reason="the pool broke",
-        orphaned=[(job, JobSizing(memory_mb=0, message_count=0, archive_bytes=0, modeled=False))],
-    )
-
-    assert ProcessingTracker(file_path=tracker_path).snapshot()[job.job_id].status is ProcessingStatus.FAILED
-
-
 @pytest.mark.xdist_group(name="orchestration")
 def test_pin_pool_worker_pins_the_backends_and_meets_the_barrier(monkeypatch):
     """Verifies that a pool worker constrains its numeric backends and reports itself started before it takes work."""
     # The initializer writes the threading-layer variables into the live process environment, so each one is bound
     # through monkeypatch beforehand and the value this process held is restored once the test ends.
     for variable in _PINNED_THREAD_VARIABLES:
-        monkeypatch.setenv(variable, "unpinned")
+        monkeypatch.setenv(name=variable, value="unpinned")
 
     # The pool hands its initializer the ceiling every worker shares, and the sole worker of a single-party barrier is
     # the whole party, so the call returns as soon as it has met it.

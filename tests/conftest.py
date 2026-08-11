@@ -98,7 +98,7 @@ def gentl_simulator(simulator_cti_path: Path | None, monkeypatch: pytest.MonkeyP
     if simulator_cti_path is None:
         pytest.skip("Skipping this test as no GenTL Producer simulator is bundled for this platform.")
 
-    monkeypatch.setenv(_CTI_PATH_VARIABLE, str(simulator_cti_path))
+    monkeypatch.setenv(name=_CTI_PATH_VARIABLE, value=str(simulator_cti_path))
     return simulator_cti_path
 
 
@@ -110,10 +110,10 @@ def persisted_cti_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     persisted file rather than the environment. Both together keep a test that configures a Producer away from the one
     the developer's own machine has configured.
     """
-    monkeypatch.delenv(_CTI_PATH_VARIABLE, raising=False)
+    monkeypatch.delenv(name=_CTI_PATH_VARIABLE, raising=False)
     directory = tmp_path / "user_data"
     directory.mkdir()
-    monkeypatch.setattr(platformdirs, "user_data_dir", lambda **_kwargs: str(directory))
+    monkeypatch.setattr(target=platformdirs, name="user_data_dir", value=lambda **_kwargs: str(directory))
     return directory
 
 
@@ -148,7 +148,8 @@ def _all_cameras(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> tu
                 data = json.loads(cache_file.read_text())
                 return tuple(CameraInformation(**entry) for entry in data)
 
-            # First worker to acquire the lock runs the actual hardware discovery.
+            # Runs the hardware discovery on the first worker to acquire the lock, as the probe tolerates one owner at
+            # a time.
             try:
                 all_cameras = discover_camera_ids()
             except Exception:
@@ -170,13 +171,14 @@ def has_opencv(_all_cameras: tuple[CameraInformation, ...]) -> bool:
 def has_harvesters(_all_cameras: tuple[CameraInformation, ...]) -> Generator[bool, None, None]:
     """Checks for Harvesters camera availability and sandboxes the camera configuration for the whole session.
 
-    Captures the complete set of writable GenICam nodes before any test runs and writes it back once every test has
-    finished, so that tests which reconfigure the camera leave no trace on the hardware.
+    Captures every writable GenICam node outside the default blacklist before any test runs and writes it back once
+    every test has finished, so that tests which reconfigure the camera leave no trace on the hardware.
     """
     harvesters_cameras = [camera for camera in _all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
     has = bool(harvesters_cameras)
 
-    # Captures the full writable configuration so that every node a test may touch can be restored.
+    # Captures the writable configuration outside the default blacklist, so that every node a test writes through the
+    # configuration API can be restored.
     saved_configuration: GenicamConfiguration | None = None
     if has:
         camera = HarvestersCamera(system_id=222, camera_index=0)

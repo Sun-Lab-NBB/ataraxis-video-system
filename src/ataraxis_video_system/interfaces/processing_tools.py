@@ -4,7 +4,7 @@ as analyzing and cleaning processed frame timestamp output.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from pathlib import Path
 from dataclasses import replace
 
@@ -38,6 +38,9 @@ from ..orchestration import (
     resolve_memory_budget_mb,
 )
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
 
 @mcp.tool()
 def prepare_log_processing_batch_tool(
@@ -50,8 +53,7 @@ def prepare_log_processing_batch_tool(
     Accepts log directories, source IDs, and output directories from the caller and initializes a
     ProcessingTracker with one timestamp-extraction job per source ID for each log directory. Idempotent: if a
     tracker already exists for a log directory, returns the existing manifest with current job statuses instead
-    of reinitializing. Requires prior discovery. The caller must provide confirmed source IDs rather than
-    relying on implicit archive or manifest discovery.
+    of reinitializing. Requires prior discovery. The caller must provide confirmed source IDs.
 
     Important:
         The AI agent calling this tool MUST run discover_camera_data_tool first to obtain log directory paths
@@ -63,18 +65,20 @@ def prepare_log_processing_batch_tool(
             Accepts paths from the 'log_directories' list returned by discover_camera_data_tool.
         source_ids: The list of confirmed source IDs to process. Accepts IDs from the 'source_id' field of
             entries in the 'sources' list returned by discover_camera_data_tool. Applied uniformly: each log
-            directory creates jobs for every source ID in this list that has a matching archive on disk.
+            directory creates jobs for every source ID in this list that has a matching archive on disk. Passing an
+            empty list prepares every source the log directory's camera_manifest.yaml registers.
         output_directories: The list of absolute paths for per-log-directory output. Must match the length of
             log_directories. Each output directory receives a ``camera_timestamps/`` subdirectory containing
             the processing tracker and feather output files.
 
     Returns:
-        A dictionary containing a 'success' flag and per-log-directory manifests in 'log_directories', each carrying
-        the tracker path, the output directory, the resolved source IDs, a 'jobs' list of dispatchable descriptors
-        annotated with their sized cores and memory, the archive figures 'message_count', 'archive_bytes', and
-        'modeled' that the execution tool requires, and their live tracker status, a 'summary' of status counts, and
-        the sources the sizing skipped with their reasons. Also reports total counts and any invalid paths. Returns
-        an error dictionary when the log directory and output directory lists differ in length.
+        A dictionary containing a 'success' flag and per-log-directory manifests in 'log_directories'. Each manifest
+        carries the tracker path, the output directory, the resolved source IDs, a 'summary' of status counts, and the
+        sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
+        descriptors, annotated with their sized cores and memory, their live tracker status, and the archive figures
+        'message_count', 'archive_bytes', and 'modeled' that the execution tool requires. Also reports total counts and
+        any invalid paths. Returns an error dictionary when the log directory and output directory lists differ in
+        length.
     """
     if len(output_directories) != len(log_directories):
         return {
@@ -84,15 +88,15 @@ def prepare_log_processing_batch_tool(
             ),
         }
 
-    result_log_dirs: dict[str, Any] = {}
+    result_log_directories: dict[str, Any] = {}
     invalid_paths: list[str] = []
     total_jobs = 0
 
-    for entry_index, log_dir_str in enumerate(log_directories):
-        log_dir_path = Path(log_dir_str)
+    for entry_index, log_directory_string in enumerate(log_directories):
+        log_directory_path = Path(log_directory_string)
 
-        if not log_dir_path.exists() or not log_dir_path.is_dir():
-            invalid_paths.append(log_dir_str)
+        if not log_directory_path.exists() or not log_directory_path.is_dir():
+            invalid_paths.append(log_directory_string)
             continue
 
         # Sizes every requested source that the manifest registers and whose archive resolves under this log
@@ -100,7 +104,7 @@ def prepare_log_processing_batch_tool(
         # one caller applies one source list across several recordings.
         try:
             job_set = prepare_jobs(
-                log_directory=log_dir_path,
+                log_directory=log_directory_path,
                 output_directory=Path(output_directories[entry_index]),
                 source_ids=source_ids or None,
                 strict_sources=False,
@@ -108,7 +112,7 @@ def prepare_log_processing_batch_tool(
             sized_jobs = [size_job(job=job, core_ceiling=job_set.core_ceiling) for job in job_set.jobs]
             sized_jobs.sort(key=lambda entry: entry[1].memory_mb, reverse=True)
         except Exception:
-            invalid_paths.append(log_dir_str)
+            invalid_paths.append(log_directory_string)
             continue
 
         # Merges the tracker's live state over the sized set, so a directory prepared twice reports what its jobs
@@ -133,7 +137,7 @@ def prepare_log_processing_batch_tool(
                 entry["error_message"] = error_message
             jobs.append(entry)
 
-        result_log_dirs[log_dir_str] = {
+        result_log_directories[log_directory_string] = {
             "tracker_path": str(job_set.tracker_path),
             "output_directory": str(job_set.output_directory),
             "source_ids": [descriptor.source_id for descriptor, _ in sized_jobs],
@@ -147,8 +151,8 @@ def prepare_log_processing_batch_tool(
 
     result: dict[str, Any] = {
         "success": True,
-        "log_directories": result_log_dirs,
-        "total_log_directories": len(result_log_dirs),
+        "log_directories": result_log_directories,
+        "total_log_directories": len(result_log_directories),
         "total_jobs": total_jobs,
     }
 
@@ -172,7 +176,8 @@ def execute_log_processing_jobs_tool(
     recording and a short one are admitted at their own sizes. A job runs at the declared stage width narrowed to the
     workers its own archive repays, and an archive below the parallel processing threshold takes a single core. The
     manager admits a job once the running set has room for both its cores and its memory, and it admits an oversized
-    job alone rather than leaving it queued forever.
+    job alone rather than leaving it queued forever. A job whose estimated memory passes the host's total physical
+    memory is failed on its tracker instead of being admitted, since it cannot complete wherever it is dispatched.
 
     Important:
         Only one execution session can be active at a time. Use cancel_log_processing_tool to cancel an active
@@ -297,7 +302,6 @@ def get_log_processing_status_tool() -> dict[str, Any]:
 
     manager_alive = state.manager_thread is not None and state.manager_thread.is_alive()
 
-    # Reads status from tracker files for each job.
     job_details: list[dict[str, Any]] = []
     succeeded_count = 0
     failed_count = 0
@@ -360,7 +364,8 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     Returns:
         A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary carrying
         'total_elapsed_seconds', 'completed_count', 'failed_count', 'running_count', and 'pending_count', plus
-        'throughput_jobs_per_hour' once at least one job has completed.
+        'throughput_jobs_per_hour' once at least one job has completed. Returns an 'active' flag of False with a
+        'message' and neither 'jobs' nor 'session' when no execution session exists.
     """
     state = get_execution_state()
     if state is None:
@@ -377,7 +382,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     for tracker_path, path_jobs in group_jobs_by_tracker(state=state).items():
         try:
             registry = ProcessingTracker(file_path=tracker_path).snapshot()
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: S112 - An unreadable tracker contributes no timing, so the rest still report.
             continue
 
         for job in path_jobs:
@@ -403,7 +408,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
                     to_units=TimeUnits.SECOND,
                     as_float=True,
                 )
-                entry["elapsed_seconds"] = round(elapsed_seconds, 2)
+                entry["elapsed_seconds"] = round(elapsed_seconds, ndigits=2)
 
             if job_info.completed_at is not None:
                 entry["completed_at"] = int(job_info.completed_at)
@@ -414,7 +419,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
                         to_units=TimeUnits.SECOND,
                         as_float=True,
                     )
-                    entry["duration_seconds"] = round(duration_seconds, 2)
+                    entry["duration_seconds"] = round(duration_seconds, ndigits=2)
 
             if job_info.status == ProcessingStatus.SUCCEEDED:
                 completed_count += 1
@@ -423,7 +428,6 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
 
             job_timing.append(entry)
 
-    # Computes session-level statistics.
     total_elapsed_seconds = 0.0
     if earliest_start is not None:
         total_elapsed_seconds = round(
@@ -433,7 +437,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
                 to_units=TimeUnits.SECOND,
                 as_float=True,
             ),
-            2,
+            ndigits=2,
         )
 
     session: dict[str, Any] = {
@@ -455,7 +459,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
             as_float=True,
         )
         if elapsed_hours > 0:
-            session["throughput_jobs_per_hour"] = round(completed_count / elapsed_hours, 2)
+            session["throughput_jobs_per_hour"] = round(completed_count / elapsed_hours, ndigits=2)
 
     return {"active": manager_alive, "jobs": job_timing, "session": session}
 
@@ -469,7 +473,8 @@ def cancel_log_processing_tool() -> dict[str, Any]:
 
     Returns:
         A dictionary containing a 'canceled' flag, a 'message', and 'final_state' with counts for succeeded,
-        failed, and active jobs at the time of cancellation.
+        failed, and active jobs at the time of cancellation. Returns a 'canceled' flag of False with a 'message' and
+        no 'final_state' when no execution session is active.
     """
     state = get_execution_state()
     if state is None:
@@ -481,7 +486,6 @@ def cancel_log_processing_tool() -> dict[str, Any]:
         state.pending_jobs.clear()
         active_count = len(state.active_jobs)
 
-    # Counts final job statuses from tracker files.
     succeeded = 0
     failed = 0
     tracker_paths: set[Path] = {job.tracker_path for job in state.all_jobs.values()}
@@ -494,7 +498,7 @@ def cancel_log_processing_tool() -> dict[str, Any]:
                     succeeded += 1
                 elif job_state.status == ProcessingStatus.FAILED:
                     failed += 1
-        except Exception:  # noqa: S110
+        except Exception:  # noqa: S110 - An unreadable tracker contributes no counts, since cancellation still holds.
             pass
 
     return {
@@ -520,8 +524,9 @@ def reset_log_processing_jobs_tool(
         source_ids: An optional list of source IDs whose jobs should be reset. If not provided, all jobs are reset.
 
     Returns:
-        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses. Returns an error
-        dictionary when the tracker file is absent or cannot be read.
+        A dictionary containing a 'reset' flag, the number of jobs reset, and updated job statuses. Returns a 'reset'
+        flag of False with a 'message' and no job counts when no job matches the requested source IDs. Returns an
+        error dictionary when the tracker file is absent or cannot be read.
     """
     path = Path(tracker_path)
 
@@ -534,7 +539,6 @@ def reset_log_processing_jobs_tool(
     except Exception as error:
         return {"error": f"Unable to read tracker: {error}"}
 
-    # Identifies which job IDs to reset based on the source_ids filter.
     if source_ids is not None:
         source_id_set = set(source_ids)
         target_ids = [job_id for job_id, job_state in registry.items() if job_state.specifier in source_id_set]
@@ -547,7 +551,6 @@ def reset_log_processing_jobs_tool(
     # Resets the targeted jobs back to SCHEDULED under the tracker's lock, leaving every other job untouched.
     tracker.reset_jobs(job_ids=target_ids)
 
-    # Reads back the updated state for the response.
     try:
         updated_status = _read_tracker_status(tracker_path=path)
     except Exception:
@@ -558,17 +561,20 @@ def reset_log_processing_jobs_tool(
 
 @mcp.tool()
 def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
-    """Discovers and summarizes processing status for all log directories under a root directory.
+    """Discovers and summarizes processing status for all camera timestamp output directories under a root directory.
 
-    Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker
-    corresponds to a single DataLogger output directory.
+    Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker sits in
+    the ``camera_timestamps/`` subdirectory of one output directory, so every entry reports that subdirectory under
+    its 'output_directory' key rather than the DataLogger log directory the archives came from.
 
     Args:
         root_directory: The absolute path to the root directory to search for tracker files.
 
     Returns:
-        A dictionary containing per-log-directory status summaries and aggregate counts. Returns an error dictionary
-        when the root directory does not exist, is not a directory, or cannot be searched.
+        A dictionary containing an 'output_directories' list of per-directory status entries, a
+        'total_output_directories' count, and a 'summary' carrying aggregate 'succeeded', 'failed', 'running', and
+        'scheduled' counts. Returns an error dictionary when the root directory does not exist, is not a directory, or
+        cannot be searched.
     """
     root_path = Path(root_directory)
 
@@ -578,7 +584,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    log_directory_statuses: list[dict[str, Any]] = []
+    output_directory_statuses: list[dict[str, Any]] = []
     aggregate_succeeded = 0
     aggregate_failed = 0
     aggregate_running = 0
@@ -590,7 +596,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
         return {"error": f"Unable to search '{root_directory}': {error}"}
 
     for tracker_path in tracker_paths:
-        log_directory = str(tracker_path.parent)
+        output_directory = str(tracker_path.parent)
         try:
             status = _read_tracker_status(tracker_path=tracker_path)
             summary = status.get("summary", {})
@@ -602,18 +608,18 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
 
             directory_status = ProcessingTracker.resolve_status(summary=summary).value
 
-            log_directory_statuses.append(
+            output_directory_statuses.append(
                 {
-                    "log_directory": log_directory,
+                    "output_directory": output_directory,
                     "tracker_path": str(tracker_path),
                     "status": directory_status,
                     **status,
                 }
             )
         except Exception:
-            log_directory_statuses.append(
+            output_directory_statuses.append(
                 {
-                    "log_directory": log_directory,
+                    "output_directory": output_directory,
                     "tracker_path": str(tracker_path),
                     "status": "error",
                     "error": "Unable to read tracker file.",
@@ -621,8 +627,8 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             )
 
     return {
-        "log_directories": log_directory_statuses,
-        "total_log_directories": len(log_directory_statuses),
+        "output_directories": output_directory_statuses,
+        "total_output_directories": len(output_directory_statuses),
         "summary": {
             "succeeded": aggregate_succeeded,
             "failed": aggregate_failed,
@@ -643,8 +649,7 @@ def analyze_camera_frame_statistics_tool(
     For each file, computes basic recording statistics (total frames, duration, estimated frame rate), inter-frame
     timing distribution (mean, median, standard deviation, min, max), and frame drop analysis (gap detection,
     estimated drop count, drop locations). Frame drops are identified as inter-frame intervals exceeding a threshold,
-    which defaults to 2x the median inter-frame interval when not specified. Accepts the 'timestamps_file' paths
-    returned by discover_camera_data_tool.
+    which defaults to 2x the median inter-frame interval when not specified.
 
     Args:
         feather_files: The list of absolute paths to camera timestamp feather files produced by the log processing
@@ -677,9 +682,8 @@ def clean_log_processing_output_tool(output_directories: list[str]) -> dict[str,
 
     Removes each ``camera_timestamps/`` subdirectory and all of its contents, including processed feather files
     and the processing tracker. Uses ``delete_directory`` from ataraxis-data-structures for parallel file deletion
-    with platform-safe retry logic. After cleanup, the output directories can be passed to
-    prepare_log_processing_batch_tool to reinitialize from scratch. Accepts the 'log_directories' list returned
-    by discover_camera_data_tool.
+    with platform-safe retry logic. Accepts the same output directory paths that were supplied to
+    prepare_log_processing_batch_tool.
 
     Args:
         output_directories: The list of absolute paths to output directories containing ``camera_timestamps/``
@@ -687,10 +691,10 @@ def clean_log_processing_output_tool(output_directories: list[str]) -> dict[str,
 
     Returns:
         A dictionary containing a 'results' list with per-directory outcomes and the 'total_cleaned' and
-        'total_directories' counts. Each outcome carries an 'output_directory' and a 'cleaned' flag, plus a
-        'timestamps_path' on a successful delete, a 'message' when there was nothing to clean, an 'error' alone when
-        the output directory does not exist or is not a directory, or both a 'timestamps_path' and an 'error' when
-        the delete failed.
+        'total_directories' counts. Each outcome carries an 'output_directory' and a 'cleaned' flag. A successful
+        delete adds a 'timestamps_path', and a directory with nothing to clean adds a 'message'. An output directory
+        that does not exist or is not a directory reports an 'error' alone, while a failed delete reports both a
+        'timestamps_path' and an 'error'.
     """
     results = [_clean_single_output(output_directory=directory) for directory in output_directories]
     total_cleaned = sum(1 for result in results if result.get("cleaned", False))
@@ -761,33 +765,68 @@ def _analyze_single_feather(
         A dictionary containing 'file', 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' keys,
         or 'file' and 'error' keys if the file cannot be read.
     """
+    timestamps, error_message = _read_feather_timestamps(feather_file=feather_file)
+
+    if timestamps is None:
+        return {"file": feather_file, "error": error_message}
+
+    statistics = _compute_frame_statistics(
+        timestamps=timestamps, drop_threshold_us=drop_threshold_us, max_drop_locations=max_drop_locations
+    )
+
+    return {"file": feather_file, **statistics}
+
+
+def _read_feather_timestamps(feather_file: str) -> tuple[NDArray[Any] | None, str | None]:
+    """Reads the frame acquisition timestamp column of a single camera timestamp feather file.
+
+    Args:
+        feather_file: The absolute path to the feather file.
+
+    Returns:
+        A two-element tuple. The first element stores the frame acquisition timestamp array, or None when the file
+        cannot be read. The second element stores the message explaining the failure, or None when the read succeeds.
+    """
     file_path = Path(feather_file)
 
     if not file_path.exists():
-        return {"file": feather_file, "error": f"File does not exist: {feather_file}"}
+        return None, f"File does not exist: {feather_file}"
 
     if not file_path.is_file():
-        return {"file": feather_file, "error": f"Path is not a file: {feather_file}"}
+        return None, f"Path is not a file: {feather_file}"
 
-    # Reads the feather file and validates the expected schema.
     try:
         dataframe = pl.read_ipc(source=file_path)
     except Exception as error:
-        return {"file": feather_file, "error": f"Unable to read feather file: {error}"}
+        return None, f"Unable to read feather file: {error}"
 
     if str(ExtractedDataColumns.FRAME_TIME) not in dataframe.columns:
-        return {
-            "file": feather_file,
-            "error": f"Missing required '{ExtractedDataColumns.FRAME_TIME}' column. Found: {dataframe.columns}",
-        }
+        return None, f"Missing required '{ExtractedDataColumns.FRAME_TIME}' column. Found: {dataframe.columns}"
 
-    timestamps = dataframe[str(ExtractedDataColumns.FRAME_TIME)].to_numpy()
+    return dataframe[str(ExtractedDataColumns.FRAME_TIME)].to_numpy(), None
+
+
+def _compute_frame_statistics(
+    timestamps: NDArray[Any],
+    drop_threshold_us: int,
+    max_drop_locations: int,
+) -> dict[str, Any]:
+    """Computes frame acquisition statistics from an array of frame acquisition timestamps.
+
+    Args:
+        timestamps: The frame acquisition timestamps, in microseconds elapsed since the UTC epoch onset.
+        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, auto-detected as 2x median.
+        max_drop_locations: The maximum number of frame drop locations to include.
+
+    Returns:
+        A dictionary containing the 'basic_stats', 'inter_frame_timing', and 'frame_drop_analysis' keys. A recording
+        holding fewer than two timestamps carries empty 'inter_frame_timing' and 'frame_drop_analysis' dictionaries.
+    """
     total_frames = len(timestamps)
 
     # Handles edge cases for empty or single-frame recordings.
     if total_frames == 0:
         return {
-            "file": feather_file,
             "basic_stats": {"total_frames": 0},
             "inter_frame_timing": {},
             "frame_drop_analysis": {},
@@ -795,7 +834,6 @@ def _analyze_single_feather(
 
     if total_frames == 1:
         return {
-            "file": feather_file,
             "basic_stats": {
                 "total_frames": 1,
                 "first_timestamp_us": int(timestamps[0]),
@@ -808,26 +846,27 @@ def _analyze_single_feather(
             "frame_drop_analysis": {},
         }
 
-    # Computes basic recording statistics.
     first_timestamp_us = int(timestamps[0])
     last_timestamp_us = int(timestamps[-1])
     duration_us = last_timestamp_us - first_timestamp_us
     duration_seconds = round(
-        convert_time(time=duration_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.SECOND, as_float=True), 6
+        convert_time(time=duration_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.SECOND, as_float=True),
+        ndigits=6,
     )
-    estimated_fps = round((total_frames - 1) / duration_seconds, 3) if duration_seconds > 0 else 0.0
+    estimated_fps = round((total_frames - 1) / duration_seconds, ndigits=3) if duration_seconds > 0 else 0.0
 
     # Computes inter-frame interval statistics. Reinterpreting a uint64 buffer as int64 before differencing keeps a
     # decreasing pair negative and costs no allocation, so it holds the same values the cast produces while dropping
     # the full-length temporary. A column of any other width keeps the cast, which rounds each difference rather than
     # each timestamp.
+    intervals_us: NDArray[Any]
     if timestamps.dtype == np.uint64:
         intervals_us = np.diff(timestamps.view(np.int64))
     else:
         intervals_us = np.diff(timestamps).astype(np.int64)
-    mean_us = round(float(np.mean(intervals_us)), 2)
-    median_us = round(float(np.median(intervals_us)), 2)
-    std_us = round(float(np.std(intervals_us)), 2)
+    mean_us = round(float(np.mean(intervals_us)), ndigits=2)
+    median_us = round(float(np.median(intervals_us)), ndigits=2)
+    std_us = round(float(np.std(intervals_us)), ndigits=2)
     min_us = int(np.min(intervals_us))
     max_us = int(np.max(intervals_us))
 
@@ -850,17 +889,16 @@ def _analyze_single_feather(
         total_estimated_dropped_frames = int(np.sum(np.maximum(dropped_per_gap, 0)))
 
         total_expected_frames = total_frames + total_estimated_dropped_frames
-        drop_rate_percent = round(total_estimated_dropped_frames / total_expected_frames * 100, 4)
+        drop_rate_percent = round(total_estimated_dropped_frames / total_expected_frames * 100, ndigits=4)
 
         longest_gap_us = int(np.max(intervals_us[drop_mask]))
         longest_gap_ms = round(
             convert_time(
                 time=longest_gap_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True
             ),
-            4,
+            ndigits=4,
         )
 
-        # Builds the capped drop locations list.
         drop_locations: list[dict[str, Any]] = []
         for index in drop_indices[:max_drop_locations]:
             gap_us = int(intervals_us[index])
@@ -868,7 +906,7 @@ def _analyze_single_feather(
                 convert_time(
                     time=gap_us, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True
                 ),
-                4,
+                ndigits=4,
             )
             estimated_lost = max(round(gap_us / expected_interval) - 1, 0)
             drop_locations.append(
@@ -881,7 +919,7 @@ def _analyze_single_feather(
             )
 
         frame_drop_analysis: dict[str, Any] = {
-            "threshold_us": round(threshold, 2),
+            "threshold_us": round(threshold, ndigits=2),
             "threshold_source": threshold_source,
             "total_gaps_detected": total_gaps_detected,
             "total_estimated_dropped_frames": total_estimated_dropped_frames,
@@ -893,7 +931,7 @@ def _analyze_single_feather(
         }
     else:
         frame_drop_analysis = {
-            "threshold_us": round(threshold, 2),
+            "threshold_us": round(threshold, ndigits=2),
             "threshold_source": threshold_source,
             "total_gaps_detected": 0,
             "total_estimated_dropped_frames": 0,
@@ -904,17 +942,15 @@ def _analyze_single_feather(
             "drop_locations_truncated": False,
         }
 
-    # Converts inter-frame interval statistics from microseconds to milliseconds.
     mean_ms, median_ms, std_ms, min_ms, max_ms = (
         round(
             convert_time(time=value, from_units=TimeUnits.MICROSECOND, to_units=TimeUnits.MILLISECOND, as_float=True),
-            4,
+            ndigits=4,
         )
         for value in (mean_us, median_us, std_us, min_us, max_us)
     )
 
     return {
-        "file": feather_file,
         "basic_stats": {
             "total_frames": total_frames,
             "first_timestamp_us": first_timestamp_us,
@@ -946,9 +982,10 @@ def _clean_single_output(output_directory: str) -> dict[str, Any]:
         output_directory: The absolute path to the output directory.
 
     Returns:
-        A dictionary containing an 'output_directory' and a 'cleaned' flag, plus a 'timestamps_path' on a successful
-        delete, a 'message' when there was nothing to clean, an 'error' alone when the directory is absent or is not
-        a directory, and both a 'timestamps_path' and an 'error' when the delete failed.
+        A dictionary containing an 'output_directory' and a 'cleaned' flag. A successful delete adds a
+        'timestamps_path', and a directory with nothing to clean adds a 'message'. A directory that is absent or is
+        not a directory reports an 'error' alone, while a failed delete reports both a 'timestamps_path' and an
+        'error'.
     """
     output_path = Path(output_directory)
 

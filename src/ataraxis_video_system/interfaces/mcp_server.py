@@ -1,23 +1,21 @@
 """Provides a Model Context Protocol (MCP) server for agentic interaction with the library.
 
 Exposes camera discovery, CTI file management, runtime requirements checking, video session management, GenICam
-configuration, camera manifest management, log archive assembly, video and log validation, recording discovery, and
-batch log processing functionality through the MCP protocol, enabling AI agents to programmatically interact with the
-library's core features.
+configuration, camera manifest management, log archive assembly, video file validation, recording discovery, batch log
+processing, and processed timestamp analysis and cleanup through the MCP protocol. AI agents use these tools to
+interact with the library's core features.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from . import (
-    camera_tools,  # noqa: F401
-    session_tools,  # noqa: F401
-    discovery_tools,  # noqa: F401
-    processing_tools,  # noqa: F401
-    configuration_tools,  # noqa: F401
-)
+from .camera_tools import list_cameras_tool  # noqa: F401 - imported for its @mcp.tool() registrations.
 from .mcp_instance import mcp
+from .session_tools import start_video_session_tool  # noqa: F401 - imported for its @mcp.tool() registrations.
+from .discovery_tools import read_camera_manifest_tool  # noqa: F401 - imported for its @mcp.tool() registrations.
+from .processing_tools import cancel_log_processing_tool  # noqa: F401 - imported for its @mcp.tool() registrations.
+from .configuration_tools import read_genicam_node_tool  # noqa: F401 - imported for its @mcp.tool() registrations.
 
 
 def run_server(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:

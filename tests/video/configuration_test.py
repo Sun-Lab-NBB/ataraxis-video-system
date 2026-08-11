@@ -38,23 +38,8 @@ _SYNTHETIC_IDENTITY: dict[str, str] = {"current_model": "SyntheticCamera", "curr
 """Stores the identity arguments that match the configurations the synthetic node map tests build."""
 
 
-def _synthetic_configuration(nodes: dict[str, object]) -> GenicamConfiguration:
-    """Builds a GenicamConfiguration carrying the synthetic camera identity and the supplied node values."""
-    return GenicamConfiguration(
-        camera_model=_SYNTHETIC_IDENTITY["current_model"],
-        camera_serial_number=_SYNTHETIC_IDENTITY["current_serial"],
-        nodes=[GenicamNodeInfo(name=name, value=value) for name, value in nodes.items()],
-    )
-
-
-def _write_nodes_in_order(node_map: SyntheticNodeMap, values: dict[str, object], names: list[str]) -> None:
-    """Writes the named nodes to the node map in the order the caller supplies."""
-    for name in names:
-        getattr(node_map, name).value = values[name]
-
-
-def test_genicam_node_info_creation() -> None:
-    """Verifies creation of GenicamNodeInfo instances."""
+def test_genicam_node_info_stores_the_supplied_field_values() -> None:
+    """Verifies that GenicamNodeInfo stores the field values it is constructed with."""
     node = GenicamNodeInfo(name="Width", value=200)
     assert node.name == "Width"
     assert node.value == 200
@@ -64,16 +49,16 @@ def test_genicam_node_info_creation() -> None:
     assert node_float.value == 1.5
 
 
-def test_genicam_node_info_types() -> None:
-    """Verifies that GenicamNodeInfo correctly stores all supported value types."""
+def test_genicam_node_info_stores_every_supported_value_type() -> None:
+    """Verifies that GenicamNodeInfo stores every value type a GenICam node can report."""
     assert GenicamNodeInfo(name="IntNode", value=42).value == 42
     assert GenicamNodeInfo(name="FloatNode", value=3.14).value == 3.14
     assert GenicamNodeInfo(name="BoolNode", value=True).value
     assert GenicamNodeInfo(name="StrNode", value="Mono8").value == "Mono8"
 
 
-def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
-    """Verifies GenicamConfiguration serialization and deserialization via YAML."""
+def test_genicam_configuration_survives_a_yaml_roundtrip(tmp_path) -> None:
+    """Verifies that a GenicamConfiguration survives serialization to YAML and deserialization back."""
     nodes = [
         GenicamNodeInfo(name="Width", value=200),
         GenicamNodeInfo(name="Height", value=200),
@@ -103,8 +88,8 @@ def test_genicam_configuration_yaml_roundtrip(tmp_path) -> None:
     assert loaded.nodes[4].value == "Mono8"
 
 
-def test_genicam_configuration_empty_yaml_roundtrip(tmp_path) -> None:
-    """Verifies YAML roundtrip for a GenicamConfiguration with no nodes."""
+def test_an_empty_genicam_configuration_survives_a_yaml_roundtrip(tmp_path) -> None:
+    """Verifies that a GenicamConfiguration holding no nodes survives a YAML roundtrip."""
     config = GenicamConfiguration(
         camera_model="EmptyCamera",
         camera_serial_number="SN00000",
@@ -120,7 +105,7 @@ def test_genicam_configuration_empty_yaml_roundtrip(tmp_path) -> None:
     assert loaded.nodes == []
 
 
-def test_node_map_error_not_connected() -> None:
+def test_node_map_rejects_a_disconnected_camera() -> None:
     """Verifies that accessing node_map on a disconnected HarvestersCamera raises ConnectionError."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     message = (
@@ -131,7 +116,7 @@ def test_node_map_error_not_connected() -> None:
         _ = camera.node_map
 
 
-def test_model_serial_not_connected() -> None:
+def test_model_and_serial_number_report_empty_strings_when_disconnected() -> None:
     """Verifies that model and serial_number return empty strings when the camera is not connected."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     assert camera.model == ""
@@ -139,7 +124,7 @@ def test_model_serial_not_connected() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_model_serial_connected() -> None:
+def test_model_and_serial_number_report_the_connected_device_identity() -> None:
     """Verifies that model and serial_number report the identity of the connected device."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -151,7 +136,7 @@ def test_harvesters_model_serial_connected() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_get_node_info() -> None:
+def test_get_node_info_describes_a_standard_genicam_node() -> None:
     """Verifies that get_node_info returns a GenicamNodeInfo for a standard GenICam node."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -165,7 +150,7 @@ def test_harvesters_get_node_info() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_get_node_description() -> None:
+def test_get_node_description_renders_a_formatted_multi_line_string() -> None:
     """Verifies that get_node_description returns a formatted multi-line string."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -184,7 +169,7 @@ def test_harvesters_get_node_description() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_set_node_value() -> None:
+def test_set_node_value_writes_to_a_writable_node() -> None:
     """Verifies that set_node_value writes a value to a writable GenICam node."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -196,7 +181,7 @@ def test_harvesters_set_node_value() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_get_configuration() -> None:
+def test_get_configuration_returns_a_populated_configuration() -> None:
     """Verifies that get_configuration returns a GenicamConfiguration with populated nodes."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -213,7 +198,7 @@ def test_harvesters_get_configuration() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_apply_configuration() -> None:
+def test_apply_configuration_restores_every_captured_node_value() -> None:
     """Verifies that apply_configuration restores every node value captured by get_configuration."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -232,7 +217,7 @@ def test_harvesters_apply_configuration() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_apply_configuration_strict_mismatch() -> None:
+def test_apply_configuration_rejects_an_identity_mismatch_in_strict_mode() -> None:
     """Verifies that apply_configuration raises ValueError on identity mismatch in strict mode."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -247,7 +232,7 @@ def test_harvesters_apply_configuration_strict_mismatch() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_apply_configuration_missing_node() -> None:
+def test_apply_configuration_rejects_a_node_absent_from_the_camera() -> None:
     """Verifies that apply_configuration raises ValueError when a node does not exist on the camera."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -265,7 +250,7 @@ def test_harvesters_apply_configuration_missing_node() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_harvesters_configuration_yaml_roundtrip(tmp_path) -> None:
+def test_a_live_camera_configuration_survives_a_yaml_roundtrip(tmp_path) -> None:
     """Verifies that a live camera configuration can be serialized to YAML and deserialized back."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -286,7 +271,7 @@ def test_harvesters_configuration_yaml_roundtrip(tmp_path) -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_format_genicam_node_enumeration() -> None:
+def test_format_genicam_node_lists_enumeration_entry_names() -> None:
     """Verifies that format_genicam_node includes entry names for Enumeration nodes."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -301,7 +286,7 @@ def test_format_genicam_node_enumeration() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_write_genicam_node_boolean() -> None:
+def test_write_genicam_node_coerces_strings_to_bool_for_boolean_nodes() -> None:
     """Verifies that write_genicam_node correctly coerces string values to bool for Boolean nodes."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -317,7 +302,7 @@ def test_write_genicam_node_boolean() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_write_genicam_node_enum_string() -> None:
+def test_write_genicam_node_writes_strings_to_enumeration_nodes() -> None:
     """Verifies that write_genicam_node correctly handles string values for Enumeration nodes."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -333,7 +318,7 @@ def test_write_genicam_node_enum_string() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_apply_configuration_non_strict_mismatch() -> None:
+def test_apply_configuration_warns_on_a_mismatch_in_non_strict_mode() -> None:
     """Verifies that apply_configuration warns but proceeds when identity mismatches in non-strict mode."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -342,14 +327,14 @@ def test_apply_configuration_non_strict_mismatch() -> None:
         # Overwrites both model and serial number to trigger the mismatch warning.
         config.camera_model = "WrongModel"
         config.camera_serial_number = "WrongSerial"
-        # Non-strict mode should warn but not raise.
+        # Non-strict mode warns instead of raising.
         camera.apply_configuration(config=config, strict_identity=False)
     finally:
         camera.disconnect()
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_apply_configuration_blacklisted_nodes() -> None:
+def test_apply_configuration_skips_blacklisted_nodes() -> None:
     """Verifies that apply_configuration skips blacklisted nodes during application."""
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
@@ -364,7 +349,7 @@ def test_apply_configuration_blacklisted_nodes() -> None:
         camera.disconnect()
 
 
-def test_enumerate_genicam_nodes_synthetic() -> None:
+def test_enumerate_genicam_nodes_collects_writable_value_nodes_alone() -> None:
     """Verifies that node enumeration collects writable value nodes and skips locked and ReadOnly ones."""
     node_map = SyntheticNodeMap()
     names = enumerate_genicam_nodes(node_map=node_map, blacklisted_nodes=frozenset())
@@ -385,7 +370,7 @@ def test_enumerate_genicam_nodes_synthetic() -> None:
     assert "Width" not in filtered
 
 
-def test_format_genicam_node_synthetic_unit_and_range() -> None:
+def test_format_genicam_node_reports_the_unit_range_and_type_fields() -> None:
     """Verifies that format_genicam_node reports the measurement unit, numeric range, and type-specific fields."""
     node_map = SyntheticNodeMap()
 
@@ -408,7 +393,7 @@ def test_format_genicam_node_synthetic_unit_and_range() -> None:
     assert "Unit:" not in format_genicam_node(node_map=node_map, name="ReverseX")
 
 
-def test_write_genicam_node_synthetic_float() -> None:
+def test_write_genicam_node_coerces_strings_to_float_for_float_nodes() -> None:
     """Verifies that write_genicam_node coerces string values to float for Float nodes."""
     node_map = SyntheticNodeMap()
     write_genicam_node(node_map=node_map, name="ExposureTime", value="12500.5")
@@ -485,7 +470,7 @@ def test_apply_configuration_skips_a_blacklisted_offset() -> None:
     assert node_map.values["Height"] == 500
 
 
-def test_apply_configuration_phase_ordering() -> None:
+def test_apply_configuration_orders_the_dimension_and_offset_writes() -> None:
     """Verifies that apply_configuration satisfies the SFNC dimension and offset dependency chain."""
     target = {
         "BinningHorizontal": 2,
@@ -688,7 +673,7 @@ def test_apply_configuration_rejects_permanently_read_only_node() -> None:
     assert node_map.values["DeviceModelName"] == "SyntheticCamera"
 
 
-def test_apply_configuration_write_failure() -> None:
+def test_apply_configuration_reports_a_rejected_target_node_write() -> None:
     """Verifies that apply_configuration raises RuntimeError when a target node write is rejected."""
     node_map = SyntheticNodeMap()
 
@@ -917,7 +902,7 @@ def test_expand_selectors_caps_the_combination_count() -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_format_genicam_node_with_unit_hardware(has_harvesters) -> None:
+def test_format_genicam_node_reports_the_range_of_a_real_float_node(has_harvesters) -> None:
     """Verifies that format_genicam_node reports the range of a real SFNC Float node."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
@@ -935,7 +920,7 @@ def test_format_genicam_node_with_unit_hardware(has_harvesters) -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_write_genicam_node_float_hardware(has_harvesters) -> None:
+def test_write_genicam_node_coerces_a_float_against_real_hardware(has_harvesters) -> None:
     """Verifies that write_genicam_node coerces string values to float against real hardware."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
@@ -953,7 +938,7 @@ def test_write_genicam_node_float_hardware(has_harvesters) -> None:
 
 
 @pytest.mark.xdist_group(name="group2")
-def test_harvesters_configuration_roundtrip_hardware(has_harvesters, tmp_path) -> None:
+def test_a_configuration_survives_a_full_cycle_against_real_hardware(has_harvesters, tmp_path) -> None:
     """Verifies the full dump, serialize, reload, and apply cycle against real GenICam hardware."""
     if not has_harvesters:
         pytest.skip("Skipping this test as it requires a Harvesters-compatible camera (GenICam camera).")
@@ -973,3 +958,18 @@ def test_harvesters_configuration_roundtrip_hardware(has_harvesters, tmp_path) -
         camera.apply_configuration(config=loaded, strict_identity=True)
     finally:
         camera.disconnect()
+
+
+def _synthetic_configuration(nodes: dict[str, object]) -> GenicamConfiguration:
+    """Builds a GenicamConfiguration carrying the synthetic camera identity and the supplied node values."""
+    return GenicamConfiguration(
+        camera_model=_SYNTHETIC_IDENTITY["current_model"],
+        camera_serial_number=_SYNTHETIC_IDENTITY["current_serial"],
+        nodes=[GenicamNodeInfo(name=name, value=value) for name, value in nodes.items()],
+    )
+
+
+def _write_nodes_in_order(node_map: SyntheticNodeMap, values: dict[str, object], names: list[str]) -> None:
+    """Writes the named nodes to the node map in the order the caller supplies."""
+    for name in names:
+        getattr(node_map, name).value = values[name]

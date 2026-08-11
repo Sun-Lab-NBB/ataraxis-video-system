@@ -6,7 +6,7 @@ import subprocess
 import numpy as np
 import pytest
 from ataraxis_time import PrecisionTimer, TimerPrecisions
-from ataraxis_base_utilities import error_format
+from ataraxis_base_utilities import console, error_format
 
 from ataraxis_video_system import (
     VideoEncoders,
@@ -21,30 +21,8 @@ from ataraxis_video_system.video.saver import VideoSaver
 from ataraxis_video_system.video.camera import MockCamera
 
 
-class _NoEofStdin:
-    """Wraps the encoder's real stdin pipe so that closing it does not signal EOF to the FFMPEG process."""
-
-    def __init__(self, stream) -> None:
-        self.real = stream
-
-    def close(self) -> None:
-        """Ignores the close request, keeping the wrapped pipe open so that FFMPEG never exits on its own."""
-
-
-class _FailingStdin:
-    """Stands in for the encoder's stdin pipe and fails every write with a preset error."""
-
-    def __init__(self, error) -> None:
-        self._error = error
-
-    def write(self, _data) -> int:
-        """Raises the preset error instead of accepting the frame's data."""
-        raise self._error
-
-
-def test_check_gpu_availability() -> None:
-    """Verifies the functioning of the check_gpu_availability() function."""
-    # Tests that the function returns a boolean.
+def test_check_gpu_availability_matches_the_host_nvidia_probe() -> None:
+    """Verifies that check_gpu_availability() agrees with a direct nvidia-smi probe of the host."""
     result = check_gpu_availability()
     assert isinstance(result, bool)
 
@@ -62,9 +40,8 @@ def test_check_gpu_availability() -> None:
         assert not result
 
 
-def test_check_ffmpeg_availability() -> None:
-    """Verifies the functioning of the check_ffmpeg_availability() function."""
-    # Tests that the function returns a boolean.
+def test_check_ffmpeg_availability_matches_the_host_ffmpeg_probe() -> None:
+    """Verifies that check_ffmpeg_availability() agrees with a direct ffmpeg probe of the host."""
     result = check_ffmpeg_availability()
     assert isinstance(result, bool)
 
@@ -99,7 +76,7 @@ def test_check_gpu_availability_degrades_when_the_probe_fails(monkeypatch, probe
         probe_calls.append(kwargs)
         raise probe_error
 
-    monkeypatch.setattr(saver_module.subprocess, "run", _failing_run)
+    monkeypatch.setattr(target=saver_module.subprocess, name="run", value=_failing_run)
 
     # The CLI, the MCP camera tools, and VideoSystem all treat this probe as a boolean gate, so a propagated error
     # would abort a runtime that is meant to fall back to CPU encoding.
@@ -128,18 +105,19 @@ def test_check_ffmpeg_availability_degrades_when_the_probe_fails(monkeypatch, pr
         probe_calls.append(kwargs)
         raise probe_error
 
-    monkeypatch.setattr(saver_module.subprocess, "run", _failing_run)
+    monkeypatch.setattr(target=saver_module.subprocess, name="run", value=_failing_run)
 
-    # The has_ffmpeg test fixture and the recording gates of the CLI and VideoSystem all call this probe directly. A
-    # propagated error would take down every caller instead of degrading them to 'FFMPEG is not installed'.
+    # The has_ffmpeg test fixture, the CLI's compatibility check, the MCP camera tools, and the VideoSystem saver gate
+    # all call this probe directly. A propagated error would take down every caller instead of degrading them to
+    # 'FFMPEG is not installed'.
     assert check_ffmpeg_availability() is False
 
     assert probe_calls[0]["args"][0] == "ffmpeg"
     assert probe_calls[0]["check"] is True
 
 
-def test_video_saver_init_repr(tmp_path, has_ffmpeg) -> None:
-    """Verifies the functioning of the VideoSaver __init__() and __repr__() methods."""
+def test_video_saver_init_stores_parameters_and_renders_its_repr(tmp_path, has_ffmpeg) -> None:
+    """Verifies that constructing a VideoSaver stores the requested parameters and renders them in its repr."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -159,12 +137,10 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg) -> None:
         quantization_parameter=20,
     )
 
-    # Verifies that the saver was initialized properly
     assert saver._system_id == 1
     assert saver._ffmpeg_process is None
     assert not saver.is_active
 
-    # Verifies the __repr__() method
     assert "VideoSaver(" in repr(saver)
     assert "output_file=" in repr(saver)
     assert "hardware_encoding=False" in repr(saver)
@@ -179,8 +155,10 @@ def test_video_saver_init_repr(tmp_path, has_ffmpeg) -> None:
         (VideoEncoders.H264, -1, OutputPixelFormats.YUV444),
     ],
 )
-def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, output_pixel_format, has_ffmpeg) -> None:
-    """Verifies different CPU encoder configurations for the VideoSaver class."""
+def test_video_saver_builds_the_cpu_encoder_command(
+    tmp_path, video_encoder, gpu_index, output_pixel_format, has_ffmpeg
+) -> None:
+    """Verifies that a CPU encoder request builds an FFMPEG command carrying the requested settings."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -199,7 +177,6 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
         quantization_parameter=25,
     )
 
-    # Verifies the FFMPEG command was constructed properly
     assert "libx264" in saver._ffmpeg_command or "libx265" in saver._ffmpeg_command
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "veryfast" in saver._ffmpeg_command  # FASTEST maps to veryfast for CPU
@@ -228,8 +205,10 @@ def test_video_saver_cpu_configurations(tmp_path, video_encoder, gpu_index, outp
         (VideoEncoders.H264, OutputPixelFormats.YUV444),
     ],
 )
-def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_format, has_nvidia, has_ffmpeg) -> None:
-    """Verifies different GPU encoder configurations for the VideoSaver class."""
+def test_video_saver_builds_the_gpu_encoder_command(
+    tmp_path, video_encoder, output_pixel_format, has_nvidia, has_ffmpeg
+) -> None:
+    """Verifies that a GPU encoder request builds an FFMPEG command carrying the requested settings."""
     if not has_nvidia:
         pytest.skip("Skipping this test as it requires an NVIDIA GPU.")
     if not has_ffmpeg:
@@ -250,7 +229,6 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
         quantization_parameter=25,
     )
 
-    # Verifies the FFMPEG command was constructed properly for GPU encoding
     assert "h264_nvenc" in saver._ffmpeg_command or "hevc_nvenc" in saver._ffmpeg_command
     assert output_pixel_format.value in saver._ffmpeg_command
     assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
@@ -266,8 +244,8 @@ def test_video_saver_gpu_configurations(tmp_path, video_encoder, output_pixel_fo
     assert saver._ffmpeg_command[range_index + 1] == "pc"
 
 
-def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
-    """Verifies the functioning of the VideoSaver start() and stop() methods."""
+def test_video_saver_start_and_stop_are_idempotent(tmp_path, has_ffmpeg) -> None:
+    """Verifies that repeated start() and stop() calls leave the encoder process in the state the first one set."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -286,10 +264,8 @@ def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
         quantization_parameter=30,
     )
 
-    # Verifies that the process is not running initially
     assert saver._ffmpeg_process is None
 
-    # Starts the encoder process
     saver.start()
     assert saver._ffmpeg_process is not None
 
@@ -298,7 +274,6 @@ def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
     saver.start()
     assert saver._ffmpeg_process is process  # Same process object
 
-    # Stops the encoder process
     saver.stop()
     assert saver._ffmpeg_process is None
 
@@ -307,21 +282,18 @@ def test_video_saver_start_stop(tmp_path, has_ffmpeg) -> None:
     assert saver._ffmpeg_process is None
 
 
-def test_video_saver_save_frame(tmp_path, has_ffmpeg) -> None:
-    """Verifies the functioning of the VideoSaver save_frame() method."""
+def test_video_saver_save_frame_writes_a_playable_video_file(tmp_path, has_ffmpeg) -> None:
+    """Verifies that the frames handed to save_frame() are encoded into a non-empty video file."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
-    # Setup
     output_file = tmp_path / "test_video.mp4"
     frame_width = 100
     frame_height = 100
 
-    # Creates a mock camera to generate test frames
     camera = MockCamera(system_id=1, color=True, frame_rate=10, frame_width=frame_width, frame_height=frame_height)
     camera.connect()
 
-    # Creates the video saver
     saver = VideoSaver(
         system_id=1,
         output_file=output_file,
@@ -336,10 +308,8 @@ def test_video_saver_save_frame(tmp_path, has_ffmpeg) -> None:
         quantization_parameter=35,
     )
 
-    # Starts the encoder
     saver.start()
 
-    # Generates and saves test frames
     for _ in range(20):
         frame = camera.grab_frame()
         saver.save_frame(frame)
@@ -347,13 +317,12 @@ def test_video_saver_save_frame(tmp_path, has_ffmpeg) -> None:
     # Stops the encoder to finalize the video
     saver.stop()
 
-    # Verifies that the video file was created
     assert output_file.exists()
     assert output_file.stat().st_size > 0  # File is not empty
 
 
-def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg) -> None:
-    """Verifies the error handling of the VideoSaver save_frame() method."""
+def test_video_saver_save_frame_rejects_an_unstarted_encoder(tmp_path, has_ffmpeg) -> None:
+    """Verifies that saving a frame before the encoder process starts is rejected."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -367,10 +336,8 @@ def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg) -> None:
         gpu=-1,
     )
 
-    # Creates a test frame
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
 
-    # Verifies that saving a frame without starting the encoder raises an error
     message = (
         "Unable to submit the frame's data to the FFMPEG encoder process of the VideoSaver instance for the "
         "VideoSystem with id 1 as the process has not been started. Call the start() method "
@@ -380,8 +347,8 @@ def test_video_saver_save_frame_errors(tmp_path, has_ffmpeg) -> None:
         saver.save_frame(frame)
 
 
-def test_video_saver_del(tmp_path, has_ffmpeg) -> None:
-    """Verifies that the VideoSaver __del__() method properly cleans up resources."""
+def test_video_saver_del_releases_the_encoder_process(tmp_path, has_ffmpeg) -> None:
+    """Verifies that deleting a VideoSaver releases the encoder process it owns."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -395,15 +362,13 @@ def test_video_saver_del(tmp_path, has_ffmpeg) -> None:
         gpu=-1,
     )
 
-    # Starts the encoder
     saver.start()
     assert saver._ffmpeg_process is not None
 
-    # Deletes the saver (should call stop() internally)
     del saver
 
     # Creates a new saver to verify resources were released
-    saver2 = VideoSaver(
+    replacement_saver = VideoSaver(
         system_id=1,
         output_file=output_file,
         frame_width=100,
@@ -411,27 +376,24 @@ def test_video_saver_del(tmp_path, has_ffmpeg) -> None:
         frame_rate=10.0,
         gpu=-1,
     )
-    # Should be able to start without conflicts
-    saver2.start()
-    saver2.stop()
+    replacement_saver.start()
+    replacement_saver.stop()
 
 
-def test_encoder_speed_preset_mappings() -> None:
-    """Verifies that the encoder speed preset properties are correctly defined."""
-    # Verifies all EncoderSpeedPresets values produce valid preset strings.
+def test_encoder_speed_presets_map_to_cpu_and_gpu_names() -> None:
+    """Verifies that every encoder speed preset maps to the CPU and GPU preset names FFMPEG accepts."""
     for preset in EncoderSpeedPresets:
         assert isinstance(preset.gpu_preset, str)
         assert isinstance(preset.cpu_preset, str)
 
-    # Verifies the specific mappings.
     assert EncoderSpeedPresets.FASTEST.gpu_preset == "p1"
     assert EncoderSpeedPresets.SLOWEST.gpu_preset == "p7"
     assert EncoderSpeedPresets.FASTEST.cpu_preset == "veryfast"
     assert EncoderSpeedPresets.SLOWEST.cpu_preset == "veryslow"
 
 
-def test_video_saver_context_manager(tmp_path, has_ffmpeg) -> None:
-    """Verifies the VideoSaver __enter__() and __exit__() context manager methods."""
+def test_video_saver_context_manager_starts_and_stops_the_encoder(tmp_path, has_ffmpeg) -> None:
+    """Verifies that the context manager starts the encoder on entry and stops it on exit."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -448,11 +410,10 @@ def test_video_saver_context_manager(tmp_path, has_ffmpeg) -> None:
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
         saver.save_frame(frame)
 
-    # After exiting the context, the saver should be stopped.
     assert not saver.is_active
 
 
-def test_video_saver_save_non_contiguous_frame(tmp_path, has_ffmpeg) -> None:
+def test_video_saver_save_frame_accepts_a_non_contiguous_frame(tmp_path, has_ffmpeg) -> None:
     """Verifies that VideoSaver handles non-C-contiguous frames by calling tobytes()."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -478,7 +439,7 @@ def test_video_saver_save_non_contiguous_frame(tmp_path, has_ffmpeg) -> None:
     assert output_file.exists()
 
 
-def test_video_saver_ffmpeg_error_on_stop(tmp_path, has_ffmpeg) -> None:
+def test_video_saver_stop_reports_a_non_zero_encoder_exit_code(tmp_path, has_ffmpeg) -> None:
     """Verifies that VideoSaver logs FFMPEG error output when the process terminates with a non-zero exit code."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -498,12 +459,11 @@ def test_video_saver_ffmpeg_error_on_stop(tmp_path, has_ffmpeg) -> None:
     # Terminates the FFMPEG process to produce a non-zero exit code with stderr output.
     saver._ffmpeg_process.terminate()
 
-    # stop() should handle the terminated process and trigger the error logging branch.
     saver.stop()
     assert saver._ffmpeg_process is None
 
 
-def test_video_saver_save_frame_ffmpeg_crash(tmp_path, has_ffmpeg) -> None:
+def test_video_saver_save_frame_reports_a_terminated_encoder(tmp_path, has_ffmpeg) -> None:
     """Verifies that save_frame raises RuntimeError when the FFMPEG process terminates unexpectedly."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
@@ -591,7 +551,7 @@ def test_video_saver_stop_kills_an_unresponsive_encoder(tmp_path, has_ffmpeg) ->
     finally:
         # The no-op close transferred the ownership of the real pipe to this test.
         with suppress(OSError):
-            stdin_stub.real.close()
+            stdin_stub._real.close()
         saver.stop()
 
 
@@ -639,3 +599,71 @@ def test_video_saver_save_frame_reports_a_broken_encoder_pipe(tmp_path, has_ffmp
         # leave FFMPEG running until the grace period expires.
         saver._ffmpeg_process.stdin = real_stdin
         saver.stop()
+
+
+def test_video_saver_stop_reports_a_failed_encoder_to_stderr(tmp_path, capsys) -> None:
+    """Verifies that stop() reports a failed encoder to stderr even while the console is disabled."""
+    saver = VideoSaver(
+        system_id=1,
+        output_file=tmp_path / "test.mp4",
+        frame_width=100,
+        frame_height=100,
+        frame_rate=10.0,
+        gpu=-1,
+    )
+
+    # stop() runs inside the spawned consumer process, which re-imports the library and therefore always holds a
+    # freshly disabled console. Reproducing that state is what makes this a regression guard, because a console-based
+    # report is discarded outright in it.
+    console_was_enabled = console.enabled
+    console.disable()
+    saver._ffmpeg_process = _FailedEncoderProcess(returncode=1)
+    saver._stderr_output = b"Invalid data found when processing input"
+
+    try:
+        saver.stop()
+    finally:
+        if console_was_enabled:
+            console.enable()
+
+    captured = capsys.readouterr()
+    assert "FFMPEG encoder error (system 1, exit code 1)" in captured.err
+    assert "Invalid data found when processing input" in captured.err
+
+    # The MCP server carries its JSON-RPC message stream over stdout, so an encoder diagnostic that landed there
+    # would render the message it interleaves with unparsable for the connected client.
+    assert captured.out == ""
+
+
+class _FailedEncoderProcess:
+    """Stands in for an FFMPEG process that has already exited with an error, exposing no pipes to close."""
+
+    def __init__(self, returncode) -> None:
+        self.returncode = returncode
+        self.stdin = None
+        self.stderr = None
+
+    def wait(self, timeout=None) -> int:  # noqa: ARG002 - mirrors the Popen.wait signature stop() calls by keyword.
+        """Returns the preset exit code immediately, as the process it stands in for has already terminated."""
+        return self.returncode
+
+
+class _NoEofStdin:
+    """Wraps the encoder's real stdin pipe so that closing it does not signal EOF to the FFMPEG process."""
+
+    def __init__(self, stream) -> None:
+        self._real = stream
+
+    def close(self) -> None:
+        """Ignores the close request, keeping the wrapped pipe open so that FFMPEG never exits on its own."""
+
+
+class _FailingStdin:
+    """Stands in for the encoder's stdin pipe and fails every write with a preset error."""
+
+    def __init__(self, error) -> None:
+        self._error = error
+
+    def write(self, _data) -> int:
+        """Raises the preset error instead of accepting the frame's data."""
+        raise self._error

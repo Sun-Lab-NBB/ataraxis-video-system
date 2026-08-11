@@ -29,7 +29,7 @@ ___
 - Supports Windows, Linux, and macOS, with the GenICam camera interface covering Windows and Linux.
 - Uses OpenCV or GenICam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
-- Highly customizable and can be extensively fine-tuned for quality or throughput.
+- Exposes encoder, preset, pixel format, and quantization parameters for tuning quality against throughput.
 - Supports inspecting, modifying, saving, and loading GenICam camera configurations for reproducible setups.
 - Provides a log data processing pipeline for extracting frame acquisition timestamps from runtime log archives,
   with post-processing tools for frame timing analysis and frame drop detection.
@@ -48,9 +48,8 @@ ___
   - [OS Support Status](#os-support-status)
   - [Quickstart](#quickstart)
   - [Data Logging](#data-logging)
-    - [Camera Manifest](#camera-manifest)
   - [Log Processing](#log-processing)
-  - [CLI](#cli)
+  - [CLI Commands](#cli-commands)
   - [MCP Server](#mcp-server)
   - [Using GenICam Compatible Cameras](#using-genicam-compatible-cameras)
   - [GenICam Configuration](#genicam-configuration)
@@ -67,17 +66,17 @@ ___
 
 - [FFMPEG](https://www.ffmpeg.org/download.html) version **n8.1**. The installed FFMPEG must be available on the 
   system’s path and callable from Python processes.
-- A [GenTL Producer](https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf) interface compatible with the 
-  [Harvesters](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst#installing-a-gentl-producer) library 
-  if the target camera requires the 'harvesters' camera interface. It is recommended to use the CTI interface supplied 
-  by the camera’s vendor, if possible, as this typically ensures that the camera performs as advertised. If the 
-  camera-specific CTI file is not available, it is possible to instead use a general interface, such as 
-  [MvImpactAcquire](https://assets-2.balluff.com/mvIMPACT_Acquire/). This library has been tested using MvImpactAcquire 
+- A [GenTL Producer (PDF)](https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf) interface compatible with the
+  [Harvesters](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst#installing-a-gentl-producer) library
+  if the target camera requires the 'harvesters' camera interface. It is recommended to use the CTI interface supplied
+  by the camera’s vendor, if possible, as this typically ensures that the camera performs as advertised. If the
+  camera-specific CTI file is not available, it is possible to instead use a general interface, such as
+  [MvImpactAcquire](https://assets-2.balluff.com/mvIMPACT_Acquire/). This library has been tested using MvImpactAcquire
   version **2.9.2**.
 
 For users, all other library dependencies are installed automatically by all supported installation methods.
-For developers, see the [Developers](#developers) section for information on installing additional
-development dependencies.
+For developers, see the [Developers](#developers) section for information on installing additional development
+dependencies.
 
 ___
 
@@ -97,8 +96,8 @@ ___
 
 ### pip
 
-Use the following command to install the library and all of its dependencies via
-[pip](https://pip.pypa.io/en/stable/): `pip install ataraxis-video-system`
+Use the following command to install the library and all of its dependencies via [pip](https://pip.pypa.io/en/stable/):
+`pip install ataraxis-video-system`
 
 ___
 
@@ -106,41 +105,39 @@ ___
 
 ### OS Support Status
 
-While this library works on all major operating systems, it is largely up to the maintainers of the low-level library 
-components (OpenCV, Harvesters, FFMPEG) to ensure that the operation is smooth on each supported OS. That, in turn, is 
-not always possible for many nuanced reasons.
+While this library works on all major operating systems, it is largely up to the maintainers of the low-level library
+components (OpenCV, Harvesters, FFMPEG) to ensure that the operation is smooth on each supported OS.
 
 #### Linux
 This library was primarily written on and for Linux systems. It is extensively tested on Linux and performs well under
-all test conditions. It is very likely that Linux users will not experience any issues specific to this library.
+all test conditions. Linux users rarely encounter issues specific to this library.
 
 #### Windows
-The library is mostly stable on Windows systems, but requires additional setup to ensure smooth operation. First, the 
-FFMPEG **has** to be updated to the latest stable version, as older versions may have a drastically reduced encoding 
-speed even with hardware acceleration. Some of the advanced OpenCV’s features also have to be disabled to support
-smooth runtimes on the Windows platform. The library disables the MSMF HW transformations for you, exporting
+The library is mostly stable on Windows systems, but requires additional setup to ensure smooth operation. First, the
+FFMPEG **has** to be updated to the latest stable version, as older versions may have a drastically reduced encoding
+speed even with hardware acceleration. Some of OpenCV’s advanced features also have to be disabled to support smooth
+runtimes on the Windows platform. The library disables the MSMF HW transformations automatically, exporting
 `OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0` when it is imported, so that feature requires no user action. For any
-remaining camera-specific feature, the information of which features to disable is readily available from the OpenCV’s
-Windows community.
+remaining camera-specific feature, information on which features to disable is readily available from OpenCV’s Windows
+community.
 
 #### macOS
 macOS mostly works as expected except for live frame displaying, which does not work for modern macOS devices. The issue
 is due to the OS restriction on drawing certain GUI elements outside the main thread of the application. The restriction
-interferes with the library, as it displays the acquired frames from the same process that interfaces with the camera 
-to minimize the visual lag between grabbing and displaying the frame. This is a persistent issue that is unlikely to 
-be fixed any time soon.
+interferes with the library, as it displays the acquired frames from the same process that interfaces with the camera to
+minimize the visual lag between grabbing and displaying the frame. The restriction is imposed by the operating system
+and applies to every application.
 
 ***Note,*** macOS does not support the GenICam ('harvesters') camera interface. The `genicam` distribution that supplies
-the interface runtime publishes no macOS wheel for every Python version this library supports, so the library declares
-neither `harvesters` nor `genicam` on macOS and every entry point that reaches GenICam hardware aborts with an error
-naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a Linux or Windows
-host. Every other library feature, including video encoding and log processing, works on macOS under every supported
-Python version.
+the interface runtime publishes no macOS wheel for every Python version this library supports. The library therefore
+declares neither `harvesters` nor `genicam` on macOS, and every entry point that reaches GenICam hardware aborts with an
+error naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a Linux or
+Windows host. Every other library feature, including video encoding and log processing, works on macOS under every
+supported Python version.
 
 ### Quickstart
-This example is intentionally kept minimal. Consult the
-[API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for all available VideoSystem configuration
-parameters.
+Consult the [API documentation](https://ataraxis-video-system-api-docs.netlify.app/) for all available VideoSystem
+configuration parameters.
 
 Most library functionality is accessible through the **VideoSystem** class:
 ```python
@@ -249,11 +246,10 @@ This library relies on the [DataLogger](https://github.com/Sun-Lab-NBB/ataraxis-
 save frame acquisition timestamps to disk during runtime. Each **saved** frame’s acquisition timestamp is serialized
 and saved as an uncompressed **.npy** file.
 
-The same DataLogger instance as used by the VideoSystem instances may be shared by multiple other Ataraxis assets that
-generate log entries, such as
-[MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface) instances. To support using
-the same logger instance for multiple concurrently active sources, **each source has to use a unique identifier value
-(system id) when sending data to the logger instance**.
+The DataLogger instance used by the VideoSystem instances may be shared by multiple other Ataraxis assets that generate
+log entries, such as [MicroControllerInterface](https://github.com/Sun-Lab-NBB/ataraxis-communication-interface)
+instances. To support using the same logger instance for multiple concurrently active sources, **each source has to use
+a unique identifier value (system id) when sending data to the logger instance**.
 
 #### Camera Manifest
 Each VideoSystem instance automatically writes a `camera_manifest.yaml` file into the DataLogger output directory
@@ -271,7 +267,8 @@ array, the data is organized in the following order:
    saved camera frame has been acquired.
 
 ***Note,*** timestamps are generated at frame acquisition but are only submitted to the logger when the corresponding
-frame is saved to disk. Therefore, the timestamps always match the order that the saved frames appear in the video file.
+frame is saved to disk. Therefore, the timestamps always match the order in which the saved frames appear in the video
+file.
 
 #### Onset Timestamp
 Each VideoSystem generates an `onset` timestamp as part of its `start()` method runtime. This log entry uses a modified 
@@ -312,7 +309,7 @@ One recording writes one VideoSystem to one DataLogger, so exactly one camera ma
 log directory tree holding several manifests, or archives written by several DataLogger instances, spans several
 recordings and is rejected with a diagnostic naming the topology it detected rather than processed in part.
 
-Processing is split across two entry points that share their job resolution and sizing but not their execution. The
+Processing is split across two entry points that share their job resolution but not their sizing or execution. The
 `axvs process` CLI command and the `run_log_processing_pipeline()` function target a single recording and run its
 archives one at a time in the calling process, which suits manual runs and small recordings. The
 [MCP server](#mcp-server) log processing tools orchestrate batches spanning many recordings, admitting jobs against a
@@ -320,13 +317,15 @@ core budget and a memory budget and running them in one shared process pool. Bot
 tracker that manages job lifecycle (scheduled, running, succeeded, or failed), and both write every output file into
 a `camera_timestamps/` subdirectory under the specified output directory.
 
-Each job targets exactly one log archive and is sized from that archive rather than from a single width chosen for the
-whole run. An archive below the parallel processing threshold takes one worker, and a larger archive takes the declared
-stage width narrowed to the workers its own message count repays and to the cores the host supplies. The job resolution
-and the sizing model are exported as callable functions, so an external scheduler derives the same figures this library
-dispatches with instead of re-deriving them.
+Each job targets exactly one log archive. On the batch path, every job is sized from its own archive rather than from a
+single width chosen for the whole run. An archive below the parallel processing threshold takes one worker. A larger
+archive takes the declared stage width, narrowed to the workers its own message count repays and to the cores the host
+supplies. The sequential path runs no sizing pass and dispatches every job at the resolved core ceiling, which the
+extraction collapses to a single worker only for an archive below that threshold. The job resolution and the sizing
+model are exported as callable functions, so an external scheduler derives the same figures this library dispatches with
+instead of re-deriving them.
 
-### CLI
+### CLI Commands
 
 This library provides the `axvs` CLI that exposes the following commands:
 
@@ -361,35 +360,35 @@ axvs mcp
 
 #### Available Tools
 
-| Tool                                   | Description                                                                      |
-|----------------------------------------|----------------------------------------------------------------------------------|
-| `list_cameras_tool`                    | Discovers all cameras compatible with OpenCV and Harvesters interfaces           |
-| `get_cti_status_tool`                  | Checks whether the library is configured with a valid GenTL Producer (.cti) file |
-| `set_cti_file_tool`                    | Configures the library to use a specified CTI file for GenICam camera support    |
-| `check_runtime_requirements_tool`      | Checks FFMPEG and GPU availability for video encoding                            |
-| `start_video_session_tool`             | Starts a video capture session with specified camera and encoding parameters     |
-| `stop_video_session_tool`              | Stops the active video capture session and releases resources                    |
-| `start_frame_saving_tool`              | Begins saving captured frames to a video file                                    |
-| `stop_frame_saving_tool`               | Stops saving frames while keeping the session active                             |
-| `get_session_status_tool`              | Returns the current status of the video session                                  |
-| `assemble_log_archives_tool`           | Consolidates raw .npy log entries into .npz archives by source ID                |
-| `validate_video_file_tool`             | Validates a video file and extracts metadata using ffprobe                       |
-| `read_genicam_node_tool`               | Reads a GenICam node value from a connected camera                               |
-| `write_genicam_node_tool`              | Writes a value to a GenICam node on a connected camera                           |
-| `dump_genicam_config_tool`             | Dumps GenICam configuration from a camera to a YAML file                         |
-| `load_genicam_config_tool`             | Loads GenICam configuration from a YAML file to a camera                         |
-| `read_camera_manifest_tool`            | Reads a camera manifest file and returns its contents                            |
-| `write_camera_manifest_tool`           | Writes or updates a camera manifest file in a log directory                      |
-| `discover_camera_data_tool`            | Discovers confirmed camera recordings under a root directory via manifests       |
-| `prepare_log_processing_batch_tool`    | Prepares a batch of log processing jobs across multiple directories              |
-| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs against a core and a memory budget         |
-| `get_log_processing_status_tool`       | Returns the current status of the active log processing session                  |
-| `get_log_processing_timing_tool`       | Returns timing information for all jobs in the active session                    |
-| `cancel_log_processing_tool`           | Cancels the active log processing execution session                              |
-| `reset_log_processing_jobs_tool`       | Resets specific source IDs or all jobs in a tracker for re-execution             |
-| `get_batch_status_overview_tool`       | Summarizes processing status for all log directories under a root directory      |
-| `analyze_camera_frame_statistics_tool` | Computes frame timing statistics and frame drop analysis from feather files      |
-| `clean_log_processing_output_tool`     | Deletes the camera_timestamps/ subdirectory for clean re-processing              |
+| Tool                                   | Description                                                                 |
+|----------------------------------------|-----------------------------------------------------------------------------|
+| `list_cameras_tool`                    | Discovers all cameras compatible with OpenCV and Harvesters interfaces      |
+| `get_cti_status_tool`                  | Checks whether a valid GenTL Producer (.cti) file is configured             |
+| `set_cti_file_tool`                    | Configures the library to use a specified CTI file                          |
+| `check_runtime_requirements_tool`      | Checks FFMPEG and GPU availability for video encoding                       |
+| `start_video_session_tool`             | Starts a video capture session with the specified parameters                |
+| `stop_video_session_tool`              | Stops the active video capture session and releases resources               |
+| `start_frame_saving_tool`              | Begins saving captured frames to a video file                               |
+| `stop_frame_saving_tool`               | Stops saving frames while keeping the session active                        |
+| `get_session_status_tool`              | Returns the current status of the video session                             |
+| `assemble_log_archives_tool`           | Consolidates raw .npy log entries into .npz archives by source ID           |
+| `validate_video_file_tool`             | Validates a video file and extracts metadata using ffprobe                  |
+| `read_genicam_node_tool`               | Reads a GenICam node value from a connected camera                          |
+| `write_genicam_node_tool`              | Writes a value to a GenICam node on a connected camera                      |
+| `dump_genicam_config_tool`             | Dumps GenICam configuration from a camera to a YAML file                    |
+| `load_genicam_config_tool`             | Loads GenICam configuration from a YAML file to a camera                    |
+| `read_camera_manifest_tool`            | Reads a camera manifest file and returns its contents                       |
+| `write_camera_manifest_tool`           | Writes or updates a camera manifest file in a log directory                 |
+| `discover_camera_data_tool`            | Discovers confirmed camera recordings under a root directory via manifests  |
+| `prepare_log_processing_batch_tool`    | Prepares a batch of log processing jobs across multiple directories         |
+| `execute_log_processing_jobs_tool`     | Executes prepared log processing jobs against a core and a memory budget    |
+| `get_log_processing_status_tool`       | Returns the current status of the active log processing session             |
+| `get_log_processing_timing_tool`       | Returns timing information for all jobs in the active session               |
+| `cancel_log_processing_tool`           | Cancels the active log processing execution session                         |
+| `reset_log_processing_jobs_tool`       | Resets specific source IDs or all jobs in a tracker for re-execution        |
+| `get_batch_status_overview_tool`       | Summarizes processing status for all log directories under a root directory |
+| `analyze_camera_frame_statistics_tool` | Computes frame timing statistics and frame drop analysis from feather files |
+| `clean_log_processing_output_tool`     | Deletes the camera_timestamps/ subdirectory for clean re-processing         |
 
 #### Client Registration
 
@@ -406,10 +405,9 @@ standard, which includes most GigE+ scientific and machine vision cameras.
 limitation that leaves it out there.
 
 ***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
-Interface file. Without an interface, the library is not able to interface with the GenICam cameras. Use the
-`axvs cti set` CLI command to configure the library to use the .cti file provided by the camera vendor (preferred) or a
-general .cti file, such as [mvImpactAcquire](#dependencies). This command only needs to be called once, as the library
-remembers and reuses the provided .cti file for all future runtimes.
+Interface file. Use the `axvs cti set` CLI command to configure the library to use the .cti file provided by the camera
+vendor (preferred) or a general .cti file, such as the one listed under [Dependencies](#dependencies). This command only
+needs to be called once, as the library remembers and reuses the provided .cti file for all future runtimes.
 
 ### GenICam Configuration
 
@@ -420,12 +418,17 @@ CLI (`axvs configure`) or the [MCP server](#mcp-server).
 The `axvs configure read` command lists all writable nodes on a connected camera, or displays detailed metadata for a
 specific node (type, current value, access mode, valid range, step increment, enumeration entries, unit, and
 description). The `axvs configure write` command sets a single node to a new value, with automatic type conversion for
-integer, float, boolean, and enumeration nodes.
+integer, float, and boolean nodes. String and enumeration values are written as supplied.
 
 To support reproducible configurations, the `axvs configure dump` command saves all current camera parameters to a
 human-readable YAML file, tagged with the camera model and serial number. The `axvs configure load` command restores a
 saved configuration onto a camera, with optional `--strict` mode that aborts on camera identity mismatches instead of
 issuing a warning. Saved configuration files can also be edited manually before loading.
+
+The `axvs configure` group excludes a default set of vendor nodes (`CustomerIDKey`, `CustomerValueKey`, and
+`TestPattern`) from the read, dump, and load operations, because some cameras report them as writable and then reject
+the write at the hardware level. Pass `-b/--blacklisted-node` to replace that set, or `--no-blacklist` to disable the
+filtering entirely. An explicitly named node passed to `axvs configure write` is always written.
 
 ***Note,*** configurations are independent of video capture sessions. The camera is configured first, and the
 VideoSystem respects the active configuration for every node it does not set itself. Supplying `frame_width`,
@@ -449,14 +452,13 @@ the source code of this library.
 
 ### Installing the Project
 
-***Note,*** this installation method requires **mamba version 2.3.2 or above**. Currently, all Ataraxis framework
-automation pipelines require that mamba is installed through the
-[miniforge3](https://github.com/conda-forge/miniforge) installer.
+***Note,*** this installation method requires **mamba version 2.3.2 or above**. Currently, all automation pipelines
+require that mamba is installed through the [miniforge3](https://github.com/conda-forge/miniforge) installer.
 
 1. Download this repository to the local machine using the preferred method, such as git-cloning.
 2. If the downloaded distribution is stored as a compressed archive, unpack it using the appropriate decompression tool.
 3. `cd` to the root directory of the prepared project distribution.
-4. Install the core Ataraxis framework development dependencies into the ***base*** mamba environment via the
+4. Install the core development dependencies into the ***base*** mamba environment via the
    `mamba install tox uv tox-uv` command.
 5. Use the `tox -e create` command to create the project-specific development environment followed by
    `tox -e install` command to install the project into that environment as a library.

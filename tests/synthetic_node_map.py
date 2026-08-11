@@ -3,11 +3,12 @@
 The bundled GenTL Producer simulator exposes ten writable nodes whose only interdependency is the degenerate
 single-entry EventSelector and EventNotification pair, so it cannot exercise the dependency chains that
 ``apply_genicam_configuration`` orders its write phases around. This module models those chains directly: binning
-rescales the addressable sensor area, offsets and dimensions compete for that area, the auto-controls lock their
+rescales the addressable sensor area, offsets and dimensions compete for that area. The auto-controls lock their
 manual counterparts, exposure bounds the attainable frame rate, an enumeration selector addresses one value per
 color channel, and an integer selector addresses one value per lookup table index. It also models the states that
-make a camera refuse an operation: a gated node the camera reports as NotAvailable, a vendor node typed differently
-from the literal the apply phases reset it with, and a node whose descriptor cannot be interrogated at all.
+make a camera refuse an operation: a gated node the camera reports as NotAvailable. The remaining two states are a
+vendor node typed differently from the literal the apply phases reset it with, and a node whose descriptor cannot be
+interrogated at all.
 """
 
 from typing import Any
@@ -43,7 +44,7 @@ _READ_WRITE: int = 4
 SENSOR_WIDTH: int = 1920
 """Stores the full addressable sensor width of the synthetic camera, in pixels."""
 
-SENSOR_HEIGHT: int = 1080
+_SENSOR_HEIGHT: int = 1080
 """Stores the full addressable sensor height of the synthetic camera, in pixels."""
 
 LUT_INDEX_MAXIMUM: int = 3
@@ -63,7 +64,7 @@ The entries differ so that a configuration collapsing them into a single entry i
 
 
 @dataclass(slots=True)
-class _NodeSpec:
+class _NodeSpecification:
     """Defines the static description of a single synthetic GenICam node."""
 
     type_code: int
@@ -88,44 +89,46 @@ class _NodeSpec:
     """
 
 
-_NODE_SPECS: dict[str, _NodeSpec] = {
-    "DeviceModelName": _NodeSpec(type_code=_STRING, category="DeviceControl", read_only=True),
-    "BinningHorizontal": _NodeSpec(
+_NODE_SPECIFICATIONS: dict[str, _NodeSpecification] = {
+    "DeviceModelName": _NodeSpecification(type_code=_STRING, category="DeviceControl", read_only=True),
+    "BinningHorizontal": _NodeSpecification(
         type_code=_INTEGER, category="ImageFormatControl", description="Horizontal binning factor."
     ),
-    "PixelFormat": _NodeSpec(
+    "PixelFormat": _NodeSpecification(
         type_code=_ENUMERATION, category="ImageFormatControl", entries=("Mono8", "Mono12", "BGR8")
     ),
-    "ReverseX": _NodeSpec(type_code=_BOOLEAN, category="ImageFormatControl"),
-    "Width": _NodeSpec(
+    "ReverseX": _NodeSpecification(type_code=_BOOLEAN, category="ImageFormatControl"),
+    "Width": _NodeSpecification(
         type_code=_INTEGER, category="ImageFormatControl", description="Frame width.", unit="px", increment=4
     ),
-    "Height": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
-    "OffsetX": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
-    "OffsetY": _NodeSpec(type_code=_INTEGER, category="ImageFormatControl", increment=4),
+    "Height": _NodeSpecification(type_code=_INTEGER, category="ImageFormatControl", increment=4),
+    "OffsetX": _NodeSpecification(type_code=_INTEGER, category="ImageFormatControl", increment=4),
+    "OffsetY": _NodeSpecification(type_code=_INTEGER, category="ImageFormatControl", increment=4),
     # Centering is a vendor extension rather than an SFNC Boolean on every camera, so this camera types it as an
     # Enumeration and rejects the Boolean literal the apply phases reset it with.
-    "CenterX": _NodeSpec(type_code=_ENUMERATION, category="ImageFormatControl", entries=("Off", "On")),
-    "LUTIndex": _NodeSpec(type_code=_INTEGER, category="LUTControl"),
-    "LUTValue": _NodeSpec(type_code=_INTEGER, category="LUTControl"),
-    "ExposureAuto": _NodeSpec(
+    "CenterX": _NodeSpecification(type_code=_ENUMERATION, category="ImageFormatControl", entries=("Off", "On")),
+    "LUTIndex": _NodeSpecification(type_code=_INTEGER, category="LUTControl"),
+    "LUTValue": _NodeSpecification(type_code=_INTEGER, category="LUTControl"),
+    "ExposureAuto": _NodeSpecification(
         type_code=_ENUMERATION, category="AcquisitionControl", entries=("Off", "Once", "Continuous")
     ),
-    "ExposureTime": _NodeSpec(
+    "ExposureTime": _NodeSpecification(
         type_code=_FLOAT,
         category="AcquisitionControl",
         description="Exposure duration.",
         unit="us",
         extra_categories=("QuickSetupControl",),
     ),
-    "AcquisitionFrameRateEnable": _NodeSpec(type_code=_BOOLEAN, category="AcquisitionControl"),
-    "AcquisitionFrameRate": _NodeSpec(type_code=_FLOAT, category="AcquisitionControl", unit="Hz"),
-    "GainAuto": _NodeSpec(type_code=_ENUMERATION, category="AnalogControl", entries=("Off", "Once", "Continuous")),
-    "Gain": _NodeSpec(type_code=_FLOAT, category="AnalogControl", unit="dB"),
-    "BalanceRatioSelector": _NodeSpec(
+    "AcquisitionFrameRateEnable": _NodeSpecification(type_code=_BOOLEAN, category="AcquisitionControl"),
+    "AcquisitionFrameRate": _NodeSpecification(type_code=_FLOAT, category="AcquisitionControl", unit="Hz"),
+    "GainAuto": _NodeSpecification(
+        type_code=_ENUMERATION, category="AnalogControl", entries=("Off", "Once", "Continuous")
+    ),
+    "Gain": _NodeSpecification(type_code=_FLOAT, category="AnalogControl", unit="dB"),
+    "BalanceRatioSelector": _NodeSpecification(
         type_code=_ENUMERATION, category="AnalogControl", entries=("Red", "Green", "Blue")
     ),
-    "BalanceRatio": _NodeSpec(type_code=_FLOAT, category="AnalogControl", unit="dB"),
+    "BalanceRatio": _NodeSpecification(type_code=_FLOAT, category="AnalogControl", unit="dB"),
 }
 """Describes every node the synthetic camera implements, keyed by feature name."""
 
@@ -170,7 +173,7 @@ _DEFAULT_VALUES: dict[str, Any] = {
     "PixelFormat": "Mono8",
     "ReverseX": False,
     "Width": SENSOR_WIDTH,
-    "Height": SENSOR_HEIGHT,
+    "Height": _SENSOR_HEIGHT,
     "OffsetX": 0,
     "OffsetY": 0,
     "CenterX": "Off",
@@ -277,7 +280,7 @@ class _HostileFeature:
 
 
 @dataclass(slots=True)
-class _EnumEntry:
+class _EnumerationEntry:
     """Exposes a single symbolic entry of a synthetic Enumeration node."""
 
     node: _RawNode
@@ -342,7 +345,7 @@ class SyntheticNodeMap:
         """Resolves a feature or category node by name, mirroring GenICam node map attribute access."""
         if name == "Root":
             return self._build_root()
-        if name in _NODE_SPECS:
+        if name in _NODE_SPECIFICATIONS:
             return _Feature(node_map=self, name=name)
         message = f"The synthetic node map does not implement the node '{name}'."
         raise AttributeError(message)
@@ -366,7 +369,7 @@ class SyntheticNodeMap:
             manual value from being written while the auto-control owns it. A node the camera gates off entirely
             reports NotAvailable instead, which is how a camera hides a feature its current mode does not provide.
         """
-        if _NODE_SPECS[name].read_only:
+        if _NODE_SPECIFICATIONS[name].read_only:
             return _READ_ONLY
         if name == "Gain" and self.values["GainAuto"] != "Off":
             return _READ_ONLY
@@ -386,9 +389,9 @@ class SyntheticNodeMap:
         if name == "OffsetX":
             return 0, addressable_width - self.values["Width"]
         if name == "Height":
-            return 8, SENSOR_HEIGHT - self.values["OffsetY"]
+            return 8, _SENSOR_HEIGHT - self.values["OffsetY"]
         if name == "OffsetY":
-            return 0, SENSOR_HEIGHT - self.values["Height"]
+            return 0, _SENSOR_HEIGHT - self.values["Height"]
         if name == "BinningHorizontal":
             return 1, 4
         if name == "LUTIndex":
@@ -418,7 +421,7 @@ class SyntheticNodeMap:
             message = f"The node '{name}' is not writable, as it currently reports access mode {access_mode}."
             raise SyntheticNodeMapError(message)
 
-        specification = _NODE_SPECS[name]
+        specification = _NODE_SPECIFICATIONS[name]
         if specification.type_code == _ENUMERATION and value not in specification.entries:
             message = f"The value '{value}' is not a valid entry of the node '{name}'."
             raise SyntheticNodeMapError(message)
@@ -458,7 +461,7 @@ class SyntheticNodeMap:
                 )
             )
 
-        for node_name, specification in _NODE_SPECS.items():
+        for node_name, specification in _NODE_SPECIFICATIONS.items():
             categories[specification.category].features.append(_Feature(node_map=self, name=node_name))
 
             # A category that references a node another category owns puts the same node on two branches of the
@@ -491,7 +494,7 @@ class _Feature:
     @property
     def node(self) -> _RawNode:
         """Returns the descriptor of the node."""
-        specification = _NODE_SPECS[self._name]
+        specification = _NODE_SPECIFICATIONS[self._name]
         return _RawNode(
             name=self._name,
             principal_interface_type=specification.type_code,
@@ -512,7 +515,7 @@ class _Feature:
     @property
     def unit(self) -> str:
         """Returns the measurement unit of the node, or an empty string when the node defines none."""
-        return _NODE_SPECS[self._name].unit
+        return _NODE_SPECIFICATIONS[self._name].unit
 
     @property
     def min(self) -> int | float:
@@ -527,13 +530,13 @@ class _Feature:
     @property
     def inc(self) -> int:
         """Returns the step increment of the node."""
-        return _NODE_SPECS[self._name].increment
+        return _NODE_SPECIFICATIONS[self._name].increment
 
     @property
-    def entries(self) -> list[_EnumEntry]:
+    def entries(self) -> list[_EnumerationEntry]:
         """Returns the symbolic entries of an Enumeration node."""
         return [
-            _EnumEntry(
+            _EnumerationEntry(
                 node=_RawNode(
                     name=entry,
                     principal_interface_type=_ENUMERATION,
@@ -543,5 +546,5 @@ class _Feature:
                 ),
                 symbolic=entry,
             )
-            for entry in _NODE_SPECS[self._name].entries
+            for entry in _NODE_SPECIFICATIONS[self._name].entries
         ]

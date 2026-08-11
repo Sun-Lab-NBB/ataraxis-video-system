@@ -7,9 +7,9 @@ carries them alongside the test suite, so that a released version stays reproduc
 `TLSimu.cti` is the GenTL Producer simulator from the GenICam reference implementation. It presents four simulated
 devices (`TLSimuMono` and `TLSimuColor`, two of each across two interfaces) and serves synthetic frames through the
 regular GenTL buffer flow, so `HarvestersCamera` drives it through the same code path it uses for a real camera.
-`libVirtualFG` is the virtual frame grabber that `TLSimu.cti` links against, and it must stay in the same directory
-because each producer resolves it relative to its own location, through `$ORIGIN` on Linux, `@loader_path` on macOS,
-and the loader's DLL search order on Windows.
+`libVirtualFG` is the virtual frame grabber that `TLSimu.cti` links against, and it must stay in the same directory.
+Each producer resolves it relative to its own location, through `$ORIGIN` on Linux, `@loader_path` on macOS, and the
+loader's DLL search order on Windows.
 
 ## Provenance
 
@@ -27,7 +27,9 @@ same name omit the simulator, so the EMVA package is the only source.
 | `windows_amd64/VirtualFG.dll`       | `a822df43f60a9dd9751620b5ce9647aa6fed72c254721f836df27b2937503c49` |
 
 The macOS binaries are universal (`x86_64` and `arm64`). The EMVA package ships no Linux `aarch64` build, so the
-simulator-backed tests skip on that platform.
+simulator-backed tests skip on that platform. They also skip on macOS, which installs no GenICam runtime to load a
+Producer with, so the bundled `macos_universal2` build stays in place only to cover every platform the EMVA package
+ships.
 
 To refresh, download the current `GenICam_Package_<version>.zip`, unpack the `PythonWheels` archive for each platform
 under `Reference Implementation/`, and copy `TLSimu.cti` together with its `VirtualFG` companion out of any wheel in the

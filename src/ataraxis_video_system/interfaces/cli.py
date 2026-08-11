@@ -69,7 +69,6 @@ def set_cti_file(file_path: Path) -> None:
     """
     add_cti_file(cti_path=file_path)
 
-    # Notifies the user that the CTI file has been successfully set.
     console.echo(message=f"AXVS CTI file: Set to {file_path}.", level=LogLevel.SUCCESS)
 
 
@@ -126,7 +125,6 @@ def check_devices() -> None:
     opencv_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.OPENCV]
     harvesters_cameras = [camera for camera in all_cameras if camera.interface == CameraInterfaces.HARVESTERS]
 
-    # Displays OpenCV camera information.
     if not opencv_cameras:
         console.echo(message="No OpenCV-compatible cameras discovered.", level=LogLevel.WARNING)
     else:
@@ -148,7 +146,6 @@ def check_devices() -> None:
                 )
             )
 
-    # Displays Harvesters camera information.
     if not genicam_runtime_available():
         console.echo(
             message=f"Harvesters camera discovery skipped. {GENICAM_UNAVAILABLE_REASON}",
@@ -226,7 +223,7 @@ def check_compatibility() -> None:
     default=-1,
     show_default=True,
     help="The index of the GPU device to use for video encoding. Setting this option to a value below zero (default) "
-    "forces the VideoSystem to use the CPU for encoding the videos. Note; GPU encoding currently requires an "
+    "forces the VideoSystem to use the CPU for encoding the videos. Note, GPU encoding currently requires an "
     "Nvidia GPU that supports hardware video encoding.",
 )
 @click.option(
@@ -242,7 +239,9 @@ def check_compatibility() -> None:
     is_flag=True,
     default=False,
     show_default=True,
-    help="Determines whether the camera records frames in monochrome (grayscale) or colored spectrum.",
+    help="Determines whether the camera records frames in monochrome (grayscale) or colored spectrum. Applies to the "
+    "'opencv' and 'mock' interfaces only, as the 'harvesters' interface takes the color mode from the camera's own "
+    "configuration.",
 )
 @click.option(
     "-w",
@@ -285,7 +284,6 @@ def live_run(
     the terminal. Primarily, this CLI is designed to help with the initial identification and calibration of VideoSystem
     instances and does not support the full range of features offered through the VideoSystem class API.
     """
-    # Initializes and starts the DataLogger instance.
     logger = DataLogger(output_directory=output_directory, instance_name="axvs_live_run")
     logger.start()
 
@@ -307,13 +305,13 @@ def live_run(
         frame_width=width,
         frame_height=height,
         frame_rate=frame_rate,
-        display_frame_rate=25,  # Statically sets the display rate to 25 fps.
+        display_frame_rate=25,
         color=not monochrome,
         gpu=gpu_index,
         video_encoder="H264",  # Older H264 codec for compatibility with older hardware.
         encoder_speed_preset=EncoderSpeedPresets.FAST,  # Faster encoding speed for compatibility with older hardware.
         output_pixel_format=OutputPixelFormats.YUV420,  # Half-width chroma coding.
-        quantization_parameter=15,  # Statically sets the H264 quantization parameter to 15.
+        quantization_parameter=15,
     )
 
     video_system.start()
@@ -381,9 +379,9 @@ def live_run(
     "-od",
     "--output-directory",
     required=True,
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    help="The path to the directory where processed output files are written. Created automatically if it "
-    "does not exist.",
+    type=click.Path(exists=False, file_okay=False, dir_okay=True, writable=True, path_type=Path),
+    help="The root path under which processed output files are written. A camera_timestamps/ subdirectory is created "
+    "automatically beneath it and holds the processing tracker and every output file.",
 )
 @click.option(
     "-id",
@@ -407,9 +405,9 @@ def live_run(
     type=int,
     default=-1,
     show_default=True,
-    help="The ceiling on the worker processes any single job receives. Each job is sized from the archive it reads "
-    "and never exceeds this ceiling, which is itself bounded by the stage's own core cap. Set to a value below 1 "
-    "(default -1) to resolve the ceiling from the host.",
+    help="The ceiling on the worker processes any single job receives. Every job runs at this ceiling, which is "
+    "itself bounded by the stage's own core cap, except that an archive below the parallel processing threshold is "
+    "processed sequentially. Set to a value below 1 (default -1) to resolve the ceiling from the host.",
 )
 @click.option(
     "-p",
@@ -418,7 +416,7 @@ def live_run(
     show_default=True,
     help="Determines whether to display progress bars during timestamp extraction.",
 )
-def process(
+def process_log_archives(
     log_directory: Path,
     output_directory: Path,
     job_id: str | None,
@@ -481,20 +479,21 @@ def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     multiple=True,
     default=sorted(DEFAULT_BLACKLISTED_NODES),
     show_default=True,
-    help="GenICam node name to exclude from configuration operations. Repeat to specify multiple nodes. Some "
-    "vendor-specific nodes report ReadWrite access but reject writes at the hardware level. Modify this list to "
-    "match your camera hardware. Use --no-blacklist to disable all blacklisting.",
+    help="GenICam node name to exclude from the read, dump, and load operations. Repeat to specify multiple nodes. "
+    "Some vendor-specific nodes report ReadWrite access but reject writes at the hardware level. Modify this list to "
+    "match your camera hardware. An explicitly named node passed to 'configure write' is always written. Use "
+    "--no-blacklist to disable all blacklisting.",
 )
 @click.option(
     "--no-blacklist",
     is_flag=True,
     default=False,
-    help="Disables all node blacklisting. When set, all ReadWrite nodes are included in configuration operations "
-    "regardless of the --blacklisted-node values.",
+    help="Disables all node blacklisting. When set, all ReadWrite nodes are included in the read, dump, and load "
+    "operations regardless of the --blacklisted-node values.",
 )
 @click.pass_context
 def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *, no_blacklist: bool) -> None:
-    """Allows working with the configuration of the GenTL- (Harvesters)-compatible cameras."""
+    """Allows working with the configuration of GenTL (Harvesters) compatible cameras."""
     context.ensure_object(dict)
     context.obj["blacklisted_nodes"] = frozenset() if no_blacklist else frozenset(blacklisted_node)
 
@@ -513,14 +512,15 @@ def configure_group(context: click.Context, blacklisted_node: tuple[str, ...], *
     "--node-name",
     type=str,
     default="",
-    help="The name of a specific GenICam node to read. If omitted, lists all writable (ReadWrite) nodes.",
+    help="The name of a specific GenICam node to read. If omitted, lists every writable (ReadWrite) node that is not "
+    "blacklisted.",
 )
 @click.pass_context
-def configuration_read(context: click.Context, camera_index: int, node_name: str) -> None:
+def read_genicam_configuration(context: click.Context, camera_index: int, node_name: str) -> None:
     """Reads GenICam node information from a connected Harvesters camera.
 
-    If a node name is provided, displays detailed information about that specific node. Otherwise, lists all
-    writable (ReadWrite) nodes with their current values.
+    If a node name is provided, displays detailed information about that specific node. Otherwise, lists every
+    writable (ReadWrite) node that is not blacklisted, with its current value.
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
@@ -563,7 +563,7 @@ def configuration_read(context: click.Context, camera_index: int, node_name: str
     required=True,
     help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
-def configuration_write(camera_index: int, node_name: str, value: str) -> None:
+def write_genicam_configuration(camera_index: int, node_name: str, value: str) -> None:
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
@@ -587,15 +587,15 @@ def configuration_write(camera_index: int, node_name: str, value: str) -> None:
     "-o",
     "--output-file",
     required=True,
-    type=click.Path(file_okay=True, dir_okay=False, path_type=Path),
+    type=click.Path(exists=False, file_okay=True, dir_okay=False, writable=True, path_type=Path),
     help="The path to the output YAML file to write the configuration to.",
 )
 @click.pass_context
-def configuration_dump(context: click.Context, camera_index: int, output_file: Path) -> None:
+def dump_genicam_configuration(context: click.Context, camera_index: int, output_file: Path) -> None:
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
-    The output YAML includes all writable (ReadWrite) nodes with their current values, as well as the camera model
-    and serial number for identity validation.
+    The output YAML includes every writable (ReadWrite) node that is not blacklisted, with its current value, as well
+    as the camera model and serial number for identity validation.
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 
@@ -633,11 +633,11 @@ def configuration_dump(context: click.Context, camera_index: int, output_file: P
     "and the connected camera.",
 )
 @click.pass_context
-def configuration_load(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
+def load_genicam_configuration(context: click.Context, camera_index: int, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
-    Applies all writable nodes from the configuration file to the camera. Optionally validates that the camera
-    model and serial number match the configuration file.
+    Applies every non-blacklisted writable node from the configuration file to the camera. Optionally validates that
+    the camera model and serial number match the configuration file.
     """
     blacklist: frozenset[str] = context.obj["blacklisted_nodes"]
 

@@ -75,17 +75,17 @@ there. Resolving it as a single conditional expression keeps both wordings out o
 is ever able to execute.
 """
 
-_MONOCHROME_FORMATS: set[Any] = set(mono_location_formats)
+_MONOCHROME_FORMATS: set[str] = set(mono_location_formats)
 """Stores monochrome Harvesters color formats as a set to optimize membership checks in the HarvestersCamera
 grab_frame() method.
 """
 
-_COLOR_FORMATS: set[Any] = set(bgr_formats) | set(rgb_formats)
+_COLOR_FORMATS: set[str] = set(bgr_formats) | set(rgb_formats)
 """Stores BGR and RGB Harvesters color formats as a set to optimize membership checks in the HarvestersCamera
 grab_frame() method.
 """
 
-_ALL_RGB_FORMATS: set[Any] = set(rgb_formats)
+_ALL_RGB_FORMATS: set[str] = set(rgb_formats)
 """Stores RGB Harvesters color formats as a set to optimize membership checks in the HarvestersCamera grab_frame()
 method.
 """
@@ -103,6 +103,9 @@ _MAXIMUM_NON_WORKING_IDS: int = 5
 function before the runtime is terminated.
 """
 
+_MAXIMUM_EVALUATED_IDS: int = 100
+"""Determines the maximum number of camera indices (IDs) evaluated by the _get_opencv_ids() function."""
+
 
 class CameraInterfaces(StrEnum):
     """Defines the supported camera interface backends compatible with the VideoSystem class."""
@@ -117,7 +120,7 @@ class CameraInterfaces(StrEnum):
     and primarily compatible with consumer-grade cameras that use the USB interface.
     """
     MOCK = "mock"
-    """The mock backend used exclusively for internal library testing."""
+    """The mock backend that simulates frame acquisition without camera hardware, used for testing and dry runs."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,23 +148,18 @@ class CameraInformation:
 def discover_camera_ids() -> tuple[CameraInformation, ...]:
     """Discovers and reports the identifier (indices) and descriptive information about all accessible cameras.
 
-    This function discovers cameras through both OpenCV and Harvesters interfaces and returns a combined tuple of
-    CameraInformation instances. OpenCV cameras are discovered first, followed by Harvesters cameras (if a CTI file
-    has been configured).
+    OpenCV cameras are discovered first, followed by Harvesters cameras (if a CTI file has been configured).
 
     Notes:
-        For OpenCV cameras, it is impossible to retrieve serial numbers or camera models. It is advised to test each
-        discovered OpenCV camera with the 'axvs run' CLI command to identify the mapping between the discovered indices
-        and physical cameras.
+        For OpenCV cameras, it is impossible to retrieve serial numbers or camera models.
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
         function or the 'axvs cti set' CLI command. If no CTI file is configured, Harvesters camera discovery is
-        skipped. Harvesters discovery is also skipped on macOS, which does not support the GenICam camera interface.
+        skipped. Harvesters discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
     """
-    # Discovers OpenCV-compatible cameras.
     opencv_cameras = _get_opencv_ids()
 
     # Skips Harvesters discovery where the GenICam runtime is absent, since discovery reports the cameras this machine
@@ -195,8 +193,7 @@ def add_cti_file(cti_path: Path) -> None:
     """Configures the 'harvesters' camera interface to use the provided .cti file during all future runtimes.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
-    compatible GenTL devices (cameras). This function configures the local machine to use the specified .cti file
-    for all future runtimes that use the 'harvesters' camera interface.
+    compatible GenTL devices (cameras).
 
     Notes:
         The path to the .cti file is stored inside the user's data directory, so that it can be reused between library
@@ -208,7 +205,7 @@ def add_cti_file(cti_path: Path) -> None:
             See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
 
     Raises:
-        NotImplementedError: If the host platform does not support the GenICam camera interface.
+        NotImplementedError: If the GenICam camera runtime is not available in this environment.
         FileNotFoundError: If the supplied .cti file does not exist.
         OSError: If the supplied .cti file is not a loadable GenTL Producer.
     """
@@ -219,7 +216,6 @@ def add_cti_file(cti_path: Path) -> None:
     # which contradicts the reuse this function exists to provide.
     cti_path = Path(cti_path).expanduser().resolve()
 
-    # Verifies the input CTI file.
     harvester = Harvester()
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
@@ -227,10 +223,8 @@ def add_cti_file(cti_path: Path) -> None:
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = application_directory / "cti_path.txt"
 
-    # Ensures the application directory exists before writing.
     ensure_directory_exists(path=cti_path_file, is_file=True)
 
-    # Overwrites the contents of the path file with the verified .cti file path.
     with cti_path_file.open("w") as file:
         file.write(str(cti_path))
 
@@ -239,13 +233,12 @@ def check_cti_file() -> Path | None:
     """Checks whether the library is configured to use a GenTL Producer interface (.cti) file.
 
     The 'harvesters' camera interface requires the GenTL Producer interface (.cti) file to discover and interface with
-    compatible GenTL devices (cameras). This function checks if a valid .cti file path has been configured and returns
-    the path if it exists. The ``AXVS_CTI_PATH`` environment variable takes precedence over the persisted path, matching
-    the resolution order applied when connecting to a camera.
+    compatible GenTL devices (cameras). The ``AXVS_CTI_PATH`` environment variable takes precedence over the persisted
+    path, matching the resolution order applied when connecting to a camera.
 
     Returns:
-        The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None on macOS,
-        which does not support the GenICam camera interface that consumes the Producer.
+        The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None where the
+        GenICam runtime that consumes the Producer is absent, which is every macOS host.
     """
     # Reports the unusable state rather than raising, since this function answers whether the interface is ready to use
     # and an unsupported platform is one of the ways it is not.
@@ -256,19 +249,15 @@ def check_cti_file() -> Path | None:
     if override:
         cti_path = Path(override).expanduser().resolve()
     else:
-        # Resolves the path to the .cti path file using platformdirs.
         application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
         cti_path_file = application_directory / "cti_path.txt"
 
-        # Checks if the path file exists.
         if not cti_path_file.exists():
             return None
 
-        # Reads the stored .cti file path.
         with cti_path_file.open() as file:
             cti_path = Path(file.read().strip())
 
-    # Verifies the CTI file still exists and is valid.
     try:
         harvester = Harvester()
         harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
@@ -283,29 +272,29 @@ class OpenCVCamera:
     """Interfaces with the specified OpenCV-compatible camera hardware to acquire frame data.
 
     Notes:
-        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
-        instances based on the selected camera_interface.
+        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
-        color: Specifies whether the camera acquires colored or monochrome images. This determines how to store the
+        color: Determines whether the camera acquires colored or monochrome images. This determines how to store the
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
             a single-channel format.
         camera_index: The index of the camera in the list of all cameras discoverable by OpenCV, e.g.: 0 for the first
             available camera, 1 for the second, etc. This specifies the camera hardware the instance should interface
             with at runtime.
-        frame_rate: The desired rate, in frames per second, at which to capture the data. Note; whether the requested
-            rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
-            this argument is not explicitly provided, the instance uses the default frame rate of the connected camera.
-        frame_width: The desired width of the acquired frames, in pixels. Note; the requested width must be compatible
-            with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
-            provided, the instance uses the default frame width of the connected camera.
+        frame_rate: The desired rate, in frames per second, at which to capture the data. Note that whether the
+            requested rate is attainable depends on the hardware capabilities of the camera and the communication
+            interface. If this argument is not explicitly provided, the instance uses the default frame rate of the
+            connected camera.
+        frame_width: The desired width of the acquired frames, in pixels. Note that the requested width must be
+            compatible with the range of frame dimensions supported by the camera hardware. If this argument is not
+            explicitly provided, the instance uses the default frame width of the connected camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
             argument is not explicitly provided, the instance uses the default frame height of the connected camera.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
-        _color: Specifies whether the camera acquires colored or monochrome images.
+        _color: Determines whether the camera acquires colored or monochrome images.
         _camera_index: Stores the index of the camera hardware in the list of all OpenCV-discoverable cameras connected
             to the host-machine.
         _frame_rate: Stores the camera's frame acquisition rate.
@@ -354,12 +343,9 @@ class OpenCVCamera:
             ValueError: If the instance is configured to override hardware-defined acquisition parameters and the
                 camera rejects the user-defined frame height, width, or acquisition rate parameters.
         """
-        # Prevents re-connecting to an already connected camera.
         if self._camera is not None:  # pragma: no cover - defensive guard, no caller reconnects a connected interface.
             return
 
-        # Instantiates the OpenCV VideoCapture object to acquire images from the camera, using the specified camera ID
-        # (index).
         self._camera = cv2.VideoCapture(index=self._camera_index, apiPreference=cv2.CAP_ANY)
 
         # Overrides the requested camera acquisition parameters if necessary. If the camera does not accept the
@@ -414,11 +400,9 @@ class OpenCVCamera:
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
-        # Prevents disconnecting from an already disconnected camera.
         if self._camera is None:
             return
 
-        # Disconnects from the camera.
         self._camera.release()
         self._acquiring = False
         self._camera = None
@@ -478,12 +462,11 @@ class OpenCVCamera:
             ConnectionError: If the instance is not connected to the camera hardware.
             BrokenPipeError: If the instance fails to fetch a frame from the connected camera hardware.
         """
-        # Prevents calling this method before connecting to the camera's hardware.
         if self._camera is None:
             message = (
-                f"The OpenCVCamera instance for the VideoSystem with id {self._system_id} is not connected to the "
-                f"camera hardware, and cannot acquire images. Call the connect() method prior to calling the "
-                f"grab_frame() method."
+                f"Unable to acquire a frame from the OpenCVCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The interface must be connected to the camera hardware, but it is currently "
+                f"disconnected. Call the connect() method prior to calling the grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
 
@@ -495,9 +478,9 @@ class OpenCVCamera:
         success, frame = self._camera.read()
         if not success:
             message = (
-                f"The OpenCVCamera instance for the VideoSystem with id {self._system_id} has failed to grab a frame "
-                f"image from the camera hardware, which is not expected. This indicates initialization or connectivity "
-                f"issues."
+                f"Unable to acquire a frame from the OpenCVCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The camera hardware must return a frame image for each acquisition request, but "
+                f"it returned none. This indicates an initialization or a connectivity issue."
             )
             console.error(message=message, error=BrokenPipeError)
 
@@ -512,20 +495,20 @@ class HarvestersCamera:
     """Interfaces with the specified GenICam-compatible camera hardware to acquire frame data.
 
     Notes:
-        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
-        instances based on the selected camera_interface.
+        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         camera_index: The index of the camera in the list of all cameras discoverable by Harvesters, e.g.: 0 for the
             first available camera, 1 for the second, etc. This specifies the camera hardware the instance should
             interface with at runtime.
-        frame_rate: The desired rate, in frames per second, at which to capture the data. Note; whether the requested
-            rate is attainable depends on the hardware capabilities of the camera and the communication interface. If
-            this argument is not explicitly provided, the instance uses the default frame rate of the connected camera.
-        frame_width: The desired width of the acquired frames, in pixels. Note; the requested width must be compatible
-            with the range of frame dimensions supported by the camera hardware. If this argument is not explicitly
-            provided, the instance uses the default frame width of the connected camera.
+        frame_rate: The desired rate, in frames per second, at which to capture the data. Note that whether the
+            requested rate is attainable depends on the hardware capabilities of the camera and the communication
+            interface. If this argument is not explicitly provided, the instance adopts the camera's
+            AcquisitionFrameRate value, or reports 0 for cameras that do not implement that optional feature.
+        frame_width: The desired width of the acquired frames, in pixels. Note that the requested width must be
+            compatible with the range of frame dimensions supported by the camera hardware. If this argument is not
+            explicitly provided, the instance uses the default frame width of the connected camera.
         frame_height: Same as 'frame_width', but specifies the desired height of the acquired frames, in pixels. If this
             argument is not explicitly provided, the instance uses the default frame height of the connected camera.
 
@@ -567,7 +550,6 @@ class HarvestersCamera:
         # similar to how ImageAcquirer objects are handled.
         self._harvester: Harvester | None = None
 
-        # Pre-creates the attribute to store the initialized ImageAcquirer object for the connected camera.
         self._camera: ImageAcquirer | None = None
 
         # Tracks whether the acquired frames use a monochrome or a colored data format.
@@ -594,11 +576,11 @@ class HarvestersCamera:
         """Connects to the managed camera hardware.
 
         Raises:
-            NotImplementedError: If the host platform does not support the GenICam camera interface.
+            NotImplementedError: If the GenICam camera runtime is not available in this environment.
             FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
             OSError: If the configured .cti file is not a loadable GenTL Producer.
+            IndexError: If the camera index exceeds the number of cameras the configured GenTL Producer discovers.
         """
-        # Prevents connecting to an already connected camera.
         if self._camera is not None:
             return
 
@@ -606,16 +588,14 @@ class HarvestersCamera:
 
         # Initializes the Harvester class to discover the list of available cameras.
         self._harvester = Harvester()
-        # Adds the .cti file to the class. This also verifies the file's existence and validity.
         self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
-        # Discovers compatible cameras using the GenTL interface. Suppresses stdout to avoid verbose CTI printouts.
+        # Discovers compatible cameras using the GenTL interface. Suppresses stdout and stderr to avoid verbose CTI
+        # printouts.
         with _suppress_output():
             self._harvester.update()
 
-        # Initializes an ImageAcquirer camera interface object to interface with the camera's hardware.
         self._camera = self._harvester.create(search_key=self._camera_index)
 
-        # Reads the camera identity information from the device info list.
         device_info = self._harvester.device_info_list[self._camera_index]
         self._model = device_info.model
         self._serial_number = device_info.serial_number
@@ -640,17 +620,14 @@ class HarvestersCamera:
             # report one rate for one device rather than differing by a frame whenever the node clamps.
             self._frame_rate = int(round(number=frame_rate_node.value, ndigits=0))
 
-        # Queries the current camera acquisition parameters and stores them in class attributes.
         self._frame_width = int(node_map.Width.value)
         self._frame_height = int(node_map.Height.value)
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
-        # Prevents disconnecting from an already disconnected camera.
         if self._camera is None or self._harvester is None:
             return
 
-        # Stops image acquisition only if it was started.
         if self._camera.is_acquiring():
             self._camera.stop()
 
@@ -844,9 +821,9 @@ class HarvestersCamera:
         """
         if self._camera is None:
             message = (
-                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} is not connected to the "
-                f"camera hardware and cannot acquire images. Call the connect() method prior to calling the "
-                f"grab_frame() method."
+                f"Unable to acquire a frame from the HarvestersCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The interface must be connected to the camera hardware, but it is currently "
+                f"disconnected. Call the connect() method prior to calling the grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
 
@@ -861,9 +838,9 @@ class HarvestersCamera:
 
         if buffer is None:
             message = (
-                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has failed to grab "
-                f"a frame image from the camera hardware, which is not expected. This indicates initialization or "
-                f"connectivity issues."
+                f"Unable to acquire a frame from the HarvestersCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The camera hardware must return a frame image for each acquisition request, but "
+                f"it returned none. This indicates an initialization or a connectivity issue."
             )
             console.error(message=message, error=BrokenPipeError)
 
@@ -878,17 +855,14 @@ class HarvestersCamera:
             height = content.height
             data_format = content.data_format
 
-            # For monochrome formats, reshapes the 1D array into a 2D array and returns it to the caller.
             if data_format in _MONOCHROME_FORMATS:
                 # Uses copy, which is VERY important. Once the buffer is released, the original 'content' is lost,
                 # so NumPy needs to copy the data instead of using the default referencing behavior.
                 out_array: NDArray[np.integer[Any]] = content.data.reshape(height, width).copy()
-                self._color = False  # Ensures that the color flag is set to False.
+                self._color = False
                 return out_array
 
-            # For color data, evaluates the input format and reshapes the data as necessary.
             if data_format in _COLOR_FORMATS:
-                # Reshapes the 1D data array into the (height, width, channels) format.
                 reshaped_data: NDArray[np.integer[Any]] = content.data.reshape(
                     height,
                     width,
@@ -896,25 +870,22 @@ class HarvestersCamera:
                 )
 
                 # Swaps every R and B value (RGB -> BGR) to produce BGR images. This ensures consistency with the
-                # OpenCVCamera API. Only applies to RGB formats; BGR formats are used as-is.
+                # OpenCVCamera API. Only applies to RGB formats, since BGR formats are used as-is.
                 if data_format in _ALL_RGB_FORMATS:
                     frame: NDArray[np.integer[Any]] = reshaped_data[:, :, ::-1].copy()
                 else:
                     frame = reshaped_data.copy()
 
-                self._color = True  # Ensures that the color flag is set to True.
+                self._color = True
 
-                # Returns the reshaped frame array to the caller.
                 return frame
 
-            # Raises an error for unsupported data formats.
             message = (
-                f"The HarvestersCamera instance for the VideoSystem with id {self._system_id} has acquired an image "
-                f"with an unsupported data (color) format {data_format}. Currently, only the following unpacked "
-                f"families of color formats are supported: Monochrome, RGB, and BGR."
+                f"Unable to process a frame acquired by the HarvestersCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The frame data (color) format must belong to the unpacked Monochrome, RGB, or "
+                f"BGR families, but got {data_format}."
             )
             console.error(message=message, error=ValueError)
-            # Unreachable: console.error() is NoReturn, but ruff cannot trace NoReturn through method calls (RET503).
             raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
 
 
@@ -945,12 +916,8 @@ class MockCamera:
     """Simulates (mocks) the behavior of the OpenCVCamera and HarvestersCamera classes without the need to interface
     with a physical camera.
 
-    This class is primarily used to test the VideoSystem class functionality. The class fully mimics the behavior of
-    other camera interface classes but does not establish a physical connection with any camera hardware.
-
     Notes:
-        This class should not be initialized manually. The VideoSystem constructor creates all camera interface
-        instances based on the selected camera_interface.
+        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
 
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -960,8 +927,7 @@ class MockCamera:
             instance simulates a width of 600 pixels.
         frame_height: The simulated camera frame height, in pixels. If this argument is not explicitly provided, the
             instance simulates a height of 400 pixels.
-        color: The simulated camera frame color mode. If True, the frames are generated using the BGR color mode. If
-            False, the frames are generated using the grayscale (monochrome) color mode.
+        color: Determines whether to generate frames in the BGR color mode instead of the grayscale (monochrome) mode.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -1000,9 +966,10 @@ class MockCamera:
         # Creates a random number generator for reproducible frame generation.
         random_generator = np.random.default_rng(seed=42)
 
-        # Statically generates a pool of 10 images for reproducible testing during grab_frame() method calls.
+        # Statically generates the frame pool used for reproducible testing during grab_frame() method calls. The pool
+        # is built from _FRAME_POOL_SIZE, because grab_frame() wraps its index against the same constant.
         frames_list: list[NDArray[np.uint8]] = []
-        for _ in range(10):
+        for _ in range(_FRAME_POOL_SIZE):
             if self._color:
                 frame = random_generator.integers(
                     low=0,
@@ -1010,8 +977,7 @@ class MockCamera:
                     size=(self._frame_height, self._frame_width, 3),
                     dtype=np.uint8,
                 )
-                # Ensures the order of the colors is BGR.
-                bgr_frame: NDArray[np.uint8] = cv2.cvtColor(  # type: ignore[assignment]
+                bgr_frame: NDArray[np.uint8] = cv2.cvtColor(  # type: ignore[assignment]  # cvtColor returns MatLike.
                     src=frame, code=cv2.COLOR_RGB2BGR
                 )
                 frames_list.append(bgr_frame)
@@ -1115,9 +1081,10 @@ class MockCamera:
         # alongside the connection, so the two are checked together and the checked state narrows the timer for mypy.
         if not self._camera or self._timer is None:
             message = (
-                f"The MockCamera instance for the VideoSystem with id {self._system_id} is not currently simulating "
-                f"connection to the camera hardware, and cannot simulate image acquisition. Call the connect() method "
-                f"prior to calling the grab_frame() method."
+                f"Unable to simulate a frame acquisition using the MockCamera interface for the VideoSystem with id "
+                f"{self._system_id}. The interface must be simulating a connection to the camera hardware, but the "
+                f"connection simulation has not been started. Call the connect() method prior to calling the "
+                f"grab_frame() method."
             )
             console.error(message=message, error=ConnectionError)
 
@@ -1135,7 +1102,6 @@ class MockCamera:
         while self._timer.elapsed < self._time_between_frames:
             pass
 
-        # 'Acquires' a frame from the frame pool.
         frame = self._frames[self._current_frame_index].copy()
 
         # Resets the timer to measure the time elapsed since the last frame acquisition.
@@ -1145,7 +1111,6 @@ class MockCamera:
         # start of the pool. This simulates the behavior of a cyclic buffer.
         self._current_frame_index = (self._current_frame_index + 1) % _FRAME_POOL_SIZE
 
-        # Returns the acquired frame to the caller.
         return frame
 
 
@@ -1155,7 +1120,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
 
     Notes:
         Currently, it is impossible to retrieve serial numbers or camera models from OpenCV. Therefore, while this
-        method tries to provide some ID information, it is typically insufficient to identify specific cameras. It is
+        function tries to provide some ID information, it is typically insufficient to identify specific cameras. It is
         advised to test each discovered camera with the 'axvs run' CLI command to identify the mapping between the
         discovered indices (IDs) and physical cameras.
 
@@ -1173,7 +1138,7 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         # Iterates over IDs until it discovers 5 non-working IDs. Evaluates 100 IDs at maximum to prevent infinite
         # execution. Suppresses stdout and stderr to silence V4L2 ioctl warnings emitted by the kernel driver
         # during device probing (e.g. 'ioctl(VIDIOC_QBUF): Bad file descriptor').
-        for evaluated_id in range(100):
+        for evaluated_id in range(_MAXIMUM_EVALUATED_IDS):
             try:
                 # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension
                 # data from the connected camera (if any was connected).
@@ -1195,12 +1160,12 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
                             acquisition_frame_rate=acquisition_rate,
                         )
                         working_ids.append(camera_data)
-                        non_working_count = 0  # Resets non-working count whenever a working camera is found.
+                        non_working_count = 0
                     else:
                         non_working_count += 1
                 finally:
                     with _suppress_output():
-                        camera.release()  # Guarantees camera release even if an exception occurs.
+                        camera.release()
 
             except Exception as error:
                 # Marks any ID that raises a runtime error as non-working and notifies the user.
@@ -1258,8 +1223,73 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         return tuple(unique_cameras)
 
     finally:
-        # Restores the previous log level.
         cv2.utils.logging.setLogLevel(previous_log_level)
+
+
+def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
+    """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible
+    through the Harvesters library.
+
+    Notes:
+        This function bundles the discovered ID (index) information with the serial number and the model for each
+        camera to support identifying the cameras.
+
+    Returns:
+        A tuple of CameraInformation instances, one for each discovered Harvesters-compatible camera.
+    """
+    # Resolves the CTI path once and caches it for reuse.
+    cti_path = _get_cti_path()
+
+    # Instantiates the class and adds the input .cti file. Both checks are requested, since _get_cti_path() returns
+    # the configured path unvalidated and a Producer that cannot be loaded would otherwise leave discovery reporting
+    # an empty camera list that is indistinguishable from a healthy Producer with no cameras attached.
+    harvester = Harvester()
+    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+
+    # Gets the list of accessible cameras. Suppresses stdout and stderr to avoid verbose printouts about missing CTI
+    # features.
+    with _suppress_output():
+        harvester.update()
+
+    working_ids: list[CameraInformation] = []
+    for index, camera_info in enumerate(harvester.device_info_list):
+        try:
+            camera = harvester.create(search_key=index)
+            try:
+                node_map = camera.remote_device.node_map
+
+                # Retrieves frame dimensions and acquisition rate from the camera's node map. Devices that omit the
+                # optional AcquisitionFrameRate feature report a rate of 0.
+                frame_width = int(node_map.Width.value)
+                frame_height = int(node_map.Height.value)
+                frame_rate_node = _get_frame_rate_node(node_map=node_map)
+                acquisition_rate = 0 if frame_rate_node is None else int(round(number=frame_rate_node.value, ndigits=0))
+
+                camera_data = CameraInformation(
+                    camera_index=index,
+                    interface=CameraInterfaces.HARVESTERS,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    acquisition_frame_rate=acquisition_rate,
+                    serial_number=camera_info.serial_number,
+                    model=camera_info.model,
+                )
+                working_ids.append(camera_data)
+            finally:
+                camera.destroy()
+
+        except Exception as error:
+            # Skips any device that cannot be connected or queried for any reason and notifies the user.
+            console.echo(
+                message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {error}",
+                level=LogLevel.WARNING,
+            )
+            continue
+
+    harvester.remove_file(file_path=str(cti_path))
+    harvester.reset()
+
+    return tuple(working_ids)
 
 
 def _require_genicam_runtime(action: str) -> None:
@@ -1276,75 +1306,6 @@ def _require_genicam_runtime(action: str) -> None:
 
     message = f"Unable to {action}. {GENICAM_UNAVAILABLE_REASON}"
     console.error(message=message, error=NotImplementedError)
-
-
-def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
-    """Discovers and reports the identifier (indices) and descriptive information about the cameras accessible
-    through the Harvesters library.
-
-    Notes:
-        This method bundles the discovered ID (index) information with the serial number and the model for each camera
-        to support identifying the cameras.
-
-    Returns:
-        A tuple of CameraInformation instances, one for each discovered Harvesters-compatible camera.
-    """
-    # Resolves the CTI path once and caches it for reuse.
-    cti_path = _get_cti_path()
-
-    # Instantiates the class and adds the input .cti file. Both checks are requested, since _get_cti_path() returns
-    # the configured path unvalidated and a Producer that cannot be loaded would otherwise leave discovery reporting
-    # an empty camera list that is indistinguishable from a healthy Producer with no cameras attached.
-    harvester = Harvester()
-    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
-
-    # Gets the list of accessible cameras. Suppresses stdout to avoid verbose printouts about missing CTI features.
-    with _suppress_output():
-        harvester.update()
-
-    # Loops over all discovered cameras and retrieves detailed information from each camera.
-    working_ids: list[CameraInformation] = []
-    for index, camera_info in enumerate(harvester.device_info_list):
-        try:
-            # Accesses the remote device node map to get camera properties.
-            camera = harvester.create(search_key=index)
-            try:
-                node_map = camera.remote_device.node_map
-
-                # Retrieves frame dimensions and acquisition rate from the camera's node map. Devices that omit the
-                # optional AcquisitionFrameRate feature report a rate of 0.
-                frame_width = int(node_map.Width.value)
-                frame_height = int(node_map.Height.value)
-                frame_rate_node = _get_frame_rate_node(node_map=node_map)
-                acquisition_rate = 0 if frame_rate_node is None else int(round(number=frame_rate_node.value, ndigits=0))
-
-                # Creates CameraInformation instance with all retrieved data.
-                camera_data = CameraInformation(
-                    camera_index=index,
-                    interface=CameraInterfaces.HARVESTERS,
-                    frame_width=frame_width,
-                    frame_height=frame_height,
-                    acquisition_frame_rate=acquisition_rate,
-                    serial_number=camera_info.serial_number,
-                    model=camera_info.model,
-                )
-                working_ids.append(camera_data)
-            finally:
-                camera.destroy()  # Guarantees camera resource release.
-
-        except Exception as error:
-            # Skips any device that cannot be connected or queried for any reason and notifies the user.
-            console.echo(
-                message=f"Harvesters camera discovery: Failed to query device at index {index}. Error: {error}",
-                level=LogLevel.WARNING,
-            )
-            continue
-
-    # Resets the harvester instance after discovering the camera IDs.
-    harvester.remove_file(file_path=str(cti_path))
-    harvester.reset()
-
-    return tuple(working_ids)  # Converts to tuple before returning to the caller.
 
 
 def _get_frame_rate_node(node_map: NodeMap) -> Any | None:
@@ -1366,7 +1327,6 @@ def _get_frame_rate_node(node_map: NodeMap) -> Any | None:
 def _get_cti_path() -> Path:
     """Resolves and returns the path to the CTI file that provides the GenTL Producer interface.
 
-    This service function is used when initializing HarvestersCamera instances to resolve the GenTL Producer interface.
     The returned path is not validated here, callers are responsible for validation via
     ``harvester.add_file(check_existence=True, check_validity=True)`` to avoid redundant Harvester instantiation.
 
@@ -1382,16 +1342,16 @@ def _get_cti_path() -> Path:
         FileNotFoundError: If the function is unable to resolve the path to the .cti file.
     """
     # Honors the runtime override before consulting the persisted path. The override is resolved, so that a relative
-    # value reaches every spawned child process as the same file the parent resolved.
+    # value is interpreted against the working directory in effect when it is read rather than reaching
+    # harvester.add_file() unresolved. Every spawned child inherits that working directory, so each child resolves the
+    # variable to the same file the parent did.
     override = os.environ.get(_CTI_PATH_VARIABLE)
     if override:
         return Path(override).expanduser().resolve()
 
-    # Uses platformdirs to locate the user's data directory and resolve the path to the .cti path file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = application_directory / "cti_path.txt"
 
-    # Aborts with an error if the path file does not exist.
     if not cti_path_file.exists():
         message = (
             "Unable to resolve the path to the GenTL Producer interface (.cti) file to use for the harvesters camera "
@@ -1400,7 +1360,6 @@ def _get_cti_path() -> Path:
         )
         console.error(message=message, error=FileNotFoundError)
 
-    # Reads the .cti file path once the location of the path storage file is resolved.
     with cti_path_file.open() as file:
         return Path(file.read().strip())
 
@@ -1414,17 +1373,16 @@ def _suppress_output() -> Generator[None, None, None]:
     update(), and the kernel driver emits V4L2 ioctl warnings while OpenCV probes camera indices.
     """
     # Redirects stdout (fd 1) and stderr (fd 2) to devnull.
-    devnull = os.open(os.devnull, os.O_WRONLY)
+    devnull = os.open(path=os.devnull, flags=os.O_WRONLY)
     old_stdout = os.dup(1)
     old_stderr = os.dup(2)
-    os.dup2(devnull, 1)
-    os.dup2(devnull, 2)
+    os.dup2(fd=devnull, fd2=1)
+    os.dup2(fd=devnull, fd2=2)
     try:
         yield
     finally:
-        # Restores stdout and stderr.
-        os.dup2(old_stdout, 1)
-        os.dup2(old_stderr, 2)
+        os.dup2(fd=old_stdout, fd2=1)
+        os.dup2(fd=old_stderr, fd2=2)
         os.close(devnull)
         os.close(old_stdout)
         os.close(old_stderr)

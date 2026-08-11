@@ -83,7 +83,8 @@ def extract_logged_camera_timestamps(
         microseconds elapsed since the UTC epoch onset.
 
     Raises:
-        ValueError: If the target path does not exist, does not have a .npz suffix, or does not point to a file.
+        ValueError: If the target path does not exist, does not have a .npz suffix, does not point to a file, or if
+            the archive carries no onset timestamp message.
     """
     # Validates the archive path. LogArchiveReader checks existence, but not the .npz suffix or file type.
     if not log_path.exists() or log_path.suffix != ".npz" or not log_path.is_file():
@@ -147,10 +148,10 @@ def extract_logged_camera_timestamps(
         if display_progress:
             with console.progress(
                 total=len(batches), description="Extracting camera frame timestamps", unit="batch"
-            ) as pbar:
+            ) as progress_bar:
                 for future in as_completed(future_to_index):
                     results[future_to_index[future]] = future.result()
-                    pbar.update(1)
+                    progress_bar.update(1)
         else:
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()

@@ -60,9 +60,7 @@ def write_camera_manifest_tool(
     """Writes or updates a camera manifest file in the specified log directory.
 
     Registers a camera source in the camera_manifest.yaml file located in the target log directory. If
-    the manifest already exists, appends the new source entry. Otherwise, creates a new manifest. Use this
-    tool to retroactively tag existing log archives as axvs-produced, or to manually register additional
-    camera sources.
+    the manifest already exists, appends the new source entry. Otherwise, creates a new manifest.
 
     Args:
         log_directory: The absolute path to the DataLogger output directory where the manifest file is stored.
@@ -124,7 +122,6 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     if not root_path.is_dir():
         return {"error": f"Path is not a directory: {root_directory}"}
 
-    # Discovers all camera manifests and collects only sources whose log archives exist on disk.
     confirmed_sources: list[tuple[Path, int, str, Path]] = []
     log_directories_with_archives: set[Path] = set()
 
@@ -134,7 +131,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
 
             try:
                 manifest = CameraManifest.from_yaml(file_path=manifest_path)
-            except Exception:  # noqa: S112
+            except Exception:  # noqa: S112 - An unparsable manifest is skipped, so discovery covers the rest.
                 continue
 
             if not manifest.sources:
@@ -161,11 +158,10 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     # Pre-collects all video files and camera_timestamps directories under the search root in two rglob passes.
     # Avoids redundant filesystem walks when resolving multiple sources.
     all_video_files = tuple(sorted(root_path.rglob("*.mp4")))
-    timestamps_dirs = tuple(
+    timestamps_directories = tuple(
         candidate for candidate in sorted(root_path.rglob(OutputLayout.DIRECTORY_NAME)) if candidate.is_dir()
     )
 
-    # Resolves recording roots and builds the log-directory-to-root mapping.
     log_directory_paths = sorted(log_directories_with_archives)
     log_directory_to_root = _resolve_log_directory_roots(log_directory_paths=log_directory_paths)
 
@@ -177,7 +173,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
             all_video_files=all_video_files, log_directory=log_directory, source_id=source_id, name=name
         )
         feather_path = _find_feather_file(
-            timestamps_dirs=timestamps_dirs, log_directory=log_directory, source_id=source_id
+            timestamps_directories=timestamps_directories, log_directory=log_directory, source_id=source_id
         )
 
         sources_output.append(
@@ -218,7 +214,8 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
         A dictionary containing 'file', 'valid', 'codec', 'codec_long_name', 'width', 'height', 'frame_count',
         'duration_seconds', 'bit_rate_bps', 'file_size_bytes', 'pixel_format', and 'frame_rate' on success, where
         the frame count, duration, and bit rate are None when ffprobe does not report them. Returns an error
-        dictionary if the file cannot be read or ffprobe is not available.
+        dictionary if the file cannot be read, if ffprobe is not available, if its output cannot be parsed, or if the
+        file holds no video stream.
     """
     file_path = Path(video_file)
 
@@ -258,13 +255,11 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
     except subprocess.CalledProcessError as error:
         return {"error": f"ffprobe failed: {error.stderr.strip() if error.stderr else 'unknown error'}"}
 
-    # Parses the JSON output from ffprobe.
     try:
         probe_data = json.loads(probe_result.stdout)
     except json.JSONDecodeError:
         return {"error": "Unable to parse ffprobe output."}
 
-    # Extracts the first video stream from the probe output.
     video_stream: dict[str, Any] | None = None
     for stream in probe_data.get("streams", []):
         if stream.get("codec_type") == "video":
@@ -282,9 +277,8 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
 
     # Extracts duration from the format-level metadata (more reliable than stream-level for MP4 containers).
     duration_raw = format_info.get("duration")
-    duration_seconds = round(float(duration_raw), 6) if duration_raw else None
+    duration_seconds = round(float(duration_raw), ndigits=6) if duration_raw else None
 
-    # Extracts bit rate from the format-level metadata.
     bit_rate_raw = format_info.get("bit_rate")
     bit_rate_bps = int(bit_rate_raw) if bit_rate_raw else None
 
@@ -318,11 +312,7 @@ def assemble_log_archives_tool(
     """Consolidates raw .npy log entries in a DataLogger output directory into .npz archives by source ID.
 
     Assembles the raw .npy files produced by a DataLogger instance into consolidated .npz archives, one per unique
-    source ID. This is required before the log processing pipeline can extract frame timestamps.
-
-    This tool is useful when log archives need to be assembled independently of a video session stop operation,
-    for example when processing log directories from previous sessions or when the automatic assembly was skipped or
-    failed.
+    source ID.
 
     Important:
         The AI agent calling this tool MUST ask the user to provide the log_directory path before calling this
@@ -336,9 +326,10 @@ def assemble_log_archives_tool(
             removing sources.
 
     Returns:
-        A dictionary containing the assembly status, directory path, list of created archive filenames, extracted
-        source IDs, and archive count. Returns an error dictionary if the directory does not exist, if it holds no
-        .npy log entries of its own while its subdirectories do, or if assembly fails.
+        A dictionary containing the assembly status, directory path, the list of the archive filenames present in the
+        directory after assembly, extracted source IDs, and archive count. Returns an error dictionary if the
+        directory does not exist or is not a directory, if it holds no .npy log entries of its own while its
+        subdirectories do, or if assembly fails.
     """
     directory_path = Path(log_directory)
 
@@ -370,7 +361,6 @@ def assemble_log_archives_tool(
     except Exception as error:
         return {"error": f"Archive assembly failed: {error}"}
 
-    # Scans for created archives and extracts source IDs from filenames.
     source_ids = scan_archive_source_ids(directory=directory_path)
     archives = [f"{source_id}{LOG_ARCHIVE_SUFFIX}" for source_id in source_ids]
 
@@ -456,7 +446,7 @@ def _match_video_file(
     return None
 
 
-def _find_feather_file(timestamps_dirs: tuple[Path, ...], log_directory: Path, source_id: int) -> Path | None:
+def _find_feather_file(timestamps_directories: tuple[Path, ...], log_directory: Path, source_id: int) -> Path | None:
     """Searches pre-discovered ``camera_timestamps/`` directories for a processed feather file matching a source ID.
 
     Resolves the source's output path directly inside each ``camera_timestamps/`` directory through the same helper
@@ -470,7 +460,7 @@ def _find_feather_file(timestamps_dirs: tuple[Path, ...], log_directory: Path, s
         which is the same tie-break the paired video resolver applies.
 
     Args:
-        timestamps_dirs: Pre-discovered ``camera_timestamps/`` directory paths collected from the search root.
+        timestamps_directories: Pre-discovered ``camera_timestamps/`` directory paths collected from the search root.
         log_directory: The directory holding the source's camera manifest, used as the proximity reference.
         source_id: The numeric source ID to search for.
 
@@ -479,8 +469,10 @@ def _find_feather_file(timestamps_dirs: tuple[Path, ...], log_directory: Path, s
     """
     candidates = [
         candidate
-        for timestamps_dir in timestamps_dirs
-        if (candidate := resolve_timestamps_path(output_directory=timestamps_dir, source_id=str(source_id))).is_file()
+        for timestamps_directory in timestamps_directories
+        if (
+            candidate := resolve_timestamps_path(output_directory=timestamps_directory, source_id=str(source_id))
+        ).is_file()
     ]
 
     if not candidates:
