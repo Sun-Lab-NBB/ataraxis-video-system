@@ -43,8 +43,8 @@ def test_compute_frame_statistics_clean_run():
     assert statistics["inter_frame_timing"]["mean_ms"] == 1.0
 
     drop_analysis = statistics["frame_drop_analysis"]
-    assert drop_analysis["threshold_us"] == 2000.0
-    assert drop_analysis["threshold_source"] == "auto_2x_median"
+    assert drop_analysis["threshold_us"] == 1500.0
+    assert drop_analysis["threshold_source"] == "auto_1.5x_median"
     assert drop_analysis["total_gaps_detected"] == 0
     assert drop_analysis["total_estimated_dropped_frames"] == 0
     assert drop_analysis["drop_rate_percent"] == 0.0
@@ -65,8 +65,8 @@ def test_compute_frame_statistics_detects_drop():
     assert statistics["inter_frame_timing"]["max_us"] == 10_000
 
     drop_analysis = statistics["frame_drop_analysis"]
-    assert drop_analysis["threshold_us"] == 2000.0
-    assert drop_analysis["threshold_source"] == "auto_2x_median"
+    assert drop_analysis["threshold_us"] == 1500.0
+    assert drop_analysis["threshold_source"] == "auto_1.5x_median"
     assert drop_analysis["total_gaps_detected"] == 1
     assert drop_analysis["total_estimated_dropped_frames"] == 9
     assert drop_analysis["drop_rate_percent"] == 29.0323
@@ -78,6 +78,33 @@ def test_compute_frame_statistics_detects_drop():
     ]
 
 
+def test_compute_frame_statistics_nets_a_gap_against_the_following_interval():
+    """Verifies that a gap the next interval repays reports no lost frame."""
+    timestamps = _build_timestamps(intervals_us=[1000] * 5 + [1900, 100] + [1000] * 5)
+
+    statistics = _compute_frame_statistics(timestamps=timestamps, drop_threshold_us=0, max_drop_locations=50)
+
+    drop_analysis = statistics["frame_drop_analysis"]
+    assert drop_analysis["total_gaps_detected"] == 1
+    assert drop_analysis["jitter_compensated_gaps"] == 1
+    assert drop_analysis["total_estimated_dropped_frames"] == 0
+    assert drop_analysis["drop_locations"] == [
+        {"frame_index": 5, "gap_us": 1900, "gap_ms": 1.9, "estimated_frames_lost": 0}
+    ]
+
+
+def test_compute_frame_statistics_charges_a_gap_the_following_interval_does_not_repay():
+    """Verifies that a gap followed by an ordinary interval still reports its lost frame."""
+    timestamps = _build_timestamps(intervals_us=[1000] * 5 + [2000] + [1000] * 5)
+
+    statistics = _compute_frame_statistics(timestamps=timestamps, drop_threshold_us=0, max_drop_locations=50)
+
+    drop_analysis = statistics["frame_drop_analysis"]
+    assert drop_analysis["total_gaps_detected"] == 1
+    assert drop_analysis["jitter_compensated_gaps"] == 0
+    assert drop_analysis["total_estimated_dropped_frames"] == 1
+
+
 def test_compute_frame_statistics_user_specified_threshold():
     """Verifies that a nonzero drop threshold overrides the automatically detected one."""
     timestamps = _build_timestamps(intervals_us=[1000] * 5 + [4000] + [1000] * 5)
@@ -85,7 +112,7 @@ def test_compute_frame_statistics_user_specified_threshold():
     automatic = _compute_frame_statistics(timestamps=timestamps, drop_threshold_us=0, max_drop_locations=50)
     manual = _compute_frame_statistics(timestamps=timestamps, drop_threshold_us=5000, max_drop_locations=50)
 
-    assert automatic["frame_drop_analysis"]["threshold_source"] == "auto_2x_median"
+    assert automatic["frame_drop_analysis"]["threshold_source"] == "auto_1.5x_median"
     assert automatic["frame_drop_analysis"]["total_gaps_detected"] == 1
 
     # A threshold above the deliberate gap classifies the same recording as drop-free.

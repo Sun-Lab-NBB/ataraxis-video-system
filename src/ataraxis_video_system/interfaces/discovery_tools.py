@@ -302,8 +302,10 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
         probe_result = subprocess.run(
             args=[
                 "ffprobe",
+                # Keeps diagnostics on stderr so a failed probe reports its cause. A quieter level discards the
+                # message the error handler below reports.
                 "-v",
-                "quiet",
+                "error",
                 "-probesize",
                 "10000000",
                 "-analyzeduration",
