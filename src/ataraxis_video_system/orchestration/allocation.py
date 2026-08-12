@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import psutil
 from ataraxis_base_utilities import resolve_worker_count
-from ataraxis_data_structures import PARALLEL_PROCESSING_THRESHOLD, read_archive_message_count
+from ataraxis_data_structures import read_archive_message_count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,21 +20,32 @@ _RESERVED_CORES: int = 2
 ``resolve_worker_count``, which applies it only to a non-positive budget and honors an explicit budget up to the
 logical core count."""
 
-CAMERA_EXTRACTION_JOB_CORES: int = 8
-"""The widest core allocation one camera timestamp extraction job receives.
+CAMERA_EXTRACTION_JOB_CORES: int = 4
+"""The core allocation every parallel camera timestamp extraction job receives.
 
 Notes:
     Every worker opens the archive itself, so the fixed cost per worker holds as workers are added and the speedup
-    flattens well before the core count. A job reading a small archive resolves below this bound. Both the sizing pass
-    and the preparation stage bound their ceiling by this value, so no job is dispatched above it.
+    flattens well before the core count.
 """
 
-SPAWNED_CHILD_MEMORY_MB: int = 200
+PARALLEL_EXTRACTION_THRESHOLD: int = 15_000
+"""The number of data messages an archive has to hold before an extraction job opens a pool to read it.
+
+Notes:
+    Opening a pool costs one spawned child per core, and every child re-imports the package before it reads a message.
+    Below this count the archive is decoded before that fixed cost is repaid, so the parallel path finishes behind the
+    sequential one.
+
+    This threshold governs whether a pool is opened at all, which is a different decision from the message batching
+    ``PARALLEL_PROCESSING_THRESHOLD`` governs inside the archive reader.
+"""
+
+SPAWNED_CHILD_MEMORY_MB: int = 220
 """The resident memory one spawned child holds before it touches any data, covering the interpreter and the package's
 import graph. The term is charged once for a job's body and once more for each child of the extraction pool it opens,
 so a job holding a single core and therefore carrying no pool is charged once."""
 
-_MEMORY_ESTIMATE_TOLERANCE: float = 1.15
+_MEMORY_ESTIMATE_TOLERANCE: float = 1.2
 """The margin applied to every memory estimate before it is reported. It covers the working sets the model does not
 enumerate and the variation between archives of the same size. The penalty for understating is asymmetric, since a
 batch that overcommits its host swaps or is killed outright, so estimates round up."""
@@ -43,7 +54,7 @@ _POOL_MEMORY_RESERVATION_DIVISOR: int = 2
 """The share of the memory budget the shared pool's warmed job bodies may claim, expressed as a divisor. The
 remainder covers the work those bodies perform."""
 
-_ARCHIVE_DIRECTORY_RATIO: float = 4.0
+_ARCHIVE_DIRECTORY_RATIO: float = 2.5
 """The resident memory a log archive reader holds per byte of archive on disk. Reading an archive builds one
 directory entry per logged message, which dominates the decoded payload itself."""
 
@@ -53,8 +64,14 @@ _MEMORY_BUDGET_FRACTION: float = 0.85
 _MINIMUM_MEMORY_BUDGET_MB: int = 1024
 """The floor an auto-resolved memory budget is held to, so a small host still admits one job at a time."""
 
-_MEGABYTES_PER_GIGABYTE: int = 1024
-"""The megabytes one gigabyte holds, which every reportable estimate is rounded up to a multiple of."""
+_MEMORY_ROUNDING_QUANTUM_MB: int = 256
+"""The multiple every reportable estimate is rounded up to.
+
+Notes:
+    The quantum is roughly the memory one spawned child holds, so the smallest job shape is charged two quanta rather
+    than the four a whole-gigabyte quantum charged it. A coarser quantum charges the two shapes the stage emits at
+    nearly the same figure, which would let a batch of sequential jobs reserve the memory a batch of pooled ones needs.
+"""
 
 _BYTES_PER_MEGABYTE: int = 1024 * 1024
 """The divisor converting a byte count into megabytes."""
@@ -99,32 +116,24 @@ def resolve_archive_footprint(archive_path: Path, *, read_message_count: bool = 
     return ArchiveFootprint(message_count=message_count, archive_bytes=archive_bytes, modeled=True)
 
 
-def resolve_job_workers(footprint: ArchiveFootprint, ceiling: int) -> int:
-    """Resolves the cores one extraction job receives, from the archive it reads and the cores its host can supply.
+def resolve_job_workers(footprint: ArchiveFootprint) -> int:
+    """Resolves the cores one extraction job receives, from the archive it reads.
 
     Notes:
-        An archive below the parallel processing threshold takes a single core, because the stage processes it
-        sequentially whatever width it is given. Above that threshold the width is the declared allocation, narrowed
-        to the cores the host supplies and to the workers the archive itself repays. A worker repays its fixed cost
-        of opening the archive only once it holds a threshold's worth of messages, so an archive holding a few
-        multiples of the threshold resolves below the declared width rather than at it.
-
-        The result never passes a ceiling of one or more, so a job is always dispatchable within the budget that
-        sized it.
+        The stage offers no width between the two it emits, because the speedup between one core and the declared
+        allocation is smooth enough that a narrower pool costs a job time without returning a core the batch can
+        place elsewhere.
 
     Args:
         footprint: The footprint of the archive this job reads.
-        ceiling: The cores available to this job, which is the batch's core budget or a caller's explicit limit. A
-            ceiling below one yields a single core, since every job occupies at least one.
 
     Returns:
-        The cores this job receives, always at least one.
+        The cores this job receives, which is one or the declared allocation.
     """
-    if footprint.message_count < PARALLEL_PROCESSING_THRESHOLD:
+    if footprint.message_count < PARALLEL_EXTRACTION_THRESHOLD:
         return 1
 
-    repaid_workers = footprint.message_count // PARALLEL_PROCESSING_THRESHOLD
-    return max(1, min(CAMERA_EXTRACTION_JOB_CORES, ceiling, repaid_workers))
+    return CAMERA_EXTRACTION_JOB_CORES
 
 
 def estimate_job_memory_mb(footprint: ArchiveFootprint, cores: int) -> int:
@@ -144,7 +153,8 @@ def estimate_job_memory_mb(footprint: ArchiveFootprint, cores: int) -> int:
         cores: The cores this job holds, which is how many extraction pool children it opens, or none when it is one.
 
     Returns:
-        The memory this job holds, in megabytes, carrying the estimate tolerance and rounded up to a whole gigabyte.
+        The memory this job holds, in megabytes, carrying the estimate tolerance and rounded up to the reporting
+        quantum.
     """
     if not footprint.modeled:
         return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB)
@@ -248,10 +258,10 @@ def _bytes_to_megabytes(byte_count: float) -> int:
 
 
 def _apply_tolerance(memory_mb: int) -> int:
-    """Applies the estimate tolerance to a modeled memory figure and rounds it up to a whole gigabyte.
+    """Applies the estimate tolerance to a modeled memory figure and rounds it up to the reporting quantum.
 
     Notes:
-        Rounding to a whole gigabyte here keeps the figure an admission decision weighs identical to the figure a
+        Rounding to a fixed quantum here keeps the figure an admission decision weighs identical to the figure a
         caller reports, which is what lets a planned batch and a running one be compared directly.
 
     Args:
@@ -261,4 +271,4 @@ def _apply_tolerance(memory_mb: int) -> int:
         The reportable memory in megabytes, carrying the tolerance.
     """
     reportable = int(memory_mb * _MEMORY_ESTIMATE_TOLERANCE) + 1
-    return math.ceil(reportable / _MEGABYTES_PER_GIGABYTE) * _MEGABYTES_PER_GIGABYTE
+    return math.ceil(reportable / _MEMORY_ROUNDING_QUANTUM_MB) * _MEMORY_ROUNDING_QUANTUM_MB

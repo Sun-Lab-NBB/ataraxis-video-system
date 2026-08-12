@@ -442,9 +442,9 @@ def live_run(
     type=int,
     default=-1,
     show_default=True,
-    help="The ceiling on the worker processes any single job receives. Every job runs at this ceiling, which is "
-    "itself bounded by the stage's own core cap, except that an archive below the parallel processing threshold is "
-    "processed sequentially. Set to a value below 1 (default -1) to resolve the ceiling from the host.",
+    help="The worker processes each job receives. Set to -1 (default) to resolve the width from the archive's "
+    "message count, which yields a single worker for a small archive and the declared per-job allocation of 4 "
+    "cores for a large one.",
 )
 @click.option(
     "-np",

@@ -13,8 +13,27 @@ from ataraxis_data_structures import (
 )
 
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest, write_camera_manifest
+from .responses import (
+    page_fields,
+    project_item,
+    resolve_page,
+    item_breakdown,
+    reject_unknown,
+    resolve_detail_limit,
+)
 from .mcp_instance import mcp, scan_archive_source_ids
 from ..orchestration import OutputLayout, resolve_timestamps_path
+
+_SOURCE_AXES: tuple[str, ...] = ("source_id", "name")
+"""The source keys a caller filters the recording listing by, which a bare call reports the counts of."""
+
+_SOURCE_SEMI_DETAIL_FIELDS: tuple[str, ...] = ("recording_root", "source_id", "name", "log_directory")
+"""The fields every listed source carries."""
+
+_SOURCE_DETAIL_FIELDS: tuple[str, ...] = ("log_archive", "video_file", "timestamps_file")
+"""The fields a listed source carries once detail is requested. Three resolved absolute paths per source make the
+paired artifacts the term that grows a whole-project listing fastest, so they are withheld until a caller asks for
+them."""
 
 
 @mcp.tool()
@@ -95,24 +114,50 @@ def write_camera_manifest_tool(
 
 
 @mcp.tool()
-def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
-    """Discovers confirmed camera recordings under a root directory.
+def discover_camera_data_tool(
+    root_directory: str,
+    source_ids: list[str] | None = None,
+    name: str | None = None,
+    limit: int | None = None,
+    start_row: int = 0,
+    *,
+    include_items: bool = False,
+    detailed: bool = False,
+) -> dict[str, Any]:
+    """Discovers confirmed camera recordings under a root directory, in three widening stages.
 
     Recursively searches for camera_manifest.yaml files to identify camera sources. Only sources whose log
     archives (``{source_id}_log.npz``) exist on disk are included. For each confirmed source, resolves the
     paired video file and processed timestamp feather file from pre-collected file indices. Video files are
     matched by camera name first, then by source ID pattern, preferring the closest match by path proximity
-    to the log directory. Returns a flat list of resolved source entries.
+    to the log directory.
+
+    A bare call reports the counts and the flat log directory list a batch is prepared from, alongside a ``breakdown``
+    naming every source ID and camera name the scan found. Naming a filter adds a page of sources carrying their
+    identity and their directories. Opting into detail adds each source's archive, video, and timestamp paths, which is
+    what makes a whole-project listing large.
+
+    The counts, the breakdown, and the log directory list span every confirmed source regardless of the filters, so
+    narrowing what is listed never distorts what is reported.
 
     Args:
         root_directory: The absolute path to the root directory to search. Searched recursively.
+        source_ids: Restricts the listing to these camera source IDs.
+        name: Restricts the listing to one camera name.
+        limit: The sources to list. Defaults to 200, or to 50 when detail is requested. A value at or below zero lists
+            every match, which is how a caller reading under a tight filter takes the whole result at once.
+        start_row: The match index to begin the listing at. Follow ``next_start_row`` to walk a long result.
+        include_items: Determines whether to list sources when no filter is named.
+        detailed: Determines whether the listed sources report their archive, video, and timestamp paths.
 
     Returns:
-        A dictionary containing a 'sources' list where each entry has 'recording_root', 'source_id', 'name',
-        'log_archive', 'video_file', 'timestamps_file', and 'log_directory' keys, a flat 'log_directories'
-        list for batch processing, and aggregate counts. Video and timestamp paths are None when the
-        corresponding file cannot be found. Returns an error dictionary when the root directory does not exist, is
-        not a directory, or cannot be searched.
+        A dictionary carrying a flat 'log_directories' list for batch processing, 'total_sources',
+        'total_log_directories', and a 'breakdown' per axis. Adds a 'sources' list alongside top-level 'rows',
+        'matched_rows', 'start_row', and 'next_start_row' paging fields whenever a filter is named or the listing is
+        requested. A detailed source omits its video or timestamp path when the corresponding file cannot be found. A
+        scan confirming no source returns an empty 'sources' list and an empty 'breakdown' whatever the filters name.
+        Returns an error dictionary when the root directory does not exist, is not a directory, cannot be searched, or
+        a filter names a value the scan did find no source for.
     """
     root_path = Path(root_directory)
 
@@ -153,6 +198,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
             "log_directories": [],
             "total_sources": 0,
             "total_log_directories": 0,
+            "breakdown": {},
         }
 
     # Pre-collects all video files and camera_timestamps directories under the search root in two rglob passes.
@@ -168,9 +214,9 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
     # Builds the flat list of resolved source entries. Each entry pairs the confirmed log archive with its
     # recording root, matched video file, and processed timestamp feather file.
     sources_output: list[dict[str, Any]] = []
-    for log_directory, source_id, name, archive_path in confirmed_sources:
+    for log_directory, source_id, camera_name, archive_path in confirmed_sources:
         video_path = _match_video_file(
-            all_video_files=all_video_files, log_directory=log_directory, source_id=source_id, name=name
+            all_video_files=all_video_files, log_directory=log_directory, source_id=source_id, name=camera_name
         )
         feather_path = _find_feather_file(
             timestamps_directories=timestamps_directories, log_directory=log_directory, source_id=source_id
@@ -180,7 +226,7 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
             {
                 "recording_root": str(log_directory_to_root[log_directory]),
                 "source_id": str(source_id),
-                "name": name,
+                "name": camera_name,
                 "log_archive": str(archive_path),
                 "video_file": video_path,
                 "timestamps_file": str(feather_path) if feather_path is not None else None,
@@ -188,12 +234,36 @@ def discover_camera_data_tool(root_directory: str) -> dict[str, Any]:
             }
         )
 
-    return {
-        "sources": sources_output,
+    response: dict[str, Any] = {
         "log_directories": sorted(str(log_directory) for log_directory in log_directory_paths),
         "total_sources": len(sources_output),
         "total_log_directories": len(log_directory_paths),
+        "breakdown": item_breakdown(items=sources_output, axes=_SOURCE_AXES),
     }
+
+    if source_ids is None and name is None and not include_items:
+        return response
+
+    matched = sources_output
+    if source_ids is not None:
+        rejection = reject_unknown(items=sources_output, key="source_id", values=source_ids, subject="source")
+        if rejection is not None:
+            return rejection
+        matched = [source for source in matched if source["source_id"] in source_ids]
+    if name is not None:
+        rejection = reject_unknown(items=sources_output, key="name", values=[name], subject="source")
+        if rejection is not None:
+            return rejection
+        matched = [source for source in matched if source["name"] == name]
+
+    fields = (*_SOURCE_SEMI_DETAIL_FIELDS, *_SOURCE_DETAIL_FIELDS) if detailed else _SOURCE_SEMI_DETAIL_FIELDS
+    window = resolve_page(
+        total=len(matched), limit=resolve_detail_limit(limit=limit, detailed=detailed), start_row=start_row
+    )
+    page = matched[window.start : window.stop]
+    response["sources"] = [project_item(item=source, fields=fields) for source in page]
+    response.update(page_fields(window=window, total=len(matched), listed=len(page)))
+    return response
 
 
 @mcp.tool()

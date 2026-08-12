@@ -9,6 +9,7 @@ from ataraxis_data_structures import ProcessingTracker
 
 from .worker import execute_job
 from .discovery import prepare_jobs
+from .allocation import resolve_job_workers, resolve_archive_footprint
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,10 +35,8 @@ def run_log_processing_pipeline(
         The tracker is aligned against the full job universe the camera manifest defines in both modes, which lets
         independent external jobs share one tracker without resetting each other's state.
 
-        Each job runs at the requested worker ceiling, and the extraction falls back to a sequential run only for an
-        archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages. This path runs no sizing pass, so a job
-        whose archive passes that threshold opens a pool at the full ceiling. A sequential run commits one job's
-        resources at a time, so it weighs nothing against a budget and reads no archive before dispatching it.
+        Each job runs at the width the caller named, or at the width its own archive resolves to when the caller
+        named none. Jobs run one at a time, so this path weighs nothing against a core or a memory budget.
 
     Args:
         log_directory: The path to the root directory to search for .npz log archives. The directory is searched
@@ -50,8 +49,9 @@ def run_log_processing_pipeline(
         source_ids: The camera source IDs to process in local mode. Each ID must be registered in the camera
             manifest and correspond to exactly one archive under the log directory. If not provided, resolves all
             registered source IDs from the manifest. This argument is ignored in external mode.
-        workers: The ceiling on the workers any single job receives. Setting this to a value less than 1 resolves the
-            ceiling from the host's core count. Setting this to 1 conducts every job sequentially.
+        workers: The workers every job receives. A positive value is used verbatim. A non-positive value resolves the
+            width from each archive, which is one worker below the parallel extraction threshold and the declared
+            per-job allocation above it.
         display_progress: Determines whether to display progress bars during timestamp extraction.
 
     Raises:
@@ -70,7 +70,6 @@ def run_log_processing_pipeline(
         output_directory=output_directory,
         source_ids=source_ids,
         job_id=job_id,
-        core_ceiling=workers,
     )
 
     # A caller reaching this function asked for work to be carried out, so resolving nothing is a failure here even
@@ -92,12 +91,18 @@ def run_log_processing_pipeline(
     tracker = ProcessingTracker(file_path=job_set.tracker_path)
 
     for job in job_set.jobs:
+        # An unset width is the one choice the caller left open, so it is resolved from each archive in turn.
+        job_workers = (
+            workers
+            if workers > 0
+            else resolve_job_workers(footprint=resolve_archive_footprint(archive_path=job.archive_path))
+        )
         execute_job(
             log_path=job.archive_path,
             output_directory=job.output_directory,
             source_id=job.source_id,
             job_id=job.job_id,
-            workers=job.core_weight,
+            workers=job_workers,
             tracker=tracker,
             display_progress=display_progress,
         )

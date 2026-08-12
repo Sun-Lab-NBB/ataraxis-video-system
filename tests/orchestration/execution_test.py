@@ -151,8 +151,8 @@ def _build_single_job_batch(tmp_path, frame_count=4):
     _build_archive(directory=log_directory, source_id=1, frame_count=frame_count)
     write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
 
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", core_ceiling=1)
-    descriptor, sizing = size_job(job=job_set.jobs[0], core_ceiling=1)
+    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+    descriptor, sizing = size_job(job=job_set.jobs[0])
 
     return job_set, descriptor, sizing
 

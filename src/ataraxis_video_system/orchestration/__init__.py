@@ -26,6 +26,7 @@ from .execution import (
 from .allocation import (
     SPAWNED_CHILD_MEMORY_MB,
     CAMERA_EXTRACTION_JOB_CORES,
+    PARALLEL_EXTRACTION_THRESHOLD,
     ArchiveFootprint,
     resolve_pool_size,
     resolve_core_budget,
@@ -40,6 +41,7 @@ from .allocation import (
 __all__ = [
     "CAMERA_EXTRACTION_JOB_CORES",
     "CAMERA_EXTRACTION_JOB_NAME",
+    "PARALLEL_EXTRACTION_THRESHOLD",
     "SPAWNED_CHILD_MEMORY_MB",
     "ArchiveFootprint",
     "JobDescriptor",
