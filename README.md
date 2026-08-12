@@ -318,8 +318,8 @@ tracker that manages job lifecycle (scheduled, running, succeeded, or failed), a
 a `camera_timestamps/` subdirectory under the specified output directory.
 
 Each job targets exactly one log archive. On the batch path, every job is sized from its own archive rather than from a
-single width chosen for the whole run. An archive holding fewer than 15000 data messages takes one worker, and every
-larger archive takes the declared stage width of four cores. The stage emits these two shapes and nothing between them,
+single width chosen for the whole run. An archive holding fewer than 35000 data messages takes one worker, and every
+larger archive takes the declared stage width of eight cores. The stage emits these two shapes and nothing between them,
 and the batch's core budget bounds the width only at admission. On the sequential path a positive `--workers` value
 reaches every job verbatim, while the default resolves each job's width from its own archive exactly as the batch path
 does. The job resolution and the memory model are exported as callable functions, so an external scheduler derives the
@@ -386,7 +386,7 @@ axvs mcp
 | `get_log_processing_timing_tool`       | Returns timing information for all jobs in the active session               |
 | `cancel_log_processing_tool`           | Cancels the active log processing execution session                         |
 | `reset_log_processing_jobs_tool`       | Resets specific source IDs or all jobs in a tracker for re-execution        |
-| `get_batch_status_overview_tool`       | Summarizes processing status for all output directories under a root directory |
+| `get_batch_status_overview_tool`       | Summarizes processing status for every output directory under a root        |
 | `analyze_camera_frame_statistics_tool` | Computes frame timing statistics and frame drop analysis from feather files |
 | `clean_log_processing_output_tool`     | Deletes the camera_timestamps/ subdirectory for clean re-processing         |
 

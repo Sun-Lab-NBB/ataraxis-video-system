@@ -443,7 +443,7 @@ def live_run(
     default=-1,
     show_default=True,
     help="The worker processes each job receives. Set to -1 (default) to resolve the width from the archive's "
-    "message count, which yields a single worker for a small archive and the declared per-job allocation of 4 "
+    "message count, which yields a single worker for a small archive and the declared per-job allocation of 8 "
     "cores for a large one.",
 )
 @click.option(

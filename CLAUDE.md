@@ -189,8 +189,9 @@ video encoding using CPU or GPU.
   which archives were produced by ataraxis-video-system and to route processing by source ID.
 - **Log Processing**: Extracts frame acquisition timestamps from DataLogger `.npz` archives, one job per archive.
   `resolve_jobs()` reads the recording's `camera_manifest.yaml` and reports an empty universe for a tree holding none,
-  `prepare_jobs()` registers the resolved jobs without reading an archive, and `size_job()` applies the memory model in
-  one pass. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job lifecycle management.
+  `prepare_jobs()` registers the resolved jobs without reading an archive, and `size_job()` resolves a job's width and
+  its memory from one archive read. Uses `LogArchiveReader` for archive access and `ProcessingTracker` for job
+  lifecycle management.
   `run_log_processing_pipeline()` runs one recording sequentially, or the single job a caller names by its canonical
   identifier, and fails when it resolves none. Outputs Feather files in a `camera_timestamps/` subdirectory.
 - **MCP Server**: A shared `MCPServer` instance (`name="ataraxis-video-system"`) is defined in

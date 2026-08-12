@@ -856,7 +856,8 @@ def _analyze_single_feather(
 
     Args:
         feather_file: The absolute path to the feather file.
-        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, auto-detected as 2x median.
+        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, the threshold is resolved from
+            the median inter-frame interval and the module's automatic drop threshold multiplier.
         max_drop_locations: The maximum number of frame drop locations to include.
 
     Returns:
@@ -913,7 +914,8 @@ def _compute_frame_statistics(
 
     Args:
         timestamps: The frame acquisition timestamps, in microseconds elapsed since the UTC epoch onset.
-        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, auto-detected as 2x median.
+        drop_threshold_us: The inter-frame interval threshold in microseconds. When 0, the threshold is resolved from
+            the median inter-frame interval and the module's automatic drop threshold multiplier.
         max_drop_locations: The maximum number of frame drop locations to include.
 
     Returns:
