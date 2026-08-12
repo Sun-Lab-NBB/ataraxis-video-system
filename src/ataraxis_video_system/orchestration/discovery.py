@@ -26,7 +26,6 @@ from .jobs import (
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
 from .allocation import (
     CAMERA_EXTRACTION_JOB_CORES,
-    resolve_core_budget,
     resolve_job_workers,
     estimate_job_memory_mb,
     resolve_archive_footprint,
@@ -92,8 +91,6 @@ class JobSet:
     skipped_sources: tuple[tuple[str, str], ...]
     """Each source that yielded no job, paired with the reason. Always empty under strict sourcing, where a source
     that cannot be prepared raises instead."""
-    core_ceiling: int
-    """The cores any single job of this set may receive."""
 
     def resolve_job(self, job_id: str) -> JobDescriptor:
         """Returns the descriptor of the requested job.
@@ -227,7 +224,6 @@ def prepare_jobs(
     source_ids: Sequence[str] | None = None,
     job_id: str | None = None,
     *,
-    core_ceiling: int = -1,
     strict_sources: bool = True,
 ) -> JobSet:
     """Resolves and registers the camera timestamp extraction jobs of one log directory.
@@ -237,10 +233,8 @@ def prepare_jobs(
         write this call performs outside a job's own output. The prepared job list lives in the returned set rather
         than on disk.
 
-        Reads no archive. Every job carries the core ceiling as its width, and the extraction falls back to a
-        sequential run only for an archive holding fewer than PARALLEL_PROCESSING_THRESHOLD messages. The ceiling is
-        bounded by CAMERA_EXTRACTION_JOB_CORES, so a job prepared without sizing holds no more cores than that cap,
-        though an archive above the threshold may hold more cores than the sizing pass would grant it.
+        Reads no archive. Every job carries the declared allocation as its width, which the sizing pass replaces with
+        the width the job's own archive resolves to.
 
         The tracker is aligned against the whole manifest universe whichever subset this call prepares, so several
         invocations naming different jobs share one tracker without resetting each other's recorded outcomes.
@@ -252,8 +246,6 @@ def prepare_jobs(
             argument is ignored when a job identifier selects the work.
         job_id: The hexadecimal identifier of the single job to prepare. Leaving this unset prepares every requested
             source.
-        core_ceiling: The cores any single job may receive. A non-positive value resolves the ceiling from the host.
-            The resolved ceiling is bounded by CAMERA_EXTRACTION_JOB_CORES.
         strict_sources: Determines whether a source that cannot be prepared stops the call. When set, a requested
             source the manifest does not register, or one whose archive does not resolve to exactly one file, raises.
             When unset, such a source is recorded in the returned set's skipped sources with its reason.
@@ -346,7 +338,6 @@ def prepare_jobs(
 
     resolved_output = resolve_output_directory(output_directory=output_directory)
     tracker_path = resolve_tracker_path(output_directory=resolved_output)
-    ceiling = min(CAMERA_EXTRACTION_JOB_CORES, resolve_core_budget(requested_budget=core_ceiling))
 
     # Creates the output layout only once a job is going to be written into it, so a lenient request that prepared
     # nothing leaves the caller's output path as it found it.
@@ -360,7 +351,7 @@ def prepare_jobs(
             tracker_path=tracker_path,
             source_id=source_id,
             log_directory=log_directory,
-            core_weight=ceiling,
+            core_weight=CAMERA_EXTRACTION_JOB_CORES,
         )
         for source_id in prepared_ids
     )
@@ -382,11 +373,10 @@ def prepare_jobs(
         universe=universe.universe,
         jobs=jobs,
         skipped_sources=tuple(sorted(skipped)),
-        core_ceiling=ceiling,
     )
 
 
-def size_job(job: JobDescriptor, core_ceiling: int = -1) -> tuple[JobDescriptor, JobSizing]:
+def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing]:
     """Sizes one prepared job from the archive it reads.
 
     Notes:
@@ -394,15 +384,12 @@ def size_job(job: JobDescriptor, core_ceiling: int = -1) -> tuple[JobDescriptor,
 
     Args:
         job: The prepared job to size.
-        core_ceiling: The cores this job may receive, which bounds the width its archive resolves to. A non-positive
-            value resolves the ceiling from the host.
 
     Returns:
         The job carrying its resolved width, and the figures the sizing produced.
     """
-    ceiling = resolve_core_budget(requested_budget=core_ceiling) if core_ceiling < 1 else core_ceiling
     footprint = resolve_archive_footprint(archive_path=job.archive_path)
-    core_weight = resolve_job_workers(footprint=footprint, ceiling=ceiling)
+    core_weight = resolve_job_workers(footprint=footprint)
 
     return (
         replace(job, core_weight=core_weight),

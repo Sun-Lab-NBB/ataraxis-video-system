@@ -17,7 +17,10 @@ from ataraxis_video_system.orchestration.jobs import (
     resolve_output_directory,
 )
 from ataraxis_video_system.orchestration.pipeline import run_log_processing_pipeline
-from ataraxis_video_system.orchestration.allocation import resolve_core_budget
+from ataraxis_video_system.orchestration.allocation import (
+    CAMERA_EXTRACTION_JOB_CORES,
+    PARALLEL_EXTRACTION_THRESHOLD,
+)
 
 _ONSET_US: int = 1700000000000000
 """Stores the UTC epoch onset, in microseconds, shared by every synthetic log archive built in this module."""
@@ -186,20 +189,22 @@ def test_run_log_processing_pipeline_missing_manifest(tmp_path):
         run_log_processing_pipeline(log_directory=log_directory, output_directory=tmp_path / "output")
 
 
-def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, monkeypatch):
-    """Verifies that the pipeline dispatches its jobs without opening or sizing a single log archive."""
+def test_run_log_processing_pipeline_dispatches_a_named_width_verbatim(tmp_path, monkeypatch):
+    """Verifies that a positive worker count reaches every job unchanged and without any archive being sized."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir(parents=True)
 
-    # Writes unreadable stand-ins for the log archives, so any read before dispatch raises instead of being missed.
+    # Writes unreadable stand-ins for the log archives, so a read the named width forbids raises instead of passing
+    # unnoticed.
     for source_id in (1, 2):
         _archive_path(log_directory=log_directory, source_id=source_id).write_bytes(b"not-a-valid-npz-archive")
         write_camera_manifest(log_directory=log_directory, source_id=source_id, name=f"cam{source_id}")
 
     def _forbidden_footprint(**arguments):
-        message = f"The pipeline sized a job from its archive: {arguments}."
+        message = f"The pipeline sized a job the caller had already given a width: {arguments}."
         raise AssertionError(message)
 
+    monkeypatch.setattr(target=pipeline, name="resolve_archive_footprint", value=_forbidden_footprint)
     monkeypatch.setattr(target=discovery, name="resolve_archive_footprint", value=_forbidden_footprint)
     calls = _record_dispatches(monkeypatch=monkeypatch)
 
@@ -219,9 +224,9 @@ def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, 
         _archive_path(log_directory=log_directory, source_id=source_id) for source_id in (1, 2)
     ]
 
-    # Every job is dispatched at the requested ceiling, as narrowing that width is the extraction's own business.
+    # A caller that names a width has already decided how wide its jobs run, so the figure reaches the runner as given.
     resolved_output = resolve_output_directory(output_directory=output_directory)
-    assert {call["workers"] for call in calls} == {resolve_core_budget(requested_budget=4)}
+    assert {call["workers"] for call in calls} == {4}
     assert {call["output_directory"] for call in calls} == {resolved_output}
     assert {call["display_progress"] for call in calls} == {False}
     assert {call["tracker"].file_path for call in calls} == {resolve_tracker_path(output_directory=resolved_output)}
@@ -229,3 +234,39 @@ def test_run_log_processing_pipeline_reads_no_archive_before_dispatch(tmp_path, 
     # The preparation still materializes the output layout and registers both jobs on the shared tracker.
     tracker_snapshot = _open_tracker(output_directory=output_directory).snapshot()
     assert sorted(tracker_snapshot) == sorted(job_ids.values())
+
+
+def test_run_log_processing_pipeline_resolves_an_unset_width_per_archive(tmp_path, monkeypatch):
+    """Verifies that an unset worker count sizes each job from the archive that job reads."""
+    log_directory = tmp_path / "logs"
+    _build_camera_logs(log_directory=log_directory, source_ids=(1,))
+
+    # The second source holds enough messages to earn the pooled shape, so the two jobs of one invocation resolve to
+    # different widths and a single shared figure cannot satisfy both assertions below.
+    create_test_archive(
+        archive_path=_archive_path(log_directory=log_directory, source_id=2),
+        source_id=2,
+        onset_us=_ONSET_US,
+        frame_timestamps_us=list(range(1, PARALLEL_EXTRACTION_THRESHOLD + 1)),
+    )
+    write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
+
+    sized_archives = []
+    footprint_resolver = pipeline.resolve_archive_footprint
+
+    def _record_footprint(archive_path):
+        sized_archives.append(archive_path)
+        return footprint_resolver(archive_path=archive_path)
+
+    monkeypatch.setattr(target=pipeline, name="resolve_archive_footprint", value=_record_footprint)
+    calls = _record_dispatches(monkeypatch=monkeypatch)
+
+    run_log_processing_pipeline(
+        log_directory=log_directory,
+        output_directory=tmp_path / "output",
+        workers=-1,
+        display_progress=False,
+    )
+
+    assert sized_archives == [_archive_path(log_directory=log_directory, source_id=source_id) for source_id in (1, 2)]
+    assert [call["workers"] for call in calls] == [1, CAMERA_EXTRACTION_JOB_CORES]

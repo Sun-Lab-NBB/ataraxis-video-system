@@ -26,7 +26,9 @@ from .execution import (
 from .allocation import (
     SPAWNED_CHILD_MEMORY_MB,
     CAMERA_EXTRACTION_JOB_CORES,
+    PARALLEL_EXTRACTION_THRESHOLD,
     ArchiveFootprint,
+    size_archive_job,
     resolve_pool_size,
     resolve_core_budget,
     resolve_job_workers,
@@ -34,12 +36,12 @@ from .allocation import (
     resolve_host_memory_mb,
     resolve_memory_budget_mb,
     resolve_archive_footprint,
-    estimate_archive_job_memory_mb,
 )
 
 __all__ = [
     "CAMERA_EXTRACTION_JOB_CORES",
     "CAMERA_EXTRACTION_JOB_NAME",
+    "PARALLEL_EXTRACTION_THRESHOLD",
     "SPAWNED_CHILD_MEMORY_MB",
     "ArchiveFootprint",
     "JobDescriptor",
@@ -49,7 +51,6 @@ __all__ = [
     "JobSource",
     "JobUniverse",
     "OutputLayout",
-    "estimate_archive_job_memory_mb",
     "estimate_job_memory_mb",
     "execute_job",
     "generate_job_ids",
@@ -70,6 +71,7 @@ __all__ = [
     "run_extraction_job",
     "run_log_processing_pipeline",
     "set_execution_state",
+    "size_archive_job",
     "size_job",
     "start_execution_session",
 ]

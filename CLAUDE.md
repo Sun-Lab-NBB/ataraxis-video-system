@@ -145,7 +145,7 @@ video encoding using CPU or GPU.
 | `src/.../video/timestamps.py`         | Frame acquisition timestamp extraction algorithm                                  |
 | `src/.../orchestration/`              | Job identity, sizing, discovery, the single-job runner, and both execution paths  |
 | `src/.../orchestration/jobs.py`       | Job identity, the output layout enumeration, and the job descriptor               |
-| `src/.../orchestration/allocation.py` | Declared core allocation and archive-derived memory footprint model               |
+| `src/.../orchestration/allocation.py` | Core allocation, parallel extraction threshold, archive-derived memory model      |
 | `src/.../orchestration/discovery.py`  | Manifest-derived job resolution, preparation, and the per-job sizing pass         |
 | `src/.../orchestration/worker.py`     | Single-job runner and the picklable descriptor-addressed pool entry point         |
 | `src/.../orchestration/execution.py`  | Shared-pool batch engine admitting jobs against core and memory budgets           |
@@ -154,6 +154,7 @@ video encoding using CPU or GPU.
 | `src/.../interfaces/cli.py`           | Click-based `axvs` CLI with subcommand groups                                     |
 | `src/.../interfaces/mcp_server.py`    | MCP server entry point that wires up tools and runs MCPServer                     |
 | `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and a cross-tool helper function                        |
+| `src/.../interfaces/responses.py`     | Paging, projection, and breakdown machinery the MCP read tools share              |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
 | `tests/`                              | Test suite mirroring the video and orchestration subpackages, plus shared helpers |
 | `docs/`                               | Sphinx API documentation source                                                   |
@@ -287,7 +288,8 @@ video encoding using CPU or GPU.
 2. `extract_logged_camera_timestamps()` reads `.npz` archives via `LogArchiveReader` and returns `NDArray[np.uint64]`
 3. `run_log_processing_pipeline()` runs one recording sequentially, or one job by identifier
 4. `ProcessingTracker` manages job lifecycle (SCHEDULED → RUNNING → SUCCEEDED/FAILED) via YAML state files
-5. `_process_frame_message_batch()` runs in subprocess workers, which the `parallel` and `concurrency` keys measure
+5. `_process_frame_message_batch()` runs in the pool workers `extract_logged_camera_timestamps()` opens, at the width
+   its job was dispatched with
 6. Log discovery uses manifest-based routing via `camera_manifest.yaml` files
 
 **Adding or modifying MCP tools:**

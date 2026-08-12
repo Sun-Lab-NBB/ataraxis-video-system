@@ -151,8 +151,8 @@ def _build_single_job_batch(tmp_path, frame_count=4):
     _build_archive(directory=log_directory, source_id=1, frame_count=frame_count)
     write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
 
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output", core_ceiling=1)
-    descriptor, sizing = size_job(job=job_set.jobs[0], core_ceiling=1)
+    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+    descriptor, sizing = size_job(job=job_set.jobs[0])
 
     return job_set, descriptor, sizing
 
@@ -491,8 +491,8 @@ def test_group_jobs_by_tracker(tmp_path):
 @pytest.mark.xdist_group(name="orchestration")
 def test_resolve_pool_size_reflects_the_memory_budget():
     """Verifies that the slot count a batch opens is held to the warmed bodies half its memory budget can hold."""
-    # Half of 1024 MB holds two spawned children, which is fewer than the jobs or the cores on offer.
-    assert resolve_pool_size(job_count=4, core_budget=8, memory_budget_mb=1024) == 2
+    # Half of 1280 MB holds three spawned children, which is fewer than the jobs or the cores on offer.
+    assert resolve_pool_size(job_count=4, core_budget=8, memory_budget_mb=1280) == 3
 
     # A budget that cannot afford a single body still opens one slot, so the batch is never stalled by its own model.
     assert resolve_pool_size(job_count=4, core_budget=8, memory_budget_mb=SPAWNED_CHILD_MEMORY_MB) == 1

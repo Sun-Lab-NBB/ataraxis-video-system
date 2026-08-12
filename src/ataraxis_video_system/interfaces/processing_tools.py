@@ -19,6 +19,14 @@ from ataraxis_data_structures import (
 )
 
 from ..video import ExtractedDataColumns
+from .responses import (
+    page_fields,
+    project_item,
+    resolve_page,
+    item_breakdown,
+    reject_unknown,
+    resolve_detail_limit,
+)
 from .mcp_instance import mcp
 from ..orchestration import (
     JobSizing,
@@ -41,6 +49,25 @@ from ..orchestration import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+_OVERVIEW_AXES: tuple[str, ...] = ("status",)
+"""The directory keys a caller filters the batch overview by, which a bare call reports the counts of."""
+
+_OVERVIEW_SEMI_DETAIL_FIELDS: tuple[str, ...] = ("output_directory", "status", "summary")
+"""The fields every listed output directory carries."""
+
+_OVERVIEW_DETAIL_FIELDS: tuple[str, ...] = ("tracker_path", "jobs", "error")
+"""The fields a listed output directory carries once detail is requested. One entry per tracked job makes the job list
+the term that grows a whole-project overview fastest, so it is withheld until a caller asks for it."""
+
+_AUTO_DROP_THRESHOLD_MULTIPLIER: float = 1.5
+"""The multiple of the median inter-frame interval a gap has to pass before it is examined as a frame drop.
+
+Notes:
+    Losing a single frame spans two nominal intervals, so a multiplier of two sits on the very gap it is meant to
+    catch and resolves on acquisition jitter rather than on loss. A multiplier between one and two separates the two
+    outcomes, and the midpoint holds the widest margin against jitter in both directions.
+"""
+
 
 @mcp.tool()
 def prepare_log_processing_batch_tool(
@@ -56,15 +83,17 @@ def prepare_log_processing_batch_tool(
     of reinitializing. Requires prior discovery. The caller must provide confirmed source IDs.
 
     Important:
-        The AI agent calling this tool MUST run discover_camera_data_tool first to obtain log directory paths
-        and confirmed source IDs. The agent MUST ask the user for the output directory paths before calling
+        The AI agent calling this tool MUST run discover_camera_data_tool first to obtain log directory paths, and
+        MUST read the confirmed source IDs from the 'breakdown' that call reports or from the 'sources' list it
+        returns under include_items. The agent MUST ask the user for the output directory paths before calling
         this tool. Do not assume or guess directory paths or source IDs.
 
     Args:
         log_directories: The list of absolute paths to DataLogger output directories containing log archives.
             Accepts paths from the 'log_directories' list returned by discover_camera_data_tool.
-        source_ids: The list of confirmed source IDs to process. Accepts IDs from the 'source_id' field of
-            entries in the 'sources' list returned by discover_camera_data_tool. Applied uniformly: each log
+        source_ids: The list of confirmed source IDs to process. Accepts the 'source_id' keys of the 'breakdown' a
+            bare discover_camera_data_tool call reports, and the 'source_id' field of the entries in the 'sources'
+            list it returns once a filter is named or include_items is set. Applied uniformly: each log
             directory creates jobs for every source ID in this list that has a matching archive on disk. Passing an
             empty list prepares every source the log directory's camera_manifest.yaml registers.
         output_directories: The list of absolute paths for per-log-directory output. Must match the length of
@@ -109,7 +138,7 @@ def prepare_log_processing_batch_tool(
                 source_ids=source_ids or None,
                 strict_sources=False,
             )
-            sized_jobs = [size_job(job=job, core_ceiling=job_set.core_ceiling) for job in job_set.jobs]
+            sized_jobs = [size_job(job=job) for job in job_set.jobs]
             sized_jobs.sort(key=lambda entry: entry[1].memory_mb, reverse=True)
         except Exception:
             invalid_paths.append(log_directory_string)
@@ -173,8 +202,9 @@ def execute_log_processing_jobs_tool(
 
     Takes job descriptors from the manifest produced by prepare_log_processing_batch_tool and starts a background
     execution manager. Each job's cores and memory are resolved from the archive it reads before dispatch, so a long
-    recording and a short one are admitted at their own sizes. A job runs at the declared stage width narrowed to the
-    workers its own archive repays, and an archive below the parallel processing threshold takes a single core. The
+    recording and a short one are admitted at their own sizes. An archive below the parallel extraction threshold takes
+    a single core and every archive above it takes the declared stage width, collapsed onto the core budget when that
+    budget is narrower. The
     manager admits a job once the running set has room for both its cores and its memory, and it admits an oversized
     job alone rather than leaving it queued forever. A job whose estimated memory passes the host's total physical
     memory is failed on its tracker instead of being admitted, since it cannot complete wherever it is dispatched.
@@ -230,7 +260,7 @@ def execute_log_processing_jobs_tool(
             invalid_jobs.append({**job_dict, "error": "Missing or unreadable sizing keys from the prepared manifest."})
             continue
 
-        core_weight = resolve_job_workers(footprint=footprint, ceiling=resolved_cores)
+        core_weight = min(resolve_job_workers(footprint=footprint), resolved_cores)
         descriptor = replace(descriptor, core_weight=core_weight)
         sizing = JobSizing(
             memory_mb=estimate_job_memory_mb(footprint=footprint, cores=core_weight),
@@ -293,7 +323,8 @@ def get_log_processing_status_tool() -> dict[str, Any]:
     exists, returns an inactive status.
 
     Returns:
-        A dictionary containing an 'active' flag, a 'canceled' flag, per-job status entries in 'jobs', and a
+        A dictionary containing an 'active' flag, a 'canceled' flag, per-job status entries in 'jobs', each naming the
+        log directory the job reads so jobs sharing a source across recordings stay distinguishable, and a
         'summary' carrying 'total', 'succeeded', 'failed', 'running', and 'scheduled' counts.
     """
     state = get_execution_state()
@@ -313,7 +344,13 @@ def get_log_processing_status_tool() -> dict[str, Any]:
             registry = ProcessingTracker(file_path=tracker_path).snapshot()
         except Exception:
             job_details.extend(
-                {"job_id": job.job_id, "source_id": job.source_id, "status": "UNKNOWN"} for job in path_jobs
+                {
+                    "job_id": job.job_id,
+                    "source_id": job.source_id,
+                    "log_directory": str(job.log_directory),
+                    "status": "UNKNOWN",
+                }
+                for job in path_jobs
             )
             continue
 
@@ -331,14 +368,26 @@ def get_log_processing_status_tool() -> dict[str, Any]:
                 else:
                     scheduled_count += 1
 
-                entry: dict[str, Any] = {"job_id": job.job_id, "source_id": job.source_id, "status": status.name}
+                entry: dict[str, Any] = {
+                    "job_id": job.job_id,
+                    "source_id": job.source_id,
+                    "log_directory": str(job.log_directory),
+                    "status": status.name,
+                }
                 if job_state.error_message is not None:
                     entry["error_message"] = job_state.error_message
                 if job_state.executor_id is not None:
                     entry["executor_id"] = job_state.executor_id
                 job_details.append(entry)
             else:
-                job_details.append({"job_id": job.job_id, "source_id": job.source_id, "status": "UNKNOWN"})
+                job_details.append(
+                    {
+                        "job_id": job.job_id,
+                        "source_id": job.source_id,
+                        "log_directory": str(job.log_directory),
+                        "status": "UNKNOWN",
+                    }
+                )
 
     return {
         "active": manager_alive,
@@ -362,7 +411,8 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     timestamps from ProcessingTracker.
 
     Returns:
-        A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary carrying
+        A dictionary containing an 'active' flag, per-job timing in 'jobs', each naming the log directory the job
+        reads so jobs sharing a source across recordings stay distinguishable, and a 'session' summary carrying
         'total_elapsed_seconds', 'completed_count', 'failed_count', 'running_count', and 'pending_count', plus
         'throughput_jobs_per_hour' once at least one job has completed. Returns an 'active' flag of False with a
         'message' and neither 'jobs' nor 'session' when no execution session exists.
@@ -390,7 +440,11 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
                 continue
 
             job_info = registry[job.job_id]
-            entry: dict[str, Any] = {"job_id": job.job_id, "source_id": job.source_id}
+            entry: dict[str, Any] = {
+                "job_id": job.job_id,
+                "source_id": job.source_id,
+                "log_directory": str(job.log_directory),
+            }
 
             if job_info.executor_id is not None:
                 entry["executor_id"] = job_info.executor_id
@@ -560,21 +614,43 @@ def reset_log_processing_jobs_tool(
 
 
 @mcp.tool()
-def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
-    """Discovers and summarizes processing status for all camera timestamp output directories under a root directory.
+def get_batch_status_overview_tool(
+    root_directory: str,
+    statuses: list[str] | None = None,
+    limit: int | None = None,
+    start_row: int = 0,
+    *,
+    include_items: bool = False,
+    detailed: bool = False,
+) -> dict[str, Any]:
+    """Summarizes processing status for all camera timestamp output directories under a root, in three widening stages.
 
     Recursively searches for camera_processing_tracker.yaml files and aggregates their status. Each tracker sits in
     the ``camera_timestamps/`` subdirectory of one output directory, so every entry reports that subdirectory under
     its 'output_directory' key rather than the DataLogger log directory the archives came from.
 
+    A bare call reports the aggregate job counts alongside a ``breakdown`` naming how many directories carry each
+    status, which answers what needs attention without listing anything. Naming a status adds a page of directories
+    carrying their own counts. Opting into detail adds each directory's tracker path and its per-job entries.
+
+    The aggregate counts and the breakdown span every discovered directory regardless of the filters, so narrowing
+    what is listed never distorts what is reported.
+
     Args:
         root_directory: The absolute path to the root directory to search for tracker files.
+        statuses: Restricts the listing to directories carrying these status labels.
+        limit: The directories to list. Defaults to 200, or to 50 when detail is requested. A value at or below zero
+            lists every match, which is how a caller reading under a tight filter takes the whole result at once.
+        start_row: The match index to begin the listing at. Follow ``next_start_row`` to walk a long result.
+        include_items: Determines whether to list directories when no status is named.
+        detailed: Determines whether the listed directories report their tracker path and per-job entries.
 
     Returns:
-        A dictionary containing an 'output_directories' list of per-directory status entries, a
-        'total_output_directories' count, and a 'summary' carrying aggregate 'succeeded', 'failed', 'running', and
-        'scheduled' counts. Returns an error dictionary when the root directory does not exist, is not a directory, or
-        cannot be searched.
+        A dictionary carrying 'total_output_directories', an aggregate 'summary' of job counts, and a 'breakdown' of
+        directories per status. Carries an 'output_directories' list with 'rows', 'matched_rows', 'start_row', and
+        'next_start_row' whenever a status is named or the listing is requested. Returns an error dictionary when the
+        root directory does not exist, is not a directory, cannot be searched, or a status names a value no tracker
+        holds.
     """
     root_path = Path(root_directory)
 
@@ -626,8 +702,7 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
                 }
             )
 
-    return {
-        "output_directories": output_directory_statuses,
+    response: dict[str, Any] = {
         "total_output_directories": len(output_directory_statuses),
         "summary": {
             "succeeded": aggregate_succeeded,
@@ -635,7 +710,29 @@ def get_batch_status_overview_tool(root_directory: str) -> dict[str, Any]:
             "running": aggregate_running,
             "scheduled": aggregate_scheduled,
         },
+        "breakdown": item_breakdown(items=output_directory_statuses, axes=_OVERVIEW_AXES),
     }
+
+    if statuses is None and not include_items:
+        return response
+
+    matched = output_directory_statuses
+    if statuses is not None:
+        rejection = reject_unknown(
+            items=output_directory_statuses, key="status", values=statuses, subject="output directory"
+        )
+        if rejection is not None:
+            return rejection
+        matched = [entry for entry in matched if entry["status"] in statuses]
+
+    fields = (*_OVERVIEW_SEMI_DETAIL_FIELDS, *_OVERVIEW_DETAIL_FIELDS) if detailed else _OVERVIEW_SEMI_DETAIL_FIELDS
+    window = resolve_page(
+        total=len(matched), limit=resolve_detail_limit(limit=limit, detailed=detailed), start_row=start_row
+    )
+    page = matched[window.start : window.stop]
+    response["output_directories"] = [project_item(item=entry, fields=fields) for entry in page]
+    response.update(page_fields(window=window, total=len(matched), listed=len(page)))
+    return response
 
 
 @mcp.tool()
@@ -649,14 +746,15 @@ def analyze_camera_frame_statistics_tool(
     For each file, computes basic recording statistics (total frames, duration, estimated frame rate), inter-frame
     timing distribution (mean, median, standard deviation, min, max), and frame drop analysis (gap detection,
     estimated drop count, drop locations). Frame drops are identified as inter-frame intervals exceeding a threshold,
-    which defaults to 2x the median inter-frame interval when not specified.
+    which defaults to 1.5x the median inter-frame interval when not specified. Every gap is netted against the interval
+    that follows it, so a frame whose timestamp arrives late and is repaid by the next interval reports no loss.
 
     Args:
         feather_files: The list of absolute paths to camera timestamp feather files produced by the log processing
             pipeline. Expected filename pattern: ``camera_{source_id}_timestamps.feather``. Accepts paths from the
-            'timestamps_file' field returned by discover_camera_data_tool.
+            'timestamps_file' field of the 'sources' entries a detailed discover_camera_data_tool call returns.
         drop_threshold_us: The inter-frame interval threshold in microseconds above which a gap is classified as a
-            frame drop. When 0, the threshold is automatically computed as 2x the median inter-frame interval.
+            frame drop. When 0, the threshold is automatically computed as 1.5x the median inter-frame interval.
             Applied uniformly to all files.
         max_drop_locations: The maximum number of frame drop locations to include per file. Caps the
             'drop_locations' list to prevent oversized responses.
@@ -875,18 +973,20 @@ def _compute_frame_statistics(
         threshold = float(drop_threshold_us)
         threshold_source = "user_specified"
     else:
-        threshold = 2.0 * median_us
-        threshold_source = "auto_2x_median"
+        threshold = _AUTO_DROP_THRESHOLD_MULTIPLIER * median_us
+        threshold_source = f"auto_{_AUTO_DROP_THRESHOLD_MULTIPLIER}x_median"
 
     drop_mask = intervals_us > threshold
     drop_indices = np.where(drop_mask)[0]
     total_gaps_detected = len(drop_indices)
 
     if total_gaps_detected > 0:
-        # Estimates the number of dropped frames per gap using the median interval as expected spacing.
         expected_interval = median_us if median_us > 0 else 1.0
-        dropped_per_gap = np.round(intervals_us[drop_mask] / expected_interval).astype(np.int64) - 1
-        total_estimated_dropped_frames = int(np.sum(np.maximum(dropped_per_gap, 0)))
+        dropped_per_gap = _estimate_dropped_frames(
+            intervals_us=intervals_us, gap_indices=drop_indices, expected_interval=expected_interval
+        )
+        total_estimated_dropped_frames = int(np.sum(dropped_per_gap))
+        jitter_compensated_gaps = int(np.count_nonzero(dropped_per_gap == 0))
 
         total_expected_frames = total_frames + total_estimated_dropped_frames
         drop_rate_percent = round(total_estimated_dropped_frames / total_expected_frames * 100, ndigits=4)
@@ -900,7 +1000,7 @@ def _compute_frame_statistics(
         )
 
         drop_locations: list[dict[str, Any]] = []
-        for index in drop_indices[:max_drop_locations]:
+        for position, index in enumerate(drop_indices[:max_drop_locations]):
             gap_us = int(intervals_us[index])
             gap_ms = round(
                 convert_time(
@@ -908,13 +1008,12 @@ def _compute_frame_statistics(
                 ),
                 ndigits=4,
             )
-            estimated_lost = max(round(gap_us / expected_interval) - 1, 0)
             drop_locations.append(
                 {
                     "frame_index": int(index),
                     "gap_us": gap_us,
                     "gap_ms": gap_ms,
-                    "estimated_frames_lost": estimated_lost,
+                    "estimated_frames_lost": int(dropped_per_gap[position]),
                 }
             )
 
@@ -922,6 +1021,7 @@ def _compute_frame_statistics(
             "threshold_us": round(threshold, ndigits=2),
             "threshold_source": threshold_source,
             "total_gaps_detected": total_gaps_detected,
+            "jitter_compensated_gaps": jitter_compensated_gaps,
             "total_estimated_dropped_frames": total_estimated_dropped_frames,
             "drop_rate_percent": drop_rate_percent,
             "longest_gap_us": longest_gap_us,
@@ -934,6 +1034,7 @@ def _compute_frame_statistics(
             "threshold_us": round(threshold, ndigits=2),
             "threshold_source": threshold_source,
             "total_gaps_detected": 0,
+            "jitter_compensated_gaps": 0,
             "total_estimated_dropped_frames": 0,
             "drop_rate_percent": 0.0,
             "longest_gap_us": 0,
@@ -973,6 +1074,41 @@ def _compute_frame_statistics(
         },
         "frame_drop_analysis": frame_drop_analysis,
     }
+
+
+def _estimate_dropped_frames(
+    intervals_us: NDArray[Any], gap_indices: NDArray[Any], expected_interval: float
+) -> NDArray[np.int64]:
+    """Estimates the frames lost at each detected gap, netting every gap against the interval that follows it.
+
+    Notes:
+        A frame whose timestamp arrives late stretches its own interval and shortens the following one by the same
+        amount, so the pair still spans the frames it carries. Charging the stretched interval on its own reports that
+        jitter as a loss. Subtracting whatever the following interval falls short of a full interval leaves only the
+        span no frame accounts for.
+
+        The last interval of a recording has no successor to repay it, so it is paired with a full interval and
+        carries no compensation.
+
+    Args:
+        intervals_us: The inter-frame intervals of the whole recording, in microseconds.
+        gap_indices: The indices, into the interval array, of the gaps that passed the drop threshold.
+        expected_interval: The interval one frame occupies when none is lost, in microseconds.
+
+    Returns:
+        The frames lost at each gap, in the order the gap indices were supplied.
+    """
+    gaps = intervals_us[gap_indices].astype(np.float64)
+
+    following = np.full(gaps.shape, expected_interval, dtype=np.float64)
+    successor_indices = gap_indices + 1
+    resolved = successor_indices < len(intervals_us)
+    following[resolved] = intervals_us[successor_indices[resolved]]
+
+    shortfall = np.maximum(expected_interval - following, 0.0)
+    unaccounted = gaps - shortfall
+    dropped: NDArray[np.int64] = np.maximum(np.round(unaccounted / expected_interval).astype(np.int64) - 1, 0)
+    return dropped
 
 
 def _clean_single_output(output_directory: str) -> dict[str, Any]:

@@ -65,9 +65,9 @@ from .orchestration import (
     JobUniverse,
     execute_job,
     resolve_jobs,
+    size_archive_job,
     resolve_timestamps_path,
     run_log_processing_pipeline,
-    estimate_archive_job_memory_mb,
 )
 
 __all__ = [
@@ -94,7 +94,6 @@ __all__ = [
     "check_ffmpeg_availability",
     "check_gpu_availability",
     "discover_camera_ids",
-    "estimate_archive_job_memory_mb",
     "execute_job",
     "extract_logged_camera_timestamps",
     "genicam_runtime_available",
@@ -103,5 +102,6 @@ __all__ = [
     "resolve_jobs",
     "resolve_timestamps_path",
     "run_log_processing_pipeline",
+    "size_archive_job",
     "write_camera_manifest",
 ]

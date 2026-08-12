@@ -29,6 +29,8 @@ Orchestration
 
 .. autodata:: ataraxis_video_system.orchestration.allocation.CAMERA_EXTRACTION_JOB_CORES
 
+.. autodata:: ataraxis_video_system.orchestration.allocation.PARALLEL_EXTRACTION_THRESHOLD
+
 .. autodata:: ataraxis_video_system.orchestration.allocation.SPAWNED_CHILD_MEMORY_MB
 
 Command Line Interfaces (CLIs)
