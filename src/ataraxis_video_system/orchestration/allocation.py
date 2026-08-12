@@ -48,17 +48,20 @@ Notes:
     ``PARALLEL_PROCESSING_THRESHOLD`` governs inside the archive reader.
 """
 
-SPAWNED_CHILD_MEMORY_MB: int = 297
+SPAWNED_CHILD_MEMORY_MB: int = 208
 """The resident memory one spawned child holds before it touches any data, covering the interpreter and the package's
 import graph. The term is charged once for a job's body and once more for each child of the extraction pool it opens,
 so a job holding a single core and therefore carrying no pool is charged once.
 
 Notes:
-    The figure is resident memory rather than proportional memory. Roughly half of it is pages the readers share, so a
-    batch running many jobs at once holds less than the sum this term charges it.
+    The figure is resident memory rather than proportional memory. Roughly two fifths of it is pages the readers
+    share, so a batch running many jobs at once holds less than the sum this term charges it.
+
+    A child that only reads holds the import graph alone, while a job body also writes its output file and carries
+    the pinned thread pool the write opens. This term covers the wider of the two, so one constant sizes both.
 """
 
-_MEMORY_ESTIMATE_TOLERANCE: float = 1.2
+_MEMORY_ESTIMATE_TOLERANCE: float = 1.15
 """The margin applied to every memory estimate before it is reported. It covers the working sets the model does not
 enumerate and the variation between archives of the same size. The penalty for understating is asymmetric, since a
 batch that overcommits its host swaps or is killed outright, so estimates round up."""
@@ -67,13 +70,13 @@ _POOL_MEMORY_RESERVATION_DIVISOR: int = 2
 """The share of the memory budget the shared pool's warmed job bodies may claim, expressed as a divisor. The
 remainder covers the work those bodies perform."""
 
-_ARCHIVE_DIRECTORY_RATIO: float = 2.31
+_ARCHIVE_DIRECTORY_RATIO: float = 2.66
 """The resident memory a log archive reader holds per byte of archive on disk. Reading an archive builds one
 directory entry per logged message, which dominates the decoded payload itself.
 
 Notes:
     Every reader holds its own copy of the directory, so this term scales with the reader count while the spawned child
-    baseline it accompanies is roughly half shared.
+    baseline it accompanies is roughly two fifths shared.
 """
 
 _MEMORY_BUDGET_FRACTION: float = 0.85
@@ -154,8 +157,8 @@ def estimate_job_memory_mb(footprint: ArchiveFootprint, cores: int) -> int:
 
     Notes:
         A job holding more than one core splits its archive across an extraction pool, and every child of that pool
-        opens the archive itself while the job body holds a reader of its own for the whole job. The archive's
-        message directory is therefore held once per core and once more for the body. A job holding a single core
+        opens the archive itself. The archive's message directory is therefore held once per core, and the body is
+        charged one more reader's worth for the working set it holds alongside its pool. A job holding a single core
         takes the sequential path, which opens no pool and holds the body's reader alone.
 
         An unmodeled footprint falls back to the spawned child baseline, which is a floor to plan around rather than

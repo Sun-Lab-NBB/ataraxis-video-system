@@ -142,7 +142,7 @@ def test_estimate_job_memory_mb_unmodeled_footprint():
         estimate = estimate_job_memory_mb(footprint=_UNMODELED_FOOTPRINT, cores=cores)
 
         assert estimate == _UNMODELED_MEMORY_MB
-        assert estimate == 512
+        assert estimate == 256
         assert estimate % _MEMORY_ROUNDING_QUANTUM_MB == 0
 
 
@@ -152,13 +152,13 @@ def test_estimate_job_memory_mb_charges_one_body_and_one_reader_serially():
 
     estimate = estimate_job_memory_mb(footprint=footprint, cores=1)
 
-    # A 64 MB archive builds a 148 MB reader, which the sequential body holds alongside its own 297 MB baseline. The
-    # 445 MB sum carries the tolerance to 535 MB and rounds up to the 768 MB the batch is charged.
+    # A 64 MB archive builds a 171 MB reader, which the sequential body holds alongside its own 208 MB baseline. The
+    # 379 MB sum carries the tolerance to 436 MB and rounds up to the 512 MB the batch is charged.
     per_reader = _bytes_to_megabytes(byte_count=footprint.archive_bytes * _ARCHIVE_DIRECTORY_RATIO)
-    assert per_reader == 148
+    assert per_reader == 171
     assert estimate == _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB + per_reader)
     assert estimate == _expected_memory_mb(archive_bytes=footprint.archive_bytes, cores=1)
-    assert estimate == 768
+    assert estimate == 512
 
 
 def test_estimate_job_memory_mb_charges_every_reader_in_parallel():
@@ -168,13 +168,13 @@ def test_estimate_job_memory_mb_charges_every_reader_in_parallel():
 
     estimate = estimate_job_memory_mb(footprint=footprint, cores=cores)
 
-    # Four pool children plus the job body hold five spawned child baselines and five readers, which is 2225 MB before
-    # the tolerance carries it to 2671 MB and the rounding lifts it to 2816 MB.
+    # Four pool children plus the job body hold five spawned child baselines and five readers, which is 1895 MB before
+    # the tolerance carries it to 2180 MB and the rounding lifts it to 2304 MB.
     per_reader = _bytes_to_megabytes(byte_count=footprint.archive_bytes * _ARCHIVE_DIRECTORY_RATIO)
     readers = cores + 1
     assert estimate == _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB * readers + per_reader * readers)
     assert estimate == _expected_memory_mb(archive_bytes=footprint.archive_bytes, cores=cores)
-    assert estimate == 2816
+    assert estimate == 2304
 
 
 def test_estimate_job_memory_mb_parallel_path_exceeds_serial_path():
@@ -186,8 +186,8 @@ def test_estimate_job_memory_mb_parallel_path_exceeds_serial_path():
 
     # Taking a second core opens a pool, so the body's reader is joined by one reader and one baseline per child.
     assert parallel_estimate > serial_estimate
-    assert serial_estimate == 768
-    assert parallel_estimate == 1792
+    assert serial_estimate == 512
+    assert parallel_estimate == 1536
 
 
 def test_estimate_job_memory_mb_scales_with_cores():
@@ -202,7 +202,7 @@ def test_estimate_job_memory_mb_scales_with_cores():
     assert estimates == [
         _expected_memory_mb(archive_bytes=footprint.archive_bytes, cores=cores) for cores in core_counts
     ]
-    assert estimates == [1792, 5376, 7168, 16128]
+    assert estimates == [2048, 5632, 7424, 16384]
     assert all(estimate % _MEMORY_ROUNDING_QUANTUM_MB == 0 for estimate in estimates)
 
 
@@ -218,7 +218,7 @@ def test_estimate_job_memory_mb_scales_with_archive_bytes():
     assert estimates == sorted(estimates)
     assert estimates[0] < estimates[-1]
     assert estimates == [_expected_memory_mb(archive_bytes=size, cores=4) for size in archive_sizes]
-    assert estimates == [1792, 2816, 8960]
+    assert estimates == [1280, 2304, 9216]
     assert all(estimate % _MEMORY_ROUNDING_QUANTUM_MB == 0 for estimate in estimates)
 
 
@@ -290,9 +290,9 @@ def test_resolve_pool_size_binds_on_affordable_bodies():
 
     pool_size = resolve_pool_size(job_count=100, core_budget=64, memory_budget_mb=memory_budget_mb)
 
-    # Half of a 1280 MB budget holds two 297 MB bodies, leaving the remainder for the work those bodies perform.
+    # Half of a 1280 MB budget holds three 208 MB bodies, leaving the remainder for the work those bodies perform.
     assert pool_size == affordable_bodies
-    assert pool_size == 2
+    assert pool_size == 3
 
 
 def test_resolve_pool_size_scales_with_memory_budget():
@@ -304,7 +304,7 @@ def test_resolve_pool_size_scales_with_memory_budget():
 
     assert pool_sizes == sorted(pool_sizes)
     assert pool_sizes[0] < pool_sizes[-1]
-    assert pool_sizes == [1, 6, 27]
+    assert pool_sizes == [2, 9, 39]
 
 
 @pytest.mark.parametrize(
