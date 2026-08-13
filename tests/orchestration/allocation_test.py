@@ -352,7 +352,7 @@ def test_bytes_to_megabytes_non_positive_byte_count(byte_count):
     [
         (0, 256),
         (1, 256),
-        (SPAWNED_CHILD_MEMORY_MB, 512),
+        (SPAWNED_CHILD_MEMORY_MB, 256),
         (1024, 1280),
         (2048, 2560),
     ],
@@ -381,8 +381,8 @@ def test_size_archive_job_sizes_a_real_archive(tmp_path):
     assert memory_mb == estimate_job_memory_mb(footprint=footprint, cores=cores)
 
 
-def test_size_archive_job_widens_past_the_threshold():
-    """Verifies that size_archive_job reports the declared allocation for an archive above the threshold."""
+def test_resolve_job_workers_widens_at_the_threshold():
+    """Verifies that resolve_job_workers reports the declared allocation at the parallel extraction threshold."""
     footprint = _modeled_footprint(message_count=PARALLEL_EXTRACTION_THRESHOLD, archive_bytes=64 * _MEGABYTE)
 
     assert resolve_job_workers(footprint=footprint) == CAMERA_EXTRACTION_JOB_CORES

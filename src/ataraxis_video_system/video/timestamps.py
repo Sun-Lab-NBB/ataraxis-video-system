@@ -157,7 +157,8 @@ def extract_logged_camera_timestamps(
                 results[future_to_index[future]] = future.result()
 
     # Concatenates batch arrays into a single contiguous array. Filters out the empty arrays returned by batches
-    # that held no frame messages, alongside the placeholders of any batch that never resolved.
+    # that held no frame messages. The None check narrows the placeholder type the results list declares, since every
+    # future is resolved before this point.
     batch_arrays = [batch for batch in results if batch is not None and batch.size > 0]
     if not batch_arrays:
         return np.array([], dtype=np.uint64)

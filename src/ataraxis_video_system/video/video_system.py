@@ -179,15 +179,18 @@ class VideoSystem:
 
     Raises:
         TypeError: If any of the provided arguments has an invalid type.
-        ValueError: If any of the provided arguments has an invalid value, or if the managed camera acquires frames
-            that do not use the 8-bit unsigned integer data type.
+        ValueError: If any of the provided arguments has an invalid value, if the managed camera acquires frames that
+            do not use the 8-bit unsigned integer data type, or if the managed camera acquires frames in a color format
+            outside the unpacked Monochrome, RGB, and BGR families.
         RuntimeError: If the host system does not have access to FFMPEG or Nvidia GPU (when the instance is configured
             to use hardware encoding).
         OverflowError: If 'system_id' falls outside the 0 to 255 range the uint8 identifier supports.
         NotImplementedError: If the Harvesters camera interface is requested where the GenICam runtime is absent,
             which is every macOS host.
-        FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured.
+        FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured, or
+            if the configured .cti file no longer exists.
         OSError: If the configured .cti file is not a loadable GenTL Producer.
+        IndexError: If the 'camera_index' exceeds the number of cameras the configured GenTL Producer discovers.
         BrokenPipeError: If the validation frame grab from the managed camera fails.
         Timeout: If the camera manifest's .lock file cannot be acquired within the timeout period.
     """
@@ -852,7 +855,7 @@ class VideoSystem:
 
         # This process is spawned, so it re-imports the library and receives a disabled console. Writing to stderr
         # directly is the only channel that always reaches the user from here. The write also precedes the cleanup
-        # below, which blocks for minutes on the encoder teardown and delays the interpreter's own traceback.
+        # below, which disconnects the camera and joins the display thread, delaying the interpreter's own traceback.
         except Exception as error:
             sys.stderr.write(f"{error}\n")
             sys.stderr.flush()

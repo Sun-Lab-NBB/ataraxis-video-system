@@ -51,7 +51,8 @@ dependencies = [
 
     # GenICam Video Acquisition. The 'genicam' distribution publishes no macOS wheel for every Python version this
     # library supports, so the GenICam camera interface is unavailable on macOS and its runtime is left out of the
-    # installation there. Every other library feature works on macOS as usual.
+    # installation there. Live frame display is also unavailable there, since macOS forbids GUI updates outside the
+    # main thread. Every other library feature works on macOS as usual.
     "harvesters>=1,<2; sys_platform != 'darwin'",
     "genicam>=1,<2; sys_platform != 'darwin'",
 
@@ -244,13 +245,14 @@ addopts = "--import-mode=importlib"
 pythonpath = ["."]
 
 # Lists the source files excluded from coverage measurement in full. The interfaces subpackage holds the CLI and the
-# MCP server tools, which are covered by the tests written for the library functions they wrap. The 'parallel' and
-# 'concurrency' keys extend measurement to the spawned producer and consumer processes, to the log processing pool
-# workers that run run_extraction_job, and to the job execution manager, watchdog, frame display, and stderr drain
-# threads. Each worker then writes its own data file for the 'coverage' task to combine. The test corpus is omitted
-# because a spawned child re-reads this file without the '--cov' package restriction its parent was launched with. A
-# test module that a child imports, which is every module handing a spawned process one of its own functions, is
-# otherwise measured as source.
+# MCP server tools, whose wiring is covered by the tests written for the library functions they wrap and whose own
+# analysis helpers are covered by 'tests/interfaces'. The 'parallel' and 'concurrency' keys extend measurement to the
+# spawned producer and consumer processes and to the log processing pool workers that run run_extraction_job. They
+# also reach the extraction pool workers those workers open to run _process_frame_message_batch, and the job execution
+# manager, watchdog, frame display, and stderr drain threads. Each worker then writes its own data file for the
+# 'coverage' task to combine. The test corpus is omitted because a spawned child re-reads this file without the
+# '--cov' package restriction its parent was launched with. A test module that a child imports, which is every module
+# handing a spawned process one of its own functions, is otherwise measured as source.
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]

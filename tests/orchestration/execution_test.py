@@ -319,7 +319,7 @@ def test_select_admissible_jobs_credits_the_occupied_pool_slot(tmp_path):
     second = _build_entry(directory=tmp_path, source_id="2", core_weight=1, memory_mb=1000)
 
     # Both jobs together hold 2000 MB, which passes the budget. Each admitted job releases the baseline of the slot it
-    # takes over before the next is weighed, so the second job is weighed at 1800 MB and both are admitted.
+    # takes over before the next is weighed, so the second job is weighed at exactly the budget and both are admitted.
     admitted, deferred = _select_admissible_jobs(
         pending=[first, second],
         core_budget=8,

@@ -348,7 +348,7 @@ def test_video_saver_save_frame_rejects_an_unstarted_encoder(tmp_path, has_ffmpe
 
 
 def test_video_saver_del_releases_the_encoder_process(tmp_path, has_ffmpeg) -> None:
-    """Verifies that deleting a VideoSaver releases the encoder process it owns."""
+    """Verifies that deleting a started VideoSaver runs its shutdown path and leaves the output file reusable."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -367,7 +367,7 @@ def test_video_saver_del_releases_the_encoder_process(tmp_path, has_ffmpeg) -> N
 
     del saver
 
-    # Creates a new saver to verify resources were released
+    # Creates a new saver over the same output file to confirm the path is reusable after the first instance is dropped
     replacement_saver = VideoSaver(
         system_id=1,
         output_file=output_file,
@@ -440,7 +440,7 @@ def test_video_saver_save_frame_accepts_a_non_contiguous_frame(tmp_path, has_ffm
 
 
 def test_video_saver_stop_reports_a_non_zero_encoder_exit_code(tmp_path, has_ffmpeg) -> None:
-    """Verifies that VideoSaver logs FFMPEG error output when the process terminates with a non-zero exit code."""
+    """Verifies that stop() reaps an FFMPEG process that exited with a non-zero code and clears its reference."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -488,7 +488,7 @@ def test_video_saver_save_frame_reports_a_terminated_encoder(tmp_path, has_ffmpe
     with pytest.raises(RuntimeError, match="terminated unexpectedly"):
         saver.save_frame(frame)
 
-    # Cleans up the dead process reference to prevent stop() from failing.
+    # Clears the dead process reference so that the __del__-driven stop() short-circuits instead of reaping again.
     saver._ffmpeg_process = None
 
 
@@ -595,8 +595,8 @@ def test_video_saver_save_frame_reports_a_broken_encoder_pipe(tmp_path, has_ffmp
         assert saver.is_active
         assert saver._ffmpeg_process.poll() is None
     finally:
-        # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub would instead
-        # leave FFMPEG running until the grace period expires.
+        # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub defines no close(),
+        # so stop() would raise AttributeError before it could reap the encoder.
         saver._ffmpeg_process.stdin = real_stdin
         saver.stop()
 

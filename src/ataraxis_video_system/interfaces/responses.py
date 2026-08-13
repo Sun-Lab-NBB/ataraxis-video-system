@@ -1,4 +1,6 @@
-"""Provides the paging and projection machinery the Model Context Protocol read tools share."""
+"""Provides the paging, projection, breakdown, and filter-rejection machinery the Model Context Protocol read tools
+share.
+"""
 
 from __future__ import annotations
 

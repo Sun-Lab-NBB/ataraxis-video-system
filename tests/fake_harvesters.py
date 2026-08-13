@@ -1,10 +1,10 @@
 """Provides synthetic Harvesters acquisition stand-ins shared by the camera test module.
 
 The GenICam frame grab path reshapes whatever payload the camera streams and re-orders its color channels. The bundled
-GenTL Producer simulator streams RGB8 payloads alone: it never fails a fetch, never delivers a payload that is already
-in the BGR channel order, and never delivers one in a format the library does not support. Those three acquisition
-outcomes are reproduced with these stand-ins, which supply the payload while every reshaping, re-ordering, and
-rejection decision under test remains the library's own.
+GenTL Producer simulator streams Mono8 and RGB8 payloads alone: it never fails a fetch, never delivers a payload that
+is already in the BGR channel order, and never delivers one in a format the library does not support. Those three
+acquisition outcomes are reproduced with these stand-ins, which supply the payload while every reshaping, re-ordering,
+and rejection decision under test remains the library's own.
 """
 
 from typing import Self

@@ -407,7 +407,9 @@ limitation that leaves it out there.
 ***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
 Interface file. Use the `axvs cti set` CLI command to configure the library to use the .cti file provided by the camera
 vendor (preferred) or a general .cti file, such as the one listed under [Dependencies](#dependencies). This command only
-needs to be called once, as the library remembers and reuses the provided .cti file for all future runtimes.
+needs to be called once, as the library remembers and reuses the provided .cti file for all future runtimes. The
+`AXVS_CTI_PATH` environment variable takes precedence over the persisted path, which redirects a single runtime to an
+alternative Producer without changing the path stored for future runtimes.
 
 ### GenICam Configuration
 

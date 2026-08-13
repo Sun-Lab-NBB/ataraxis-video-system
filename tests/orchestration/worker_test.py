@@ -403,8 +403,8 @@ def test_run_extraction_job_forwards_every_descriptor_field(tmp_path, monkeypatc
     # The width the descriptor carries becomes the width of the extraction pool the job's body opens.
     assert arguments["workers"] == job.core_weight == 4
 
-    # The tracker is opened by the runner from the descriptor's own path, because a tracker's file lock cannot cross
-    # a process boundary.
+    # The tracker is opened by the runner from the descriptor's own path, because a tracker instance caches an
+    # in-memory job registry that would arrive in the child already stale.
     assert isinstance(arguments["tracker"], ProcessingTracker)
     assert arguments["tracker"].file_path == job.tracker_path
 

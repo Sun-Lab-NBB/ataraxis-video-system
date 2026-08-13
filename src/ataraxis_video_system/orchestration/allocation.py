@@ -89,7 +89,7 @@ _MEMORY_ROUNDING_QUANTUM_MB: int = 256
 """The multiple every reportable estimate is rounded up to.
 
 Notes:
-    The quantum is roughly the memory one spawned child holds, so the smallest job shape is charged two quanta rather
+    The quantum is roughly the memory one spawned child holds, so the smallest job shape is charged one quantum rather
     than the four a whole-gigabyte quantum charged it. A coarser quantum charges the two shapes the stage emits at
     nearly the same figure, which would let a batch of sequential jobs reserve the memory a batch of pooled ones needs.
 """

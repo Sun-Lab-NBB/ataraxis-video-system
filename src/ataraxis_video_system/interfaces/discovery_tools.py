@@ -78,8 +78,9 @@ def write_camera_manifest_tool(
 ) -> dict[str, Any]:
     """Writes or updates a camera manifest file in the specified log directory.
 
-    Registers a camera source in the camera_manifest.yaml file located in the target log directory. If
-    the manifest already exists, appends the new source entry. Otherwise, creates a new manifest.
+    Registers a camera source in the camera_manifest.yaml file located in the target log directory. If the manifest
+    already exists, replaces the entry registered under the same source ID, or appends a new entry when the manifest
+    carries none. Otherwise, creates a new manifest.
 
     Args:
         log_directory: The absolute path to the DataLogger output directory where the manifest file is stored.
@@ -87,7 +88,8 @@ def write_camera_manifest_tool(
         name: The colloquial human-readable name for the camera source (e.g., 'face_camera').
 
     Returns:
-        A dictionary confirming the write operation with the manifest path and registered source, or an error message.
+        A dictionary carrying the 'manifest_path', a 'registered_source' holding the written 'id' and 'name', and a
+        'status' of 'success', or an error message.
     """
     directory_path = Path(log_directory)
 

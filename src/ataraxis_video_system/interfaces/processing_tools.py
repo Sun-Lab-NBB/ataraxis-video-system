@@ -104,8 +104,9 @@ def prepare_log_processing_batch_tool(
         A dictionary containing a 'success' flag and per-log-directory manifests in 'log_directories'. Each manifest
         carries the tracker path, the output directory, the resolved source IDs, a 'summary' of status counts, and the
         sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
-        descriptors, annotated with their sized cores and memory, their live tracker status, and the archive figures
-        'message_count', 'archive_bytes', and 'modeled' that the execution tool requires. Also reports total counts and
+        descriptors, annotated with their sized cores and memory, their live tracker status, an 'error_message' for a
+        job whose tracker recorded a failure, and the archive figures 'message_count', 'archive_bytes', and 'modeled'
+        that the execution tool requires. Also reports total counts and
         any invalid paths. Returns an error dictionary when the log directory and output directory lists differ in
         length.
     """
@@ -631,7 +632,8 @@ def get_batch_status_overview_tool(
 
     A bare call reports the aggregate job counts alongside a ``breakdown`` naming how many directories carry each
     status, which answers what needs attention without listing anything. Naming a status adds a page of directories
-    carrying their own counts. Opting into detail adds each directory's tracker path and its per-job entries.
+    carrying their own counts. Opting into detail adds each directory's tracker path, its per-job entries, and the
+    error message of a directory whose tracker cannot be read.
 
     The aggregate counts and the breakdown span every discovered directory regardless of the filters, so narrowing
     what is listed never distorts what is reported.
@@ -643,7 +645,8 @@ def get_batch_status_overview_tool(
             lists every match, which is how a caller reading under a tight filter takes the whole result at once.
         start_row: The match index to begin the listing at. Follow ``next_start_row`` to walk a long result.
         include_items: Determines whether to list directories when no status is named.
-        detailed: Determines whether the listed directories report their tracker path and per-job entries.
+        detailed: Determines whether the listed directories report their tracker path, their per-job entries, and the
+            error message of a directory whose tracker cannot be read.
 
     Returns:
         A dictionary carrying 'total_output_directories', an aggregate 'summary' of job counts, and a 'breakdown' of

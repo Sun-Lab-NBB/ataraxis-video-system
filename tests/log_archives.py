@@ -1,6 +1,4 @@
-"""Provides synthetic log archive builders shared by the orchestration, video system, and timestamp extraction test
-modules.
-"""
+"""Provides synthetic log archive builders shared by the orchestration and timestamp extraction test modules."""
 
 from pathlib import Path
 

@@ -64,9 +64,10 @@ class JobExecutionState:
     """Tracks runtime state for one batch execution session budgeted by both cores and memory.
 
     Notes:
-        Every job body runs in a worker of one shared pool that outlives it, and each body opens its own extraction
-        pool sized to the cores its job was admitted at. Total live processes are the pool's slot count plus the
-        cores of the running set, and both terms are budgeted.
+        Every job body runs in a worker of one shared pool that outlives it. A body admitted at more than one core
+        opens its own extraction pool at that width, while a body admitted at a single core runs sequentially and
+        opens none. Total live processes are the pool's slot count plus the cores of every running job that holds more
+        than one core, and both terms are budgeted.
     """
 
     all_jobs: dict[tuple[str, str], JobDescriptor] = field(default_factory=dict)

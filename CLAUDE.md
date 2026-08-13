@@ -65,6 +65,7 @@ Skills are distributed through the ataraxis marketplace and are loaded into Clau
 | `/camera-setup`                | MCP-based camera discovery, testing, encoding guidance, and GenICam  |
 | `/camera-interface`            | VideoSystem API usage, constructor parameters, and encoding guidance |
 | `/video-mcp-environment-setup` | MCP server connectivity diagnostics and environment verification     |
+| `/cli-reference`               | Reference for every `axvs` command, option, and failure mode         |
 | `/post-recording`              | Post-recording verification: log assembly, video validation, handoff |
 | `/pipeline`                    | End-to-end pipeline orchestration and multi-camera planning          |
 | `/log-input-format`            | Reference for NPZ archive format, source IDs, and DataLogger output  |
@@ -144,7 +145,7 @@ video encoding using CPU or GPU.
 | `src/.../video/manifest.py`           | Camera manifest data classes and writer for source-to-name mappings               |
 | `src/.../video/timestamps.py`         | Frame acquisition timestamp extraction algorithm                                  |
 | `src/.../orchestration/`              | Job identity, sizing, discovery, the single-job runner, and both execution paths  |
-| `src/.../orchestration/jobs.py`       | Job identity, the output layout enumeration, and the job descriptor               |
+| `src/.../orchestration/jobs.py`       | Job identity, output layout enumeration, and the descriptor and sizing records    |
 | `src/.../orchestration/allocation.py` | Core allocation, parallel extraction threshold, archive-derived memory model      |
 | `src/.../orchestration/discovery.py`  | Manifest-derived job resolution, preparation, and the per-job sizing pass         |
 | `src/.../orchestration/worker.py`     | Single-job runner and the picklable descriptor-addressed pool entry point         |
@@ -156,7 +157,7 @@ video encoding using CPU or GPU.
 | `src/.../interfaces/mcp_instance.py`  | Shared MCPServer instance and a cross-tool helper function                        |
 | `src/.../interfaces/responses.py`     | Paging, projection, and breakdown machinery the MCP read tools share              |
 | `src/.../interfaces/*_tools.py`       | 27 MCP tools (camera, session, configuration, discovery, processing)              |
-| `tests/`                              | Test suite mirroring the video and orchestration subpackages, plus shared helpers |
+| `tests/`                              | Test suite mirroring the video, orchestration, and interfaces subpackages         |
 | `docs/`                               | Sphinx API documentation source                                                   |
 
 ### Architecture

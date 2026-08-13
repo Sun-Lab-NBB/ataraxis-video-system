@@ -65,6 +65,8 @@ def write_camera_manifest(log_directory: Path, source_id: int, name: str) -> Non
 
     Raises:
         Timeout: If the manifest's .lock file cannot be acquired within the timeout period.
+        YAMLError: If an existing camera manifest does not hold a well-formed YAML document.
+        MissingValueError: If an existing camera manifest omits a field the CameraManifest class requires.
     """
     manifest_path = log_directory / CAMERA_MANIFEST_FILENAME
     lock = FileLock(lock_file=str(manifest_path.with_suffix(manifest_path.suffix + ".lock")))

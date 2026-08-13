@@ -23,7 +23,8 @@ def list_cameras_tool() -> str:
         A newline-separated list of discovered cameras, each showing interface type, index, frame dimensions, and
         frame rate. Harvesters cameras also include model and serial number. Returns a "No cameras discovered"
         message if no cameras are found. A trailing note reports the skipped Harvesters discovery when the GenICam
-        camera runtime is unavailable.
+        camera runtime is unavailable. Harvesters discovery is also skipped, without a note, when no GenTL Producer
+        (.cti) file has been configured, which get_cti_status_tool distinguishes from an absence of GenICam hardware.
     """
     # OpenCV cameras are probed by iterating over positional indices, while Harvesters cameras are enumerated through
     # the GenTL Producer.
@@ -66,8 +67,9 @@ def get_cti_status_tool() -> str:
     if not genicam_runtime_available():
         return f"CTI: Unavailable. {GENICAM_UNAVAILABLE_REASON}"
 
-    # Reads the persisted CTI file path from the library's configuration storage and verifies that the file still
-    # exists on disk. Returns None if no path was previously set or the stored path no longer points to a valid file.
+    # Resolves the CTI file path, honoring the AXVS_CTI_PATH environment variable ahead of the path persisted in the
+    # library's configuration storage, and verifies that the file still exists on disk. Returns None if no path was
+    # previously set or the stored path no longer points to a valid file.
     cti_path = check_cti_file()
 
     if cti_path is not None:

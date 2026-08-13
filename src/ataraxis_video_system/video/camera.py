@@ -100,7 +100,7 @@ _FRAME_POOL_SIZE: int = 10
 
 _MAXIMUM_NON_WORKING_IDS: int = 5
 """Determines the maximum number of consecutive failed test attempts allowed when running the _get_opencv_ids()
-function before the runtime is terminated.
+function before it stops probing further indices and returns the cameras discovered so far.
 """
 
 _MAXIMUM_EVALUATED_IDS: int = 100
@@ -154,8 +154,9 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
         For OpenCV cameras, it is impossible to retrieve serial numbers or camera models.
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
-        function or the 'axvs cti set' CLI command. If no CTI file is configured, Harvesters camera discovery is
-        skipped. Harvesters discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
+        function, the 'axvs cti set' CLI command, or the ``AXVS_CTI_PATH`` environment variable, which takes precedence
+        over the persisted path. If no CTI file is configured, Harvesters camera discovery is skipped. Harvesters
+        discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
@@ -278,7 +279,7 @@ class OpenCVCamera:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         color: Determines whether the camera acquires colored or monochrome images. This determines how to store the
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
-            a single-channel format.
+            a single-channel format. If this argument is not explicitly provided, the instance acquires colored frames.
         camera_index: The index of the camera in the list of all cameras discoverable by OpenCV, e.g.: 0 for the first
             available camera, 1 for the second, etc. This specifies the camera hardware the instance should interface
             with at runtime.
@@ -928,6 +929,7 @@ class MockCamera:
         frame_height: The simulated camera frame height, in pixels. If this argument is not explicitly provided, the
             instance simulates a height of 400 pixels.
         color: Determines whether to generate frames in the BGR color mode instead of the grayscale (monochrome) mode.
+            If this argument is not explicitly provided, the instance generates BGR frames.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.

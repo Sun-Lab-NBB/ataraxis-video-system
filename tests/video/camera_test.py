@@ -156,11 +156,10 @@ def test_opencv_camera_connect_and_disconnect_toggle_the_connection_state(has_op
         color=color,
     )
 
-    # Tests connect method. Note, this may change the frame_rate, frame_width and frame_height class properties, as the
-    # camera may not support the requested parameters and instead set them to the nearest supported values or to default
-    # values. The specific behavior depends on each camera. Since this code is tested across many different cameras, and
-    # it is hard to predict which cameras will support which settings, formal verification of parameter assignment is
-    # not performed.
+    # Tests connect method. This instance requests none of the three acquisition parameters, so connect() adopts
+    # whatever frame rate, width, and height the connected camera reports. A camera that substitutes its own value for
+    # an explicitly requested one is rejected with ValueError instead. Since this code is tested across many different
+    # cameras whose default values are hard to predict, formal verification of the adopted values is not performed.
     assert not camera.is_connected
     camera.connect()
     assert camera.is_connected
@@ -326,7 +325,7 @@ def test_opencv_camera_grab_frame_converts_to_monochrome(monkeypatch) -> None:
 
 
 def test_get_opencv_ids_reports_every_working_index(monkeypatch) -> None:
-    """Verifies that OpenCV discovery reports one entry per working index and stops after five idle indices."""
+    """Verifies that OpenCV discovery reports one entry per working index, carrying the camera's own properties."""
     monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     cameras = _get_opencv_ids()
