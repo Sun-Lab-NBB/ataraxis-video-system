@@ -58,15 +58,22 @@ _MAXIMUM_JOB_REQUEUES: int = 2
 """The times one job is requeued after a break it is provably responsible for. A job running alone when the pool
 broke is the only job a break can be attributed to, so only such a job spends this budget."""
 
+_EXECUTION_LOCK: Lock = Lock()
+"""Serializes the check-and-reserve that admits one batch execution session at a time. The test of the module-level
+session reference and its replacement sit on opposite sides of a bytecode boundary. Two callers finding the slot free
+would otherwise both publish a session, and the second would strand the first session's worker pool beyond the reach
+of every cancellation tool."""
+
 
 @dataclass(slots=True)
 class JobExecutionState:
     """Tracks runtime state for one batch execution session budgeted by both cores and memory.
 
     Notes:
-        Every job body runs in a worker of one shared pool that outlives it, and each body opens its own extraction
-        pool sized to the cores its job was admitted at. Total live processes are the pool's slot count plus the
-        cores of the running set, and both terms are budgeted.
+        Every job body runs in a worker of one shared pool that outlives it. A body admitted at more than one core
+        opens its own extraction pool at that width, while a body admitted at a single core runs sequentially and
+        opens none. Total live processes are the pool's slot count plus the cores of every running job that holds more
+        than one core, and both terms are budgeted.
     """
 
     all_jobs: dict[tuple[str, str], JobDescriptor] = field(default_factory=dict)
@@ -110,12 +117,6 @@ class _ActiveJob:
     """The future the pool returned, which carries the job body's outcome."""
 
 
-_EXECUTION_LOCK: Lock = Lock()
-"""Serializes the check-and-reserve that admits one batch execution session at a time. The test of the reference below
-and its replacement sit on opposite sides of a bytecode boundary. Two callers finding the slot free would otherwise
-both publish a session, and the second would strand the first session's worker pool beyond the reach of every
-cancellation tool."""
-
 _execution_state: JobExecutionState | None = None
 """Stores the active execution state for batch log processing jobs, or None when no session exists."""
 
@@ -123,18 +124,6 @@ _execution_state: JobExecutionState | None = None
 def get_execution_state() -> JobExecutionState | None:
     """Returns the active batch log processing execution state, or None when no session exists."""
     return _execution_state
-
-
-def set_execution_state(state: JobExecutionState | None) -> None:
-    """Stores the active batch log processing execution state, replacing any existing session reference.
-
-    Args:
-        state: The execution state to store, or None to clear the active session.
-    """
-    global _execution_state
-
-    with _EXECUTION_LOCK:
-        _execution_state = state
 
 
 def start_execution_session(state: JobExecutionState) -> bool:
@@ -161,7 +150,7 @@ def start_execution_session(state: JobExecutionState) -> bool:
         if active is not None and active.manager_thread is not None and active.manager_thread.is_alive():
             return False
 
-        manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+        manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
         state.manager_thread = manager
         _execution_state = state
         manager.start()
@@ -169,7 +158,24 @@ def start_execution_session(state: JobExecutionState) -> bool:
     return True
 
 
-def job_execution_manager(state: JobExecutionState) -> None:
+def group_jobs_by_tracker(state: JobExecutionState) -> dict[Path, list[JobDescriptor]]:
+    """Groups every job in an execution state by the tracker file that records it.
+
+    Batches the jobs sharing a tracker so each tracker file is deserialized once when iterating over the groups.
+
+    Args:
+        state: The active job execution state holding the job registry.
+
+    Returns:
+        The jobs recorded by each tracker, keyed by that tracker's path.
+    """
+    tracker_jobs: dict[Path, list[JobDescriptor]] = {}
+    for job in state.all_jobs.values():
+        tracker_jobs.setdefault(job.tracker_path, []).append(job)
+    return tracker_jobs
+
+
+def _job_execution_manager(state: JobExecutionState) -> None:
     """Dispatches queued jobs into one shared process pool under the batch's core and memory budgets.
 
     Notes:
@@ -223,21 +229,16 @@ def job_execution_manager(state: JobExecutionState) -> None:
             executor.shutdown(wait=True, cancel_futures=True)
 
 
-def group_jobs_by_tracker(state: JobExecutionState) -> dict[Path, list[JobDescriptor]]:
-    """Groups every job in an execution state by the tracker file that records it.
-
-    Batches the jobs sharing a tracker so each tracker file is deserialized once when iterating over the groups.
+def _set_execution_state(state: JobExecutionState | None) -> None:
+    """Stores the active batch log processing execution state, replacing any existing session reference.
 
     Args:
-        state: The active job execution state holding the job registry.
-
-    Returns:
-        The jobs recorded by each tracker, keyed by that tracker's path.
+        state: The execution state to store, or None to clear the active session.
     """
-    tracker_jobs: dict[Path, list[JobDescriptor]] = {}
-    for job in state.all_jobs.values():
-        tracker_jobs.setdefault(job.tracker_path, []).append(job)
-    return tracker_jobs
+    global _execution_state
+
+    with _EXECUTION_LOCK:
+        _execution_state = state
 
 
 def _select_admissible_jobs(

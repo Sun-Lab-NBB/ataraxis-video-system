@@ -76,19 +76,15 @@ is ever able to execute.
 """
 
 _MONOCHROME_FORMATS: set[str] = set(mono_location_formats)
-"""Stores monochrome Harvesters color formats as a set to optimize membership checks in the HarvestersCamera
-grab_frame() method.
-"""
+"""Stores the monochrome Harvesters color formats as a set, which keeps membership checks constant in the format
+count."""
 
 _COLOR_FORMATS: set[str] = set(bgr_formats) | set(rgb_formats)
-"""Stores BGR and RGB Harvesters color formats as a set to optimize membership checks in the HarvestersCamera
-grab_frame() method.
-"""
+"""Stores the BGR and RGB Harvesters color formats as a set, which keeps membership checks constant in the format
+count."""
 
 _ALL_RGB_FORMATS: set[str] = set(rgb_formats)
-"""Stores RGB Harvesters color formats as a set to optimize membership checks in the HarvestersCamera grab_frame()
-method.
-"""
+"""Stores the RGB Harvesters color formats as a set, which keeps membership checks constant in the format count."""
 
 _CTI_PATH_VARIABLE: str = "AXVS_CTI_PATH"
 """Stores the name of the environment variable that overrides the persisted GenTL Producer interface (.cti) file path
@@ -99,12 +95,11 @@ _FRAME_POOL_SIZE: int = 10
 """Determines the size of the frame pool used by the MockCamera instances."""
 
 _MAXIMUM_NON_WORKING_IDS: int = 5
-"""Determines the maximum number of consecutive failed test attempts allowed when running the _get_opencv_ids()
-function before the runtime is terminated.
-"""
+"""The consecutive failed probes that end OpenCV index discovery, after which the cameras found so far are
+reported."""
 
 _MAXIMUM_EVALUATED_IDS: int = 100
-"""Determines the maximum number of camera indices (IDs) evaluated by the _get_opencv_ids() function."""
+"""The maximum number of camera indices OpenCV index discovery evaluates."""
 
 
 class CameraInterfaces(StrEnum):
@@ -154,8 +149,9 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
         For OpenCV cameras, it is impossible to retrieve serial numbers or camera models.
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
-        function or the 'axvs cti set' CLI command. If no CTI file is configured, Harvesters camera discovery is
-        skipped. Harvesters discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
+        function, the 'axvs cti set' CLI command, or the ``AXVS_CTI_PATH`` environment variable, which takes precedence
+        over the persisted path. If no CTI file is configured, Harvesters camera discovery is skipped. Harvesters
+        discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
@@ -219,7 +215,6 @@ def add_cti_file(cti_path: Path) -> None:
     harvester = Harvester()
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
-    # Resolves the path to the library-specific .txt file used to store the path to the currently used .cti file.
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = application_directory / "cti_path.txt"
 
@@ -271,14 +266,11 @@ def check_cti_file() -> Path | None:
 class OpenCVCamera:
     """Interfaces with the specified OpenCV-compatible camera hardware to acquire frame data.
 
-    Notes:
-        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
-
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         color: Determines whether the camera acquires colored or monochrome images. This determines how to store the
             acquired frames. Colored frames are saved using the 'BGR' channel order, monochrome images are reduced to
-            a single-channel format.
+            a single-channel format. If this argument is not explicitly provided, the instance acquires colored frames.
         camera_index: The index of the camera in the list of all cameras discoverable by OpenCV, e.g.: 0 for the first
             available camera, 1 for the second, etc. This specifies the camera hardware the instance should interface
             with at runtime.
@@ -494,9 +486,6 @@ class OpenCVCamera:
 class HarvestersCamera:
     """Interfaces with the specified GenICam-compatible camera hardware to acquire frame data.
 
-    Notes:
-        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
-
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         camera_index: The index of the camera in the list of all cameras discoverable by Harvesters, e.g.: 0 for the
@@ -586,11 +575,9 @@ class HarvestersCamera:
 
         _require_genicam_runtime(action=f"connect to the GenICam camera at index {self._camera_index}")
 
-        # Initializes the Harvester class to discover the list of available cameras.
         self._harvester = Harvester()
         self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
-        # Discovers compatible cameras using the GenTL interface. Suppresses stdout and stderr to avoid verbose CTI
-        # printouts.
+        # Suppresses stdout and stderr to avoid verbose CTI printouts.
         with _suppress_output():
             self._harvester.update()
 
@@ -846,7 +833,6 @@ class HarvestersCamera:
 
         # Uses the 'with' context to properly re-queue the buffer to acquire further images.
         with buffer:
-            # Retrieves the contents (frame data) from the buffer.
             content = buffer.payload.components[0]
 
             # Collects the information necessary to reshape the originally 1-dimensional frame array into the
@@ -886,7 +872,8 @@ class HarvestersCamera:
                 f"BGR families, but got {data_format}."
             )
             console.error(message=message, error=ValueError)
-            raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
+            # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
+            return np.zeros((0, 0), dtype=np.uint8)  # pragma: no cover
 
 
 @contextmanager
@@ -916,9 +903,6 @@ class MockCamera:
     """Simulates (mocks) the behavior of the OpenCVCamera and HarvestersCamera classes without the need to interface
     with a physical camera.
 
-    Notes:
-        A VideoSystem constructor creates this class rather than a caller instantiating it directly.
-
     Args:
         system_id: The unique identifier code of the VideoSystem instance that uses this camera interface.
         frame_rate: The simulated frame acquisition rate of the camera, in frames per second. If this argument is not
@@ -928,6 +912,7 @@ class MockCamera:
         frame_height: The simulated camera frame height, in pixels. If this argument is not explicitly provided, the
             instance simulates a height of 400 pixels.
         color: Determines whether to generate frames in the BGR color mode instead of the grayscale (monochrome) mode.
+            If this argument is not explicitly provided, the instance generates BGR frames.
 
     Attributes:
         _system_id: Stores the unique identifier code of the VideoSystem instance that uses this camera interface.
@@ -967,33 +952,26 @@ class MockCamera:
         random_generator = np.random.default_rng(seed=42)
 
         # Statically generates the frame pool used for reproducible testing during grab_frame() method calls. The pool
-        # is built from _FRAME_POOL_SIZE, because grab_frame() wraps its index against the same constant.
-        frames_list: list[NDArray[np.uint8]] = []
-        for _ in range(_FRAME_POOL_SIZE):
-            if self._color:
-                frame = random_generator.integers(
-                    low=0,
-                    high=256,
-                    size=(self._frame_height, self._frame_width, 3),
-                    dtype=np.uint8,
-                )
-                bgr_frame: NDArray[np.uint8] = cv2.cvtColor(  # type: ignore[assignment]  # cvtColor returns MatLike.
-                    src=frame, code=cv2.COLOR_RGB2BGR
-                )
-                frames_list.append(bgr_frame)
-            else:
-                # Grayscale frames have only one channel, so order does not matter.
-                frames_list.append(
-                    random_generator.integers(
-                        low=0,
-                        high=256,
-                        size=(self._frame_height, self._frame_width, 1),
-                        dtype=np.uint8,
-                    )
-                )
+        # is built from _FRAME_POOL_SIZE, because grab_frame() wraps its index against the same constant. Grayscale
+        # frames carry a single channel, so only the colored branch reorders channels.
+        channels = 3 if self._color else 1
+        raw_frames = [
+            random_generator.integers(
+                low=0,
+                high=256,
+                size=(self._frame_height, self._frame_width, channels),
+                dtype=np.uint8,
+            )
+            for _ in range(_FRAME_POOL_SIZE)
+        ]
 
         # Casts to a tuple to optimize runtime efficiency.
-        self._frames: tuple[NDArray[np.uint8], ...] = tuple(frames_list)
+        self._frames: tuple[NDArray[np.uint8], ...] = tuple(
+            cv2.cvtColor(src=raw_frame, code=cv2.COLOR_RGB2BGR)  # type: ignore[misc]  # cvtColor returns MatLike.
+            if self._color
+            else raw_frame
+            for raw_frame in raw_frames
+        )
         self._current_frame_index: int = 0
 
         # Cannot be initialized here due to the use of multiprocessing in the VideoSystem class.
@@ -1107,8 +1085,7 @@ class MockCamera:
         # Resets the timer to measure the time elapsed since the last frame acquisition.
         self._timer.reset()
 
-        # Increments the frame pool index. When the index reaches the end of the pool, resets it back to the
-        # start of the pool. This simulates the behavior of a cyclic buffer.
+        # Wrapping the index against the pool size simulates the behavior of a cyclic buffer.
         self._current_frame_index = (self._current_frame_index + 1) % _FRAME_POOL_SIZE
 
         return frame
@@ -1140,12 +1117,9 @@ def _get_opencv_ids() -> tuple[CameraInformation, ...]:
         # during device probing (e.g. 'ioctl(VIDIOC_QBUF): Bad file descriptor').
         for evaluated_id in range(_MAXIMUM_EVALUATED_IDS):
             try:
-                # Evaluates each ID (index) by instantiating a video-capture object and reading one image and dimension
-                # data from the connected camera (if any was connected).
                 with _suppress_output():
                     camera = cv2.VideoCapture(index=evaluated_id)
                 try:
-                    # Appends the camera's index to the ID list if the camera can be connected and returns images.
                     with _suppress_output():
                         is_opened = camera.isOpened() and camera.read()[0]
                     if is_opened:
@@ -1237,7 +1211,6 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     Returns:
         A tuple of CameraInformation instances, one for each discovered Harvesters-compatible camera.
     """
-    # Resolves the CTI path once and caches it for reuse.
     cti_path = _get_cti_path()
 
     # Instantiates the class and adds the input .cti file. Both checks are requested, since _get_cti_path() returns
@@ -1246,8 +1219,7 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     harvester = Harvester()
     harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
-    # Gets the list of accessible cameras. Suppresses stdout and stderr to avoid verbose printouts about missing CTI
-    # features.
+    # Suppresses stdout and stderr to avoid verbose printouts about missing CTI features.
     with _suppress_output():
         harvester.update()
 
@@ -1372,7 +1344,6 @@ def _suppress_output() -> Generator[None, None, None]:
     the Python streams. The Harvesters library prints messages about missing features in the CTI file when calling
     update(), and the kernel driver emits V4L2 ioctl warnings while OpenCV probes camera indices.
     """
-    # Redirects stdout (fd 1) and stderr (fd 2) to devnull.
     devnull = os.open(path=os.devnull, flags=os.O_WRONLY)
     old_stdout = os.dup(1)
     old_stderr = os.dup(2)

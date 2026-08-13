@@ -3,12 +3,11 @@
 The bundled GenTL Producer simulator exposes ten writable nodes whose only interdependency is the degenerate
 single-entry EventSelector and EventNotification pair, so it cannot exercise the dependency chains that
 ``apply_genicam_configuration`` orders its write phases around. This module models those chains directly: binning
-rescales the addressable sensor area, offsets and dimensions compete for that area. The auto-controls lock their
-manual counterparts, exposure bounds the attainable frame rate, an enumeration selector addresses one value per
-color channel, and an integer selector addresses one value per lookup table index. It also models the states that
-make a camera refuse an operation: a gated node the camera reports as NotAvailable. The remaining two states are a
-vendor node typed differently from the literal the apply phases reset it with, and a node whose descriptor cannot be
-interrogated at all.
+rescales the addressable sensor area, offsets and dimensions compete for that area, the auto-controls lock their
+manual counterparts, exposure bounds the attainable frame rate, an enumeration selector addresses one value per color
+channel, and an integer selector addresses one value per lookup table index. It also models the three states that make
+a camera refuse an operation: a gated node the camera reports as NotAvailable, a vendor node typed differently from the
+literal the apply phases reset it with, and a node whose descriptor cannot be interrogated at all.
 """
 
 from typing import Any

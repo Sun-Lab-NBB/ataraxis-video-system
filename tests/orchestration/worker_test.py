@@ -35,59 +35,6 @@ _FRAME_ELAPSED_US: list[int] = [1000, 2000, 3000]
 """Stores the elapsed frame acquisition timestamps, in microseconds, written into every small synthetic archive."""
 
 
-class _CountingExecutor(ProcessPoolExecutor):
-    """Wraps a real process pool with a counter that records how many batches were submitted to it."""
-
-    def __init__(self, max_workers):
-        super().__init__(max_workers=max_workers)
-        self.submissions = 0
-
-    def submit(self, function, /, *args, **kwargs):
-        """Records the submission before handing the work to the underlying pool."""
-        self.submissions += 1
-        return super().submit(function, *args, **kwargs)
-
-
-def _build_archive(log_directory, source_id=_SOURCE_ID, frame_timestamps_us=None, data_timestamps_us=None):
-    """Creates one synthetic log archive for the requested camera source and returns the path it was written to."""
-    log_directory.mkdir(parents=True, exist_ok=True)
-    archive_path = log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
-    create_test_archive(
-        archive_path=archive_path,
-        source_id=int(source_id),
-        onset_us=_ONSET_US,
-        frame_timestamps_us=_FRAME_ELAPSED_US if frame_timestamps_us is None else frame_timestamps_us,
-        data_timestamps_us=data_timestamps_us,
-    )
-    return archive_path
-
-
-def _initialize_tracker(tracker_path, source_id=_SOURCE_ID):
-    """Creates a processing tracker that already registers the extraction job of the target camera source."""
-    tracker_path.parent.mkdir(parents=True, exist_ok=True)
-    tracker = ProcessingTracker(file_path=tracker_path)
-    tracker.initialize_jobs(jobs=[(CAMERA_EXTRACTION_JOB_NAME, source_id)])
-    return tracker
-
-
-def _build_descriptor(log_directory, output_directory, source_id=_SOURCE_ID, core_weight=1):
-    """Builds the descriptor of the extraction job reading the target source's archive under the log directory."""
-    return JobDescriptor.for_archive(
-        archive_path=log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
-        output_directory=output_directory,
-        tracker_path=resolve_tracker_path(output_directory=output_directory),
-        source_id=source_id,
-        log_directory=log_directory,
-        core_weight=core_weight,
-    )
-
-
-def _expected_timestamps(frame_timestamps_us=None):
-    """Converts the elapsed frame timestamps of a synthetic archive into the absolute timestamps extraction returns."""
-    elapsed = _FRAME_ELAPSED_US if frame_timestamps_us is None else frame_timestamps_us
-    return [_ONSET_US + elapsed_us for elapsed_us in elapsed]
-
-
 @pytest.mark.xdist_group(name="orchestration")
 def test_execute_job_writes_the_timestamps_and_completes_the_job(tmp_path):
     """Verifies that execute_job writes the extracted timestamps at the resolved path and completes the tracked job."""
@@ -255,8 +202,7 @@ def test_execute_job_reuses_the_provided_executor(tmp_path):
     tracker = _initialize_tracker(tracker_path=output_directory / OutputLayout.TRACKER_FILENAME)
     job_id = generate_job_ids(source_ids=[_SOURCE_ID])[_SOURCE_ID]
 
-    executor = _CountingExecutor(max_workers=2)
-    try:
+    with _CountingExecutor(max_workers=2) as executor:
         execute_job(
             log_path=archive_path,
             output_directory=output_directory,
@@ -274,8 +220,6 @@ def test_execute_job_reuses_the_provided_executor(tmp_path):
         # The caller owns the pool, so the job must not shut it down. A pool closed by the job would instead raise
         # a RuntimeError when asked to accept more work.
         assert executor.submit(abs, -5).result() == 5
-    finally:
-        executor.shutdown(wait=True)
 
     dataframe = pl.read_ipc(source=resolve_timestamps_path(output_directory=output_directory, source_id=_SOURCE_ID))
     assert dataframe.columns == [str(ExtractedDataColumns.FRAME_TIME)]
@@ -296,8 +240,7 @@ def test_execute_job_leaves_the_executor_untouched_when_running_serially(tmp_pat
     tracker = _initialize_tracker(tracker_path=output_directory / OutputLayout.TRACKER_FILENAME)
     job_id = generate_job_ids(source_ids=[_SOURCE_ID])[_SOURCE_ID]
 
-    executor = _CountingExecutor(max_workers=1)
-    try:
+    with _CountingExecutor(max_workers=1) as executor:
         execute_job(
             log_path=archive_path,
             output_directory=output_directory,
@@ -310,8 +253,6 @@ def test_execute_job_leaves_the_executor_untouched_when_running_serially(tmp_pat
         )
 
         assert executor.submissions == 0
-    finally:
-        executor.shutdown(wait=True)
 
     dataframe = pl.read_ipc(source=resolve_timestamps_path(output_directory=output_directory, source_id=_SOURCE_ID))
     assert dataframe[str(ExtractedDataColumns.FRAME_TIME)].to_list() == _expected_timestamps(
@@ -385,9 +326,9 @@ def test_run_extraction_job_forwards_every_descriptor_field(tmp_path, monkeypatc
 
     calls = []
 
-    def _record_call(**kwargs):
+    def _record_call(**arguments):
         """Records the arguments the runner derived from the descriptor instead of running the extraction."""
-        calls.append(kwargs)
+        calls.append(arguments)
 
     monkeypatch.setattr(target=worker, name="execute_job", value=_record_call)
 
@@ -403,13 +344,13 @@ def test_run_extraction_job_forwards_every_descriptor_field(tmp_path, monkeypatc
     # The width the descriptor carries becomes the width of the extraction pool the job's body opens.
     assert arguments["workers"] == job.core_weight == 4
 
-    # The tracker is opened by the runner from the descriptor's own path, because a tracker's file lock cannot cross
-    # a process boundary.
+    # The tracker is opened by the runner from the descriptor's own path, because a tracker instance caches an
+    # in-memory job registry that would arrive in the child already stale.
     assert isinstance(arguments["tracker"], ProcessingTracker)
     assert arguments["tracker"].file_path == job.tracker_path
 
     # A pooled job has no console to draw on, and it never receives an outer pool to nest inside.
-    assert arguments["display_progress"] is False
+    assert not arguments["display_progress"]
     assert "executor" not in arguments
 
 
@@ -423,14 +364,71 @@ def test_run_extraction_job_runs_inside_a_process_pool(tmp_path):
     job = _build_descriptor(log_directory=log_directory, output_directory=output_directory)
     _initialize_tracker(tracker_path=job.tracker_path)
 
-    executor = ProcessPoolExecutor(max_workers=1)
-    try:
+    with ProcessPoolExecutor(max_workers=1) as executor:
         assert executor.submit(run_extraction_job, job=job).result() is None
-    finally:
-        executor.shutdown(wait=True)
 
     feather_path = resolve_timestamps_path(output_directory=job.output_directory, source_id=job.source_id)
     assert pl.read_ipc(source=feather_path)[str(ExtractedDataColumns.FRAME_TIME)].to_list() == _expected_timestamps()
     assert ProcessingTracker(file_path=job.tracker_path).get_job_status(job_id=job.job_id) == (
         ProcessingStatus.SUCCEEDED
     )
+
+
+class _CountingExecutor(ProcessPoolExecutor):
+    """Wraps a real process pool with a counter that records how many batches were submitted to it.
+
+    Args:
+        max_workers: The number of worker processes the wrapped process pool opens.
+
+    Attributes:
+        submissions: Stores the number of work submissions the executor has accepted.
+    """
+
+    def __init__(self, max_workers):
+        super().__init__(max_workers=max_workers)
+        self.submissions = 0
+
+    def submit(self, function, /, *positional_arguments, **keyword_arguments):
+        """Records the submission before handing the work to the underlying pool."""
+        self.submissions += 1
+        return super().submit(function, *positional_arguments, **keyword_arguments)
+
+
+def _build_archive(log_directory, source_id=_SOURCE_ID, frame_timestamps_us=None, data_timestamps_us=None):
+    """Creates one synthetic log archive for the requested camera source and returns the path it was written to."""
+    log_directory.mkdir(parents=True, exist_ok=True)
+    archive_path = log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
+    create_test_archive(
+        archive_path=archive_path,
+        source_id=int(source_id),
+        onset_us=_ONSET_US,
+        frame_timestamps_us=_FRAME_ELAPSED_US if frame_timestamps_us is None else frame_timestamps_us,
+        data_timestamps_us=data_timestamps_us,
+    )
+    return archive_path
+
+
+def _initialize_tracker(tracker_path, source_id=_SOURCE_ID):
+    """Creates a processing tracker that already registers the extraction job of the target camera source."""
+    tracker_path.parent.mkdir(parents=True, exist_ok=True)
+    tracker = ProcessingTracker(file_path=tracker_path)
+    tracker.initialize_jobs(jobs=[(CAMERA_EXTRACTION_JOB_NAME, source_id)])
+    return tracker
+
+
+def _build_descriptor(log_directory, output_directory, source_id=_SOURCE_ID, core_weight=1):
+    """Builds the descriptor of the extraction job reading the target source's archive under the log directory."""
+    return JobDescriptor.for_archive(
+        archive_path=log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+        output_directory=output_directory,
+        tracker_path=resolve_tracker_path(output_directory=output_directory),
+        source_id=source_id,
+        log_directory=log_directory,
+        core_weight=core_weight,
+    )
+
+
+def _expected_timestamps(frame_timestamps_us=None):
+    """Converts the elapsed frame timestamps of a synthetic archive into the absolute timestamps extraction returns."""
+    elapsed = _FRAME_ELAPSED_US if frame_timestamps_us is None else frame_timestamps_us
+    return [_ONSET_US + elapsed_us for elapsed_us in elapsed]

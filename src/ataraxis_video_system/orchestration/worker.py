@@ -76,8 +76,7 @@ def execute_job(
         workers: The number of worker processes to use for parallel processing.
         tracker: The tracker recording this job's outcome.
         display_progress: Determines whether to display a progress bar during timestamp extraction.
-        executor: When provided, parallel processing reuses this pool instead of creating a new one. The pool is
-            passed through to extract_logged_camera_timestamps to avoid spawning a redundant process pool.
+        executor: When provided, parallel processing reuses this pool instead of creating a new one.
     """
     console.echo(message=f"Running '{CAMERA_EXTRACTION_JOB_NAME}' job for source '{source_id}' (ID: {job_id})...")
 

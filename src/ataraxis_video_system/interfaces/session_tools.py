@@ -60,8 +60,10 @@ def start_video_session_tool(
         tool. Do not assume or guess the output directory. Always prompt the user for an explicit path.
 
     Args:
-        output_directory: The path to the directory where video files will be saved. This must be provided by the
-            user, so the AI agent should always ask for this value explicitly.
+        output_directory: The path to the directory where the session's output is written. The video file is saved
+            directly inside it, and a 'mcp_video_session_data_log' subdirectory receives the DataLogger entries and
+            the camera manifest. This must be provided by the user, so the AI agent should always ask for this value
+            explicitly.
         interface: The camera interface to use ('opencv', 'harvesters', or 'mock').
         camera_index: The index of the camera to use.
         width: The width of frames to capture in pixels.
@@ -240,9 +242,8 @@ def stop_video_session_tool() -> dict[str, Any]:
                 assemble_log_archives(log_directory=log_directory, remove_sources=True, verbose=False)
                 archives_assembled = True
                 source_ids = scan_archive_source_ids(directory=log_directory)
-            except Exception:  # noqa: S110
-                # Archive assembly failure is non-fatal. The primary operation (stopping the session) has already
-                # succeeded. The archives_assembled flag communicates the failure without raising an error.
+            except Exception:  # noqa: S110 - Assembly failure is non-fatal, and archives_assembled reports it.
+                # The primary operation, stopping the session, has already succeeded at this point.
                 pass
 
         return {
@@ -311,8 +312,10 @@ def get_session_status_tool() -> dict[str, Any]:
     directory.
 
     Returns:
-        A dictionary containing session status and configuration details. Returns ``{"status": "inactive"}``
-        when no session exists.
+        A dictionary containing session status and configuration details. The 'status' key reads "running" while the
+        session's processes are alive and "stopped" once they have shut down while the session object is still held,
+        which stop_video_session_tool must be called to release. Returns ``{"status": "inactive"}`` when no session
+        exists.
     """
     # No session object exists: either none was started or the previous session was fully torn down.
     with _session_lock:

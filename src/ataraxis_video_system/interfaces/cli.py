@@ -43,8 +43,7 @@ class _SharedConfigurationParameters:
     ``load`` subcommands.
 
     The group callback builds one of these from its options and stores it on the Click context, and each subcommand
-    reads it back through the ``_pass_shared_parameters`` decorator. The ``write`` subcommand uses only
-    ``camera_index``, since it names the single node it targets on its own command line.
+    reads it back through the ``_pass_shared_parameters`` decorator.
     """
 
     camera_index: int | None
@@ -102,7 +101,8 @@ def set_cti_file(file_path: Path) -> None:
 
     This library relies on the Harvesters library to interface with GenICam-compatible cameras. In turn, the Harvesters
     library requires the GenTL Producer interface (.cti) file to discover and interface with compatible cameras. This
-    command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library.
+    command must be called at least once before calling all other CLIs and APIs that rely on the Harvesters library,
+    unless the AXVS_CTI_PATH environment variable supplies the Producer path for the runtime.
     """
     add_cti_file(cti_path=file_path)
 
@@ -268,7 +268,12 @@ def check_compatibility() -> None:
     "--output-directory",
     required=True,
     type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True, path_type=Path),
-    help="The path to the output directory where to save the acquired camera frames as an .mp4 video file.",
+    help=(
+        "The path to the output directory where to save the acquired camera frames as an .mp4 video file. The frame "
+        "acquisition timestamp logs, the camera manifest, and the assembled .npz archives are written to an "
+        "'axvs_live_run_data_log' subdirectory beneath it, which is the path to pass to 'axvs process "
+        "--log-directory'."
+    ),
 )
 @click.option(
     "-m",
@@ -324,7 +329,6 @@ def live_run(
     logger = DataLogger(output_directory=output_directory, instance_name="axvs_live_run")
     logger.start()
 
-    # Uses command arguments to resolve VideoSystem configuration parameters.
     if interface == "mock":
         camera_interface = CameraInterfaces.MOCK
     elif interface == "harvesters":
@@ -358,7 +362,6 @@ def live_run(
     show_instructions: bool = True
 
     try:
-        # Uses terminal input to control the video system.
         while video_system.started:
             if show_instructions:
                 message = (
@@ -443,7 +446,7 @@ def live_run(
     default=-1,
     show_default=True,
     help="The worker processes each job receives. Set to -1 (default) to resolve the width from the archive's "
-    "message count, which yields a single worker for a small archive and the declared per-job allocation of 4 "
+    "message count, which yields a single worker for a small archive and the declared per-job allocation of 8 "
     "cores for a large one.",
 )
 @click.option(
@@ -495,9 +498,10 @@ def process_log_archives(
 def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     """Starts the Model Context Protocol (MCP) server for agentic interaction with the library.
 
-    The MCP server exposes camera discovery, CTI file management, video session control, GenICam configuration,
-    camera manifest management, and log processing functionality through the MCP protocol, enabling AI agents to
-    programmatically interact with the library.
+    The MCP server exposes camera discovery, CTI file management, runtime requirements checking, video session control,
+    GenICam configuration, camera manifest management, log archive assembly, video file validation, recording
+    discovery, and log processing functionality through the MCP protocol, enabling AI agents to programmatically
+    interact with the library.
     """
     # The stdio transport carries the JSON-RPC message stream over stdout, which is also where the console writes
     # every message up to the WARNING level. Silencing the console keeps library output out of that stream, as a
@@ -589,9 +593,9 @@ def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name
             for name in names:
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
-                    console.echo(message=f"  {info.name} = {info.value}")
+                    console.echo(message=f"  {info.name} = {info.value}", raw=True)
                 except Exception:
-                    console.echo(message=f"  {name} = <unreadable>")
+                    console.echo(message=f"  {name} = <unreadable>", raw=True)
 
 
 @configure_group.command("write")
@@ -665,8 +669,9 @@ def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_fi
 def load_genicam_configuration(shared: _SharedConfigurationParameters, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 
-    Applies every non-blacklisted writable node from the configuration file to the camera. Optionally validates that
-    the camera model and serial number match the configuration file.
+    Applies every non-blacklisted writable node from the configuration file to the camera. Always compares the camera
+    model and serial number against the configuration file, warning on a mismatch and aborting instead when --strict
+    is set.
     """
     with harvester_connection(camera_index=shared.require_camera_index()) as camera:
         config = GenicamConfiguration.from_yaml(file_path=config_file)

@@ -63,7 +63,7 @@ def test_init_stores_parameters_and_renders_its_repr(tmp_path, data_logger) -> N
 
 def test_init_rejects_invalid_constructor_arguments(data_logger) -> None:
     """Verifies that an invalid system id, data logger, or output directory is rejected at construction."""
-    # Invalid system_id input - causes conversion error
+    # An invalid system_id input causes a conversion error.
     invalid_system_id = "str"
     with pytest.raises((TypeError, ValueError)):
         VideoSystem(
@@ -467,11 +467,11 @@ def test_init_rejects_invalid_video_saver_arguments(data_logger, tmp_path) -> No
             camera_interface=CameraInterfaces.MOCK,
         )
 
-    invalid_qp = "str"
+    invalid_quantization_parameter = "str"
     message = (
         f"Unable to configure the video saver for the VideoSystem with id 1. Expected an "
         f"integer between 0 and 51 as the 'quantization_parameter' argument value, but got "
-        f"{invalid_qp} of type {type(invalid_qp).__name__}."
+        f"{invalid_quantization_parameter} of type {type(invalid_quantization_parameter).__name__}."
     )
     with pytest.raises(TypeError, match=error_format(message)):
         VideoSystem(
@@ -479,7 +479,7 @@ def test_init_rejects_invalid_video_saver_arguments(data_logger, tmp_path) -> No
             data_logger=data_logger,
             name="test_camera",
             output_directory=output_directory,
-            quantization_parameter=invalid_qp,  # type: ignore[arg-type]
+            quantization_parameter=invalid_quantization_parameter,  # type: ignore[arg-type]
             camera_interface=CameraInterfaces.MOCK,
         )
 
@@ -521,14 +521,13 @@ def test_start_and_stop_control_the_recording_and_the_saving_gate(data_logger, t
         system_id=np.uint8(202),
         data_logger=data_logger,
         name="test_camera",
-        output_directory=None,  # No saving configured
+        output_directory=None,  # No saving configured.
         camera_interface=CameraInterfaces.MOCK,
         frame_rate=5,
     )
 
     data_logger.start()
     saving_system.start()
-    # Ensures that calling start twice does nothing.
     saving_system.start()
     unsaved_system.start()
 
@@ -550,13 +549,11 @@ def test_start_and_stop_control_the_recording_and_the_saving_gate(data_logger, t
 
     saving_system.stop()
     unsaved_system.stop()
-    # Ensures that calling stop twice does nothing.
     unsaved_system.stop()
 
     assert not saving_system.started
     assert not unsaved_system.started
 
-    # Compresses logs for timestamp extraction
     assemble_log_archives(log_directory=data_logger.output_directory, remove_sources=True, memory_mapping=False)
 
     # Extracts frame timestamps for the saving system, which is the only one that recorded frames.
@@ -569,7 +566,7 @@ def test_start_and_stop_control_the_recording_and_the_saving_gate(data_logger, t
         system_id=np.uint8(234),
         data_logger=data_logger,
         name="test_camera",
-        output_directory=None,  # No output directory
+        output_directory=None,  # No output directory.
         camera_interface=CameraInterfaces.MOCK,
     )
     default_system.start()
@@ -1141,8 +1138,7 @@ def test_init_rejects_an_invalid_display_frame_rate(data_logger, tmp_path) -> No
             display_frame_rate=invalid_display_rate,  # type: ignore[arg-type]
         )
 
-    # Tests display frame rate exceeding acquisition rate. The value carries the correct type, so the range half of
-    # the guard reports it as a ValueError.
+    # The value carries the correct type, so the range half of the guard reports it as a ValueError.
     excessive_display_rate = 60
     message = (
         f"Unable to configure the camera interface for the VideoSystem with id 1. Encountered "
@@ -1158,7 +1154,7 @@ def test_init_rejects_an_invalid_display_frame_rate(data_logger, tmp_path) -> No
             output_directory=output_directory,
             camera_interface=CameraInterfaces.MOCK,
             frame_rate=30,
-            display_frame_rate=excessive_display_rate,  # Exceeds frame_rate
+            display_frame_rate=excessive_display_rate,  # Exceeds frame_rate.
         )
 
 
@@ -1258,7 +1254,7 @@ def test_init_builds_a_saver_for_real_genicam_hardware(has_harvesters, data_logg
 def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, tmp_path) -> None:
     """Verifies that timestamps are extracted correctly across repeated frame-saving segments of one session."""
     system_id = np.uint8(99)
-    frame_rate = 10  # Lower frame rate for easier validation
+    frame_rate = 10  # Lower frame rate for easier validation.
 
     output_directory = tmp_path / "test_segmented_timestamps"
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -1280,23 +1276,23 @@ def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, 
 
     timer = PrecisionTimer(precision="s")
 
-    # First segment: 1 second of recording
+    # First segment: 1 second of recording.
     video_system.start_frame_saving()
     timer.delay(delay=1, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
 
-    # Pause: 1 second without recording
+    # Pause: 1 second without recording.
     timer.delay(delay=1, allow_sleep=True, block=False)
 
-    # Second segment: 2 seconds of recording
+    # Second segment: 2 seconds of recording.
     video_system.start_frame_saving()
     timer.delay(delay=2, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
 
-    # Pause: 1 second without recording
+    # Pause: 1 second without recording.
     timer.delay(delay=1, allow_sleep=True, block=False)
 
-    # Third segment: 1 second of recording
+    # Third segment: 1 second of recording.
     video_system.start_frame_saving()
     timer.delay(delay=1, allow_sleep=True, block=False)
     video_system.stop_frame_saving()
@@ -1309,8 +1305,8 @@ def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, 
     log_file_path = data_logger.output_directory / f"{system_id}_log.npz"
     timestamps = extract_logged_camera_timestamps(log_path=log_file_path, workers=1)
 
-    # Total recording time: 1 + 2 + 1 = 4 seconds
-    # Expected frames: approximately 40 (4 * 10 fps)
+    # Total recording time: 1 + 2 + 1 = 4 seconds.
+    # Expected frames: approximately 40 (4 * 10 fps).
     actual_frames = len(timestamps)
 
     # Allows for timing variations.
@@ -1374,7 +1370,12 @@ def test_parallel_extraction_matches_sequential_for_a_live_recording(data_logger
 
 
 class _RecordingSaver:
-    """Records the encoder calls the frame saving loop makes, standing in for a VideoSaver without requiring FFMPEG."""
+    """Records the encoder calls the frame saving loop makes, standing in for a VideoSaver without requiring FFMPEG.
+
+    Attributes:
+        _calls: Stores the name of every encoder method the frame saving loop called, in call order.
+        _frames: Stores every frame the frame saving loop handed to the encoder, in call order.
+    """
 
     def __init__(self) -> None:
         self._calls: list[str] = []
@@ -1397,6 +1398,9 @@ class _RecordingSaver:
 class _ExplodingSaver:
     """Fails on the first frame handed to it, standing in for an encoder whose pipe dies in the middle of a
     recording.
+
+    Attributes:
+        _stopped: Tracks whether the frame saving loop stopped the encoder after the failure.
     """
 
     def __init__(self) -> None:
@@ -1416,7 +1420,11 @@ class _ExplodingSaver:
 
 
 class _ExplodingCamera:
-    """Fails on the first frame grab, standing in for a camera whose link to the hardware drops mid-acquisition."""
+    """Fails on the first frame grab, standing in for a camera whose link to the hardware drops mid-acquisition.
+
+    Attributes:
+        _disconnected: Tracks whether the frame production loop released the camera handle after the failure.
+    """
 
     def __init__(self) -> None:
         self._disconnected: bool = False

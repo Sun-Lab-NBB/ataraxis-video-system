@@ -72,7 +72,7 @@ def test_mock_camera_init_stores_the_requested_acquisition_parameters(
 
 def test_mock_camera_connect_and_disconnect_toggle_the_connection_state() -> None:
     """Verifies that connecting and disconnecting a MockCamera toggles the reported connection state."""
-    camera = MockCamera(system_id=222)  # Uses default parameters
+    camera = MockCamera(system_id=222)  # Uses default parameters.
 
     camera.connect()
     assert camera.is_connected
@@ -104,7 +104,6 @@ def test_mock_camera_grab_frame_rejects_a_disconnected_interface() -> None:
     """Verifies that grabbing a frame before the simulated connection starts is rejected."""
     camera = MockCamera(system_id=222)
 
-    # Verifies that the camera cannot yield images if it is not connected.
     message = (
         f"Unable to simulate a frame acquisition using the MockCamera interface for the VideoSystem with id "
         f"{camera._system_id}. The interface must be simulating a connection to the camera hardware, but the "
@@ -156,11 +155,10 @@ def test_opencv_camera_connect_and_disconnect_toggle_the_connection_state(has_op
         color=color,
     )
 
-    # Tests connect method. Note, this may change the frame_rate, frame_width and frame_height class properties, as the
-    # camera may not support the requested parameters and instead set them to the nearest supported values or to default
-    # values. The specific behavior depends on each camera. Since this code is tested across many different cameras, and
-    # it is hard to predict which cameras will support which settings, formal verification of parameter assignment is
-    # not performed.
+    # This instance requests none of the three acquisition parameters, so connect() adopts whatever frame rate, width,
+    # and height the connected camera reports. A camera that substitutes its own value for an explicitly requested one
+    # is rejected with ValueError instead. Since this code is tested across many different cameras whose default values
+    # are hard to predict, formal verification of the adopted values is not performed.
     assert not camera.is_connected
     camera.connect()
     assert camera.is_connected
@@ -192,10 +190,9 @@ def test_opencv_camera_grab_frame_returns_the_requested_channel_count(has_opencv
 
     assert not camera.is_acquiring
     frame = camera.grab_frame()
-    # Ensures calling grab_frame() switches the camera into acquisition mode.
     assert camera.is_acquiring
 
-    # Ensures that acquiring colored frames correctly returns a multidimensional numpy array
+    # Ensures that acquiring colored frames correctly returns a multidimensional numpy array.
     if color:
         assert frame.shape[2] > 1
     else:
@@ -230,7 +227,6 @@ def test_opencv_camera_connect_applies_the_requested_parameters(has_opencv) -> N
     )
     camera.connect()
 
-    # Verifies that the camera accepted the explicitly provided parameters.
     assert camera.frame_rate > 0
     assert camera.frame_width > 0
     assert camera.frame_height > 0
@@ -252,7 +248,7 @@ def test_opencv_camera_pixel_color_format_reports_the_requested_mode() -> None:
 @pytest.mark.xdist_group(name="group1")
 def test_opencv_camera_grab_frame_rejects_a_disconnected_or_silent_camera() -> None:
     """Verifies that grabbing a frame is rejected while disconnected and when the camera returns none."""
-    camera = OpenCVCamera(system_id=222, camera_index=333)  # Uses invalid index 333
+    camera = OpenCVCamera(system_id=222, camera_index=333)  # Uses invalid index 333.
 
     message = (
         f"Unable to acquire a frame from the OpenCVCamera interface for the VideoSystem with id "
@@ -326,7 +322,7 @@ def test_opencv_camera_grab_frame_converts_to_monochrome(monkeypatch) -> None:
 
 
 def test_get_opencv_ids_reports_every_working_index(monkeypatch) -> None:
-    """Verifies that OpenCV discovery reports one entry per working index and stops after five idle indices."""
+    """Verifies that OpenCV discovery reports one entry per working index, carrying the camera's own properties."""
     monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     cameras = _get_opencv_ids()
@@ -536,7 +532,11 @@ def test_harvesters_camera_connect_rounds_the_frame_rate_node(monkeypatch) -> No
     """Verifies that a camera implementing AcquisitionFrameRate reports the node's value rounded, not truncated."""
 
     class _FrameRateNode:
-        """Stands in for the optional AcquisitionFrameRate node the bundled simulator does not implement."""
+        """Stands in for the optional AcquisitionFrameRate node the bundled simulator does not implement.
+
+        Attributes:
+            _value: Stores the frame rate the node currently holds, clamped the way a real float node clamps it.
+        """
 
         def __init__(self) -> None:
             self._value = 30.0
@@ -582,7 +582,6 @@ def test_harvesters_camera_grab_frame_returns_frames_at_the_requested_size(frame
 
     assert not camera.is_acquiring
     frame = camera.grab_frame()
-    # Ensures calling grab_frame() switches the camera into acquisition mode.
     assert camera.is_acquiring
 
     if frame_height is not None and frame_width is not None:

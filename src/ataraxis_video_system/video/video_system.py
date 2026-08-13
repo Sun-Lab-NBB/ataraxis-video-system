@@ -179,15 +179,18 @@ class VideoSystem:
 
     Raises:
         TypeError: If any of the provided arguments has an invalid type.
-        ValueError: If any of the provided arguments has an invalid value, or if the managed camera acquires frames
-            that do not use the 8-bit unsigned integer data type.
+        ValueError: If any of the provided arguments has an invalid value, if the managed camera acquires frames that
+            do not use the 8-bit unsigned integer data type, or if the managed camera acquires frames in a color format
+            outside the unpacked Monochrome, RGB, and BGR families.
         RuntimeError: If the host system does not have access to FFMPEG or Nvidia GPU (when the instance is configured
             to use hardware encoding).
         OverflowError: If 'system_id' falls outside the 0 to 255 range the uint8 identifier supports.
         NotImplementedError: If the Harvesters camera interface is requested where the GenICam runtime is absent,
             which is every macOS host.
-        FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured.
+        FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured, or
+            if the configured .cti file no longer exists.
         OSError: If the configured .cti file is not a loadable GenTL Producer.
+        IndexError: If the 'camera_index' exceeds the number of cameras the configured GenTL Producer discovers.
         BrokenPipeError: If the validation frame grab from the managed camera fails.
         Timeout: If the camera manifest's .lock file cannot be acquired within the timeout period.
     """
@@ -225,7 +228,6 @@ class VideoSystem:
         # Ensures system_id is a byte-convertible integer.
         self._system_id: np.uint8 = np.uint8(system_id)
 
-        # Ensures that the data_logger is an initialized DataLogger instance.
         if not isinstance(data_logger, DataLogger):
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected an initialized "
@@ -234,7 +236,6 @@ class VideoSystem:
             )
             console.error(message=message, error=TypeError)
 
-        # Ensures that the name is a non-empty string.
         if not isinstance(name, str) or not name:
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected a non-empty string "
@@ -242,7 +243,6 @@ class VideoSystem:
             )
             console.error(message=message, error=TypeError)
 
-        # Ensures that the output_directory is either a Path instance or None.
         if output_directory is not None and not isinstance(output_directory, Path):
             message = (
                 f"Unable to initialize the VideoSystem instance with id {system_id}. Expected a Path instance or None "
@@ -257,9 +257,6 @@ class VideoSystem:
             else resolve_camera_video_path(output_directory=output_directory, system_id=int(self._system_id))
         )
 
-        # Initializes the camera interface.
-
-        # Validates camera-related inputs.
         if not isinstance(camera_index, int) or camera_index < 0:
             message = (
                 f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Expected a "
@@ -327,7 +324,6 @@ class VideoSystem:
                 color=False if not isinstance(color, bool) else color,
             )
 
-        # If the requested camera interface does not match any of the supported interfaces, raises an error.
         else:
             message = (
                 f"Unable to configure the camera interface for the VideoSystem with id {self._system_id}. Encountered "
@@ -392,7 +388,6 @@ class VideoSystem:
         # output directory).
         self._saver: VideoSaver | None = None
         if self._output_file is not None:
-            # Validates the video saver configuration parameters.
             if not isinstance(gpu, int):
                 message = (
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Expected an "
@@ -412,7 +407,7 @@ class VideoSystem:
                     f"Unable to configure the video saver for the VideoSystem with id {self._system_id}. Encountered "
                     f"an unexpected 'encoder_speed_preset' argument value {encoder_speed_preset} of type "
                     f"{type(encoder_speed_preset).__name__}. Use one of the supported EncoderSpeedPresets enumeration "
-                    f"members: {', '.join([str(preset) for preset in tuple(EncoderSpeedPresets)])}."
+                    f"members: {', '.join(str(preset) for preset in EncoderSpeedPresets)}."
                 )
                 console.error(message=message, error=ValueError)
             if output_pixel_format not in OutputPixelFormats:
@@ -511,7 +506,6 @@ class VideoSystem:
         Raises:
             RuntimeError: If starting the consumer or producer processes stalls or fails.
         """
-        # Prevents restarting an already started VideoSystem instance.
         if self._started:
             return
 
@@ -560,15 +554,12 @@ class VideoSystem:
         )
         self._producer_process.start()
 
-        # Waits for the processes to report that they have been successfully initialized.
         for _ in initialization_timer.poll(
             interval=_PROCESS_INITIALIZATION_POLL_INTERVAL, allow_sleep=True, block=False
         ):
-            # Exits once both processes have reported successful initialization.
             if self._terminator_array[2] == 1 and (self._consumer_process is None or self._terminator_array[3] == 1):
                 break
 
-            # If the processes take too long to initialize or die, raises an error.
             error = False
             message: str = ""  # Pre-initializes the variable to satisfy mypy.
             if (
@@ -593,7 +584,7 @@ class VideoSystem:
                 )
                 error = True
 
-            # Reclaims all committed resources before terminating with an error.
+            # Reclaims every committed resource before the error propagates out of start().
             if error:
                 self._terminate_child_processes()
 
@@ -683,7 +674,6 @@ class VideoSystem:
             every frame that precedes the sentinel in the queue before terminating. Ordering the shutdown this way
             keeps a frame that the producer buffers during the shutdown from being stranded in the queue.
         """
-        # Emits the process shutdown signal, which terminates the producer process.
         if self._terminator_array is not None:
             self._terminator_array[0] = 1
 
@@ -704,9 +694,6 @@ class VideoSystem:
     ) -> None:  # pragma: no cover - GUI-only, requires a display server.
         """Continuously fetches frame images from the display_queue and displays them via OpenCV's imshow()
         function.
-
-        Notes:
-            This method runs in a thread as part of the _frame_production_loop() runtime in the producer Process.
 
         Args:
             display_queue: The multithreading Queue that buffers the grabbed camera frames until they are displayed.
@@ -756,9 +743,6 @@ class VideoSystem:
 
         If the VideoSystem instance is configured to display acquired frame data, this method also uses a separate
         thread to render the acquired frames into and display them to the user in real time.
-
-        Notes:
-            This method should be executed by the producer Process.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -852,19 +836,16 @@ class VideoSystem:
 
         # This process is spawned, so it re-imports the library and receives a disabled console. Writing to stderr
         # directly is the only channel that always reaches the user from here. The write also precedes the cleanup
-        # below, which blocks for minutes on the encoder teardown and delays the interpreter's own traceback.
+        # below, which disconnects the camera and joins the display thread, delaying the interpreter's own traceback.
         except Exception as error:
             sys.stderr.write(f"{error}\n")
             sys.stderr.flush()
             raise
 
-        # Ensures that local assets are always properly terminated.
         finally:
-            # Releases camera and shared memory assets.
             terminator_array.disconnect()
             camera.disconnect()
 
-            # Terminates the display thread.
             if display_queue is not None:
                 display_queue.put(None)
             if display_thread is not None:
@@ -884,12 +865,8 @@ class VideoSystem:
         This method also logs the acquisition time for each saved frame via the logger_queue instance.
 
         Notes:
-            This method should be executed by the consumer Process.
-
-            This method's main loop is kept alive until it encounters the end-of-stream sentinel appended to the
-            saver_queue during shutdown. This is an intentional security feature that ensures all buffered images are
-            processed before the saver is terminated. Overriding this behavior requires the process kill command, but
-            tampering with this feature is strongly discouraged.
+            The main loop is kept alive until it encounters the end-of-stream sentinel appended to the saver_queue
+            during shutdown, which is what drains every buffered frame before the saver is terminated.
 
         Args:
             system_id: The unique identifier code of the caller VideoSystem instance. This is used to identify the
@@ -900,7 +877,6 @@ class VideoSystem:
                 process.
             terminator_array: A SharedMemoryArray instance used to report the initialization status of the process.
         """
-        # Connects to the terminator array used to report the initialization status of this process.
         terminator_array.connect()
 
         saver.start()
@@ -908,7 +884,6 @@ class VideoSystem:
         # Indicates that the video saver has started successfully.
         terminator_array[3] = 1
 
-        # Pre-creates the placeholder array used to log frame acquisition timestamps.
         data_placeholder = np.array([], dtype=np.uint8)
 
         try:
@@ -926,7 +901,6 @@ class VideoSystem:
 
                 saver.save_frame(frame=frame)
 
-                # Logs the saved frame's acquisition timestamp.
                 logger_queue.put(
                     LogPackage(
                         source_id=system_id,
@@ -943,7 +917,6 @@ class VideoSystem:
             sys.stderr.flush()
             raise
 
-        # Ensures that local assets are always properly terminated.
         finally:
             terminator_array.disconnect()
             saver.stop()
@@ -960,7 +933,6 @@ class VideoSystem:
         Raises:
             RuntimeError: If any of the processes has prematurely shut down.
         """
-        # Initializes the timer used to space out the process state checks.
         timer = PrecisionTimer(precision=TimerPrecisions.MILLISECOND)
 
         # Polls every 20 ms until the global shutdown signal is emitted.
@@ -985,7 +957,6 @@ class VideoSystem:
                 if self._consumer_process is not None and not self._consumer_process.is_alive():
                     error = True
 
-                # Resumes polling while both processes are alive.
                 if not error:
                     continue
 

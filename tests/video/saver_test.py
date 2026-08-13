@@ -121,7 +121,6 @@ def test_video_saver_init_stores_parameters_and_renders_its_repr(tmp_path, has_f
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
-    # Tests CPU encoder initialization
     output_file = tmp_path / "test_video.mp4"
     saver = VideoSaver(
         system_id=1,
@@ -179,8 +178,7 @@ def test_video_saver_builds_the_cpu_encoder_command(
 
     assert "libx264" in saver._ffmpeg_command or "libx265" in saver._ffmpeg_command
     assert output_pixel_format.value in saver._ffmpeg_command
-    assert "veryfast" in saver._ffmpeg_command  # FASTEST maps to veryfast for CPU
-    # Verifies the output is forced to full (pc) range
+    assert "veryfast" in saver._ffmpeg_command  # FASTEST maps to veryfast for CPU.
     range_index = saver._ffmpeg_command.index("-color_range")
     assert saver._ffmpeg_command[range_index + 1] == "pc"
 
@@ -231,15 +229,14 @@ def test_video_saver_builds_the_gpu_encoder_command(
 
     assert "h264_nvenc" in saver._ffmpeg_command or "hevc_nvenc" in saver._ffmpeg_command
     assert output_pixel_format.value in saver._ffmpeg_command
-    assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU
+    assert "p1" in saver._ffmpeg_command  # FASTEST maps to p1 for GPU.
     gpu_index = saver._ffmpeg_command.index("-gpu")
     assert saver._ffmpeg_command[gpu_index + 1] == "0"
     # Pins the frame geometry and the quantization parameter, neither of which any other assertion would catch.
     size_index = saver._ffmpeg_command.index("-s")
     assert saver._ffmpeg_command[size_index + 1] == "320x240"
-    qp_index = saver._ffmpeg_command.index("-qp")
-    assert saver._ffmpeg_command[qp_index + 1] == "25"
-    # Verifies the output is forced to full (pc) range
+    quantization_index = saver._ffmpeg_command.index("-qp")
+    assert saver._ffmpeg_command[quantization_index + 1] == "25"
     range_index = saver._ffmpeg_command.index("-color_range")
     assert saver._ffmpeg_command[range_index + 1] == "pc"
 
@@ -269,15 +266,13 @@ def test_video_saver_start_and_stop_are_idempotent(tmp_path, has_ffmpeg) -> None
     saver.start()
     assert saver._ffmpeg_process is not None
 
-    # Verifies that calling start() again does nothing
     process = saver._ffmpeg_process
     saver.start()
-    assert saver._ffmpeg_process is process  # Same process object
+    assert saver._ffmpeg_process is process  # Same process object.
 
     saver.stop()
     assert saver._ffmpeg_process is None
 
-    # Verifies that calling stop() again does nothing
     saver.stop()
     assert saver._ffmpeg_process is None
 
@@ -314,11 +309,11 @@ def test_video_saver_save_frame_writes_a_playable_video_file(tmp_path, has_ffmpe
         frame = camera.grab_frame()
         saver.save_frame(frame)
 
-    # Stops the encoder to finalize the video
+    # Stops the encoder to finalize the video.
     saver.stop()
 
     assert output_file.exists()
-    assert output_file.stat().st_size > 0  # File is not empty
+    assert output_file.stat().st_size > 0  # File is not empty.
 
 
 def test_video_saver_save_frame_rejects_an_unstarted_encoder(tmp_path, has_ffmpeg) -> None:
@@ -348,7 +343,7 @@ def test_video_saver_save_frame_rejects_an_unstarted_encoder(tmp_path, has_ffmpe
 
 
 def test_video_saver_del_releases_the_encoder_process(tmp_path, has_ffmpeg) -> None:
-    """Verifies that deleting a VideoSaver releases the encoder process it owns."""
+    """Verifies that deleting a started VideoSaver runs its shutdown path and leaves the output file reusable."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -367,7 +362,7 @@ def test_video_saver_del_releases_the_encoder_process(tmp_path, has_ffmpeg) -> N
 
     del saver
 
-    # Creates a new saver to verify resources were released
+    # Creates a new saver over the same output file to confirm the path is reusable after the first instance is dropped.
     replacement_saver = VideoSaver(
         system_id=1,
         output_file=output_file,
@@ -440,7 +435,7 @@ def test_video_saver_save_frame_accepts_a_non_contiguous_frame(tmp_path, has_ffm
 
 
 def test_video_saver_stop_reports_a_non_zero_encoder_exit_code(tmp_path, has_ffmpeg) -> None:
-    """Verifies that VideoSaver logs FFMPEG error output when the process terminates with a non-zero exit code."""
+    """Verifies that stop() reaps an FFMPEG process that exited with a non-zero code and clears its reference."""
     if not has_ffmpeg:
         pytest.skip("Skipping this test as it requires FFMPEG.")
 
@@ -488,7 +483,7 @@ def test_video_saver_save_frame_reports_a_terminated_encoder(tmp_path, has_ffmpe
     with pytest.raises(RuntimeError, match="terminated unexpectedly"):
         saver.save_frame(frame)
 
-    # Cleans up the dead process reference to prevent stop() from failing.
+    # Clears the dead process reference so that the __del__-driven stop() short-circuits instead of reaping again.
     saver._ffmpeg_process = None
 
 
@@ -595,8 +590,8 @@ def test_video_saver_save_frame_reports_a_broken_encoder_pipe(tmp_path, has_ffmp
         assert saver.is_active
         assert saver._ffmpeg_process.poll() is None
     finally:
-        # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub would instead
-        # leave FFMPEG running until the grace period expires.
+        # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub defines no close(),
+        # so stop() would raise AttributeError before it could reap the encoder.
         saver._ffmpeg_process.stdin = real_stdin
         saver.stop()
 
@@ -636,7 +631,13 @@ def test_video_saver_stop_reports_a_failed_encoder_to_stderr(tmp_path, capsys) -
 
 
 class _FailedEncoderProcess:
-    """Stands in for an FFMPEG process that has already exited with an error, exposing no pipes to close."""
+    """Stands in for an FFMPEG process that has already exited with an error, exposing no pipes to close.
+
+    Attributes:
+        returncode: Stores the exit code the stand-in process reports to every caller that reaps it.
+        stdin: Stores the absent input pipe, standing in for the pipe an exited process no longer exposes.
+        stderr: Stores the absent error pipe, standing in for the pipe an exited process no longer exposes.
+    """
 
     def __init__(self, returncode) -> None:
         self.returncode = returncode
@@ -649,7 +650,11 @@ class _FailedEncoderProcess:
 
 
 class _NoEofStdin:
-    """Wraps the encoder's real stdin pipe so that closing it does not signal EOF to the FFMPEG process."""
+    """Wraps the encoder's real stdin pipe so that closing it does not signal EOF to the FFMPEG process.
+
+    Attributes:
+        _real: Stores the wrapped stdin pipe, which the test closes once it no longer needs FFMPEG alive.
+    """
 
     def __init__(self, stream) -> None:
         self._real = stream
@@ -659,7 +664,11 @@ class _NoEofStdin:
 
 
 class _FailingStdin:
-    """Stands in for the encoder's stdin pipe and fails every write with a preset error."""
+    """Stands in for the encoder's stdin pipe and fails every write with a preset error.
+
+    Attributes:
+        _error: Stores the error raised in place of accepting the frame's data on every write.
+    """
 
     def __init__(self, error) -> None:
         self._error = error

@@ -189,8 +189,7 @@ def test_extract_logged_camera_timestamps_external_executor(tmp_path):
 
     sequential = extract_logged_camera_timestamps(log_path=archive_path, workers=1)
 
-    executor = ProcessPoolExecutor(max_workers=2)
-    try:
+    with ProcessPoolExecutor(max_workers=2) as executor:
         parallel = extract_logged_camera_timestamps(
             log_path=archive_path, workers=2, display_progress=False, executor=executor
         )
@@ -200,8 +199,6 @@ def test_extract_logged_camera_timestamps_external_executor(tmp_path):
         # The caller owns the pool, so extraction must not shut it down. A pool closed by extraction would instead
         # raise a RuntimeError when asked to accept more work.
         assert executor.submit(abs, -5).result() == 5
-    finally:
-        executor.shutdown(wait=True)
 
 
 def _build_archive(archive_path, frame_timestamps_us, data_timestamps_us=None):

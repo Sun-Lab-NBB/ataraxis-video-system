@@ -1,4 +1,6 @@
-"""Provides the paging and projection machinery the Model Context Protocol read tools share."""
+"""Provides the paging, projection, breakdown, and filter-rejection machinery the Model Context Protocol read tools
+share.
+"""
 
 from __future__ import annotations
 
@@ -128,15 +130,13 @@ def project_item(item: dict[str, Any], fields: Sequence[str]) -> dict[str, Any]:
     Returns:
         The narrowed item.
     """
-    narrowed: dict[str, Any] = {}
-    for field_name in fields:
-        if field_name not in item:
-            continue
-        value = item[field_name]
-        if value is None or (isinstance(value, list | dict | str) and not value):
-            continue
-        narrowed[field_name] = value
-    return narrowed
+    return {
+        field_name: value
+        for field_name in fields
+        if field_name in item
+        and (value := item[field_name]) is not None
+        and not (isinstance(value, list | dict | str) and not value)
+    }
 
 
 def reject_unknown(items: Sequence[dict[str, Any]], key: str, values: list[str], subject: str) -> dict[str, Any] | None:

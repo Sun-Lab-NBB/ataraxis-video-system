@@ -105,14 +105,10 @@ class OutputPixelFormats(StrEnum):
 def check_gpu_availability() -> bool:
     """Checks whether the host system has an Nvidia GPU.
 
-    The presence of a GPU is determined by calling the 'nvidia-smi' command. If the command runs successfully, it
-    indicates the host system has an Nvidia GPU.
-
     Returns:
         True if the host system has an Nvidia GPU, False otherwise.
     """
     try:
-        # Runs the nvidia-smi command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(
             args=["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
@@ -128,13 +124,10 @@ def check_gpu_availability() -> bool:
 def check_ffmpeg_availability() -> bool:
     """Checks whether the host system has the FFMPEG library installed and available on PATH.
 
-    The presence of the FFMPEG library is determined by calling the 'ffmpeg -version' command.
-
     Returns:
         True if the host system has the FFMPEG library installed and available on PATH, False otherwise.
     """
     try:
-        # Runs the ffmpeg version command, uses check to trigger CalledProcessError if the command fails.
         subprocess.run(args=["ffmpeg", "-version"], capture_output=True, text=True, check=True)
     except Exception:
         return False

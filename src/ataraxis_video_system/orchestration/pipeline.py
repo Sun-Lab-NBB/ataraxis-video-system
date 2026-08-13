@@ -43,9 +43,7 @@ def run_log_processing_pipeline(
             recursively, so archives may be nested at any depth below this path.
         output_directory: The path to the root output directory. A ``camera_timestamps/`` subdirectory is created
             automatically under this path, and all tracker and feather output files are written there.
-        job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
-            matching this ID is executed (external mode). If not provided, all requested jobs are run sequentially
-            with automatic tracker management (local mode).
+        job_id: The unique hexadecimal identifier selecting external mode, or None to select local mode.
         source_ids: The camera source IDs to process in local mode. Each ID must be registered in the camera
             manifest and correspond to exactly one archive under the log directory. If not provided, resolves all
             registered source IDs from the manifest. This argument is ignored in external mode.
@@ -58,8 +56,8 @@ def run_log_processing_pipeline(
         FileNotFoundError: If the log directory does not exist, if a requested source's archive is absent, or if
             the recording resolves no job to run.
         ValueError: If the tree holds more than one camera manifest, if a manifest registers no sources, if a
-            requested source or job identifier is not registered, or if the resolved archives span several
-            directories.
+            requested source or job identifier is not registered, if the resolved archives span several directories,
+            or if a resolved log archive carries no onset timestamp message.
         OSError: If any directory beneath the log directory cannot be read.
         YAMLError: If the camera manifest does not hold a well-formed YAML document.
         MissingValueError: If the camera manifest omits a field the CameraManifest class requires.

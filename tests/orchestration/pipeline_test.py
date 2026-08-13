@@ -19,7 +19,7 @@ from ataraxis_video_system.orchestration.jobs import (
 from ataraxis_video_system.orchestration.pipeline import run_log_processing_pipeline
 from ataraxis_video_system.orchestration.allocation import (
     CAMERA_EXTRACTION_JOB_CORES,
-    PARALLEL_EXTRACTION_THRESHOLD,
+    _PARALLEL_EXTRACTION_THRESHOLD,
 )
 
 _ONSET_US: int = 1700000000000000
@@ -30,52 +30,6 @@ _FRAME_ELAPSED_US: list[int] = [1000, 2000, 3000]
 
 _FRAME_COLUMN: str = str(ExtractedDataColumns.FRAME_TIME)
 """Stores the name of the only column the extracted timestamp table carries."""
-
-
-def _archive_path(log_directory, source_id):
-    """Resolves the path of the synthetic log archive of the target camera source."""
-    return log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
-
-
-def _build_camera_logs(log_directory, source_ids):
-    """Creates one synthetic log archive and one camera manifest entry for each of the requested camera sources."""
-    log_directory.mkdir(parents=True, exist_ok=True)
-    for source_id in source_ids:
-        create_test_archive(
-            archive_path=_archive_path(log_directory=log_directory, source_id=source_id),
-            source_id=source_id,
-            onset_us=_ONSET_US,
-            frame_timestamps_us=_FRAME_ELAPSED_US,
-        )
-        write_camera_manifest(log_directory=log_directory, source_id=source_id, name=f"cam{source_id}")
-
-
-def _read_timestamps(output_directory, source_id):
-    """Reads the extracted timestamps the pipeline wrote for the target camera source."""
-    feather_path = resolve_timestamps_path(
-        output_directory=resolve_output_directory(output_directory=output_directory), source_id=source_id
-    )
-    dataframe = pl.read_ipc(source=feather_path)
-    assert dataframe.columns == [_FRAME_COLUMN]
-    return dataframe[_FRAME_COLUMN].to_list()
-
-
-def _open_tracker(output_directory):
-    """Opens the processing tracker the pipeline aligned under the target output directory."""
-    return ProcessingTracker(
-        file_path=resolve_tracker_path(output_directory=resolve_output_directory(output_directory=output_directory))
-    )
-
-
-def _record_dispatches(monkeypatch):
-    """Replaces the single-job runner the pipeline dispatches with a recorder and returns the recorded calls."""
-    calls = []
-
-    def _record(**arguments):
-        calls.append(arguments)
-
-    monkeypatch.setattr(target=pipeline, name="execute_job", value=_record)
-    return calls
 
 
 @pytest.mark.xdist_group(name="orchestration")
@@ -247,7 +201,7 @@ def test_run_log_processing_pipeline_resolves_an_unset_width_per_archive(tmp_pat
         archive_path=_archive_path(log_directory=log_directory, source_id=2),
         source_id=2,
         onset_us=_ONSET_US,
-        frame_timestamps_us=list(range(1, PARALLEL_EXTRACTION_THRESHOLD + 1)),
+        frame_timestamps_us=list(range(1, _PARALLEL_EXTRACTION_THRESHOLD + 1)),
     )
     write_camera_manifest(log_directory=log_directory, source_id=2, name="cam2")
 
@@ -270,3 +224,49 @@ def test_run_log_processing_pipeline_resolves_an_unset_width_per_archive(tmp_pat
 
     assert sized_archives == [_archive_path(log_directory=log_directory, source_id=source_id) for source_id in (1, 2)]
     assert [call["workers"] for call in calls] == [1, CAMERA_EXTRACTION_JOB_CORES]
+
+
+def _archive_path(log_directory, source_id):
+    """Resolves the path of the synthetic log archive of the target camera source."""
+    return log_directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
+
+
+def _build_camera_logs(log_directory, source_ids):
+    """Creates one synthetic log archive and one camera manifest entry for each of the requested camera sources."""
+    log_directory.mkdir(parents=True, exist_ok=True)
+    for source_id in source_ids:
+        create_test_archive(
+            archive_path=_archive_path(log_directory=log_directory, source_id=source_id),
+            source_id=source_id,
+            onset_us=_ONSET_US,
+            frame_timestamps_us=_FRAME_ELAPSED_US,
+        )
+        write_camera_manifest(log_directory=log_directory, source_id=source_id, name=f"cam{source_id}")
+
+
+def _read_timestamps(output_directory, source_id):
+    """Reads the extracted timestamps the pipeline wrote for the target camera source."""
+    feather_path = resolve_timestamps_path(
+        output_directory=resolve_output_directory(output_directory=output_directory), source_id=source_id
+    )
+    dataframe = pl.read_ipc(source=feather_path)
+    assert dataframe.columns == [_FRAME_COLUMN]
+    return dataframe[_FRAME_COLUMN].to_list()
+
+
+def _open_tracker(output_directory):
+    """Opens the processing tracker the pipeline aligned under the target output directory."""
+    return ProcessingTracker(
+        file_path=resolve_tracker_path(output_directory=resolve_output_directory(output_directory=output_directory))
+    )
+
+
+def _record_dispatches(monkeypatch):
+    """Replaces the single-job runner the pipeline dispatches with a recorder and returns the recorded calls."""
+    calls = []
+
+    def _record(**arguments):
+        calls.append(arguments)
+
+    monkeypatch.setattr(target=pipeline, name="execute_job", value=_record)
+    return calls
