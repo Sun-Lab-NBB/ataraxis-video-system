@@ -42,6 +42,9 @@ def data_logger(tmp_path) -> DataLogger:
 
 def test_init_stores_parameters_and_renders_its_repr(tmp_path, data_logger) -> None:
     """Verifies that constructing a VideoSystem stores the requested parameters and renders them in its repr."""
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
     video_system = VideoSystem(
         system_id=np.uint8(1),
         data_logger=data_logger,
@@ -504,6 +507,9 @@ def test_init_rejects_invalid_video_saver_arguments(data_logger, tmp_path) -> No
 @pytest.mark.xdist_group(name="video_system")
 def test_start_and_stop_control_the_recording_and_the_saving_gate(data_logger, tmp_path) -> None:
     """Verifies the start, stop, and frame-saving controls of the VideoSystem alongside its DataLogger bindings."""
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
     output_directory = tmp_path / "test_output_directory"
 
     saving_system = VideoSystem(
@@ -1260,6 +1266,9 @@ def test_init_builds_a_saver_for_real_genicam_hardware(has_harvesters, data_logg
 @pytest.mark.xdist_group(name="video_system")
 def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, tmp_path) -> None:
     """Verifies that timestamps are extracted correctly across repeated frame-saving segments of one session."""
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
     system_id = np.uint8(99)
     frame_rate = 10  # Lower frame rate for easier validation.
 
@@ -1334,6 +1343,9 @@ def test_timestamp_extraction_spans_repeated_frame_saving_segments(data_logger, 
 @pytest.mark.xdist_group(name="orchestration")
 def test_parallel_extraction_matches_sequential_for_a_live_recording(data_logger, tmp_path) -> None:
     """Verifies that parallel extraction of a recorded session's archive reproduces the sequential result."""
+    if not check_ffmpeg_availability():
+        pytest.skip("Skipping this test as it requires FFMPEG.")
+
     system_id = np.uint8(77)
     frame_rate = 30
 

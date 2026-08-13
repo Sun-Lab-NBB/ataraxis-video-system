@@ -64,7 +64,7 @@ ___
 
 ## Dependencies
 
-- [FFMPEG](https://www.ffmpeg.org/download.html) version **n8.1**. The installed FFMPEG must be available on the 
+- [FFMPEG](https://www.ffmpeg.org/download.html) version **n9.0.1**. The installed FFMPEG must be available on the
   system’s path and callable from Python processes.
 - A [GenTL Producer (PDF)](https://www.emva.org/wp-content/uploads/GenICam_GenTL_1_6.pdf) interface compatible with the
   [Harvesters](https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst#installing-a-gentl-producer) library
