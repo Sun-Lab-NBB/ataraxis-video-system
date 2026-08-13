@@ -43,8 +43,7 @@ class _SharedConfigurationParameters:
     ``load`` subcommands.
 
     The group callback builds one of these from its options and stores it on the Click context, and each subcommand
-    reads it back through the ``_pass_shared_parameters`` decorator. The ``write`` subcommand uses only
-    ``camera_index``, since it names the single node it targets on its own command line.
+    reads it back through the ``_pass_shared_parameters`` decorator.
     """
 
     camera_index: int | None
@@ -330,7 +329,6 @@ def live_run(
     logger = DataLogger(output_directory=output_directory, instance_name="axvs_live_run")
     logger.start()
 
-    # Uses command arguments to resolve VideoSystem configuration parameters.
     if interface == "mock":
         camera_interface = CameraInterfaces.MOCK
     elif interface == "harvesters":
@@ -364,7 +362,6 @@ def live_run(
     show_instructions: bool = True
 
     try:
-        # Uses terminal input to control the video system.
         while video_system.started:
             if show_instructions:
                 message = (
@@ -596,9 +593,9 @@ def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name
             for name in names:
                 try:
                     info = read_genicam_node(node_map=node_map, name=name)
-                    console.echo(message=f"  {info.name} = {info.value}")
+                    console.echo(message=f"  {info.name} = {info.value}", raw=True)
                 except Exception:
-                    console.echo(message=f"  {name} = <unreadable>")
+                    console.echo(message=f"  {name} = <unreadable>", raw=True)
 
 
 @configure_group.command("write")

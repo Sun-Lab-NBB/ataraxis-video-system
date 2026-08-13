@@ -237,7 +237,6 @@ def test_apply_configuration_rejects_a_node_absent_from_the_camera() -> None:
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
     try:
-        # Creates a configuration with matching identity but a non-existent node.
         config = GenicamConfiguration(
             camera_model=camera.model,
             camera_serial_number=camera.serial_number,
@@ -928,7 +927,6 @@ def test_write_genicam_node_coerces_a_float_against_real_hardware(has_harvesters
     camera = HarvestersCamera(system_id=222, camera_index=0)
     camera.connect()
     try:
-        # Reads the current ExposureTime value and writes it back unchanged.
         original = read_genicam_node(node_map=camera.node_map, name="ExposureTime")
         write_genicam_node(node_map=camera.node_map, name="ExposureTime", value=str(original.value))
         restored = read_genicam_node(node_map=camera.node_map, name="ExposureTime")

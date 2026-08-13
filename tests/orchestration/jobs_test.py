@@ -28,40 +28,6 @@ _SPAWN_TIMEOUT_SECONDS: int = 180
 """Stores the time the spawned worker round-trip test waits for its single submitted call before failing."""
 
 
-def _create_archive(directory, source_id):
-    """Writes a synthetic camera log archive for the target source into the requested directory."""
-    directory.mkdir(parents=True, exist_ok=True)
-    archive_path = directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
-    create_test_archive(
-        archive_path=archive_path,
-        source_id=source_id,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=[1000, 2000],
-    )
-    return archive_path
-
-
-def _build_descriptor(tmp_path, source_id=1, core_weight=1):
-    """Builds a descriptor addressing a real synthetic archive written under the requested temporary directory."""
-    log_directory = tmp_path / "logs"
-    archive_path = _create_archive(directory=log_directory, source_id=source_id)
-    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
-
-    return JobDescriptor.for_archive(
-        archive_path=archive_path,
-        output_directory=output_directory,
-        tracker_path=resolve_tracker_path(output_directory=output_directory),
-        source_id=str(source_id),
-        log_directory=log_directory,
-        core_weight=core_weight,
-    )
-
-
-def _normalize(text):
-    """Collapses the line wrapping the console applies, so a message fragment matches the raised error's text."""
-    return " ".join(str(text).split())
-
-
 def test_camera_extraction_job_name():
     """Verifies that the extraction job name keeps the value every persisted job identifier is derived from."""
     assert CAMERA_EXTRACTION_JOB_NAME == "camera_timestamp_extraction"
@@ -477,3 +443,37 @@ def test_job_sizing_pickle_round_trip():
     sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
 
     assert pickle.loads(pickle.dumps(sizing)) == sizing  # noqa: S301 - The payload is the record built one line above.
+
+
+def _create_archive(directory, source_id):
+    """Writes a synthetic camera log archive for the target source into the requested directory."""
+    directory.mkdir(parents=True, exist_ok=True)
+    archive_path = directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
+    create_test_archive(
+        archive_path=archive_path,
+        source_id=source_id,
+        onset_us=_ONSET_US,
+        frame_timestamps_us=[1000, 2000],
+    )
+    return archive_path
+
+
+def _build_descriptor(tmp_path, source_id=1, core_weight=1):
+    """Builds a descriptor addressing a real synthetic archive written under the requested temporary directory."""
+    log_directory = tmp_path / "logs"
+    archive_path = _create_archive(directory=log_directory, source_id=source_id)
+    output_directory = resolve_output_directory(output_directory=tmp_path / "output")
+
+    return JobDescriptor.for_archive(
+        archive_path=archive_path,
+        output_directory=output_directory,
+        tracker_path=resolve_tracker_path(output_directory=output_directory),
+        source_id=str(source_id),
+        log_directory=log_directory,
+        core_weight=core_weight,
+    )
+
+
+def _normalize(text):
+    """Collapses the line wrapping the console applies, so a message fragment matches the raised error's text."""
+    return " ".join(str(text).split())

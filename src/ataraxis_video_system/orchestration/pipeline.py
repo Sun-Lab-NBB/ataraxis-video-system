@@ -43,9 +43,7 @@ def run_log_processing_pipeline(
             recursively, so archives may be nested at any depth below this path.
         output_directory: The path to the root output directory. A ``camera_timestamps/`` subdirectory is created
             automatically under this path, and all tracker and feather output files are written there.
-        job_id: The unique hexadecimal identifier for the processing job to execute. If provided, only the job
-            matching this ID is executed (external mode). If not provided, all requested jobs are run sequentially
-            with automatic tracker management (local mode).
+        job_id: The unique hexadecimal identifier selecting external mode, or None to select local mode.
         source_ids: The camera source IDs to process in local mode. Each ID must be registered in the camera
             manifest and correspond to exactly one archive under the log directory. If not provided, resolves all
             registered source IDs from the manifest. This argument is ignored in external mode.

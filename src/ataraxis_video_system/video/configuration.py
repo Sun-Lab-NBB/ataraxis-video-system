@@ -241,7 +241,7 @@ def enumerate_genicam_nodes(
     while stack:
         node = stack.pop()
 
-        # Extracts the node name. Some nodes may be locked or unavailable, so access is guarded.
+        # Some nodes may be locked or unavailable, so name access is guarded.
         try:
             name: str = node.node.name
         except Exception:  # noqa: S112 - a locked node raises on name access, and the traversal skips it.
@@ -256,19 +256,16 @@ def enumerate_genicam_nodes(
         if name in blacklisted_nodes:
             continue
 
-        # Resolves the node's principal interface type to determine how to handle it.
         try:
             type_code = int(node.node.principal_interface_type)
         except Exception:  # noqa: S112 - a locked node raises on type access, and the traversal skips it.
             continue
 
-        # Descends into Category nodes by pushing their children onto the stack.
         if type_code == _NodeType.CATEGORY:
             with suppress(Exception):
                 stack.extend(node.features)
             continue
 
-        # Collects leaf value nodes (Integer, Float, Boolean, String, Enumeration) that are ReadWrite.
         if type_code in _VALUE_NODE_TYPES:
             with suppress(Exception):
                 if int(node.node.get_access_mode()) == _AccessMode.READ_WRITE:
@@ -413,7 +410,6 @@ def format_genicam_node(node_map: NodeMap, name: str) -> str:
     with suppress(Exception):
         description = str(raw_node.description)
 
-    # Builds the base output with fields common to all node types.
     lines = [
         f"Node: {name}",
         f"  Type: {node_type}",
@@ -535,7 +531,6 @@ def apply_genicam_configuration(
         RuntimeError: If a non-blacklisted node write outside the two reset phases fails. Reset-phase write failures
             are non-fatal, since the later phases write the node's target value regardless.
     """
-    # Checks camera identity against the configuration metadata.
     mismatches: list[str] = []
     if config.camera_model != current_model:
         mismatches.append(f"model (config='{config.camera_model}', camera='{current_model}')")
@@ -707,7 +702,8 @@ def _coerce_boolean(name: str, value: str) -> bool:
     )
     console.error(message=message, error=ValueError)
 
-    raise ValueError(message)  # pragma: no cover - console.error() is NoReturn, this satisfies ruff RET503.
+    # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
+    return False  # pragma: no cover
 
 
 def _get_selecting_features(node_map: NodeMap, name: str) -> list[str]:

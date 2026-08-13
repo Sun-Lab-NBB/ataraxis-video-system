@@ -15,7 +15,7 @@ from ataraxis_video_system.orchestration.allocation import (
     _MINIMUM_MEMORY_BUDGET_MB,
     CAMERA_EXTRACTION_JOB_CORES,
     _MEMORY_ROUNDING_QUANTUM_MB,
-    PARALLEL_EXTRACTION_THRESHOLD,
+    _PARALLEL_EXTRACTION_THRESHOLD,
     _POOL_MEMORY_RESERVATION_DIVISOR,
     ArchiveFootprint,
     _apply_tolerance,
@@ -38,35 +38,6 @@ _UNMODELED_FOOTPRINT: ArchiveFootprint = ArchiveFootprint(message_count=0, archi
 
 _UNMODELED_MEMORY_MB: int = _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB)
 """Stores the memory floor every consumer plans around when an archive yields no footprint."""
-
-
-def _modeled_footprint(message_count: int, archive_bytes: int) -> ArchiveFootprint:
-    """Builds a modeled footprint carrying the requested message count and on-disk size."""
-    return ArchiveFootprint(message_count=message_count, archive_bytes=archive_bytes, modeled=True)
-
-
-def _expected_memory_mb(archive_bytes: int, cores: int) -> int:
-    """Recomputes the modeled memory estimate for an archive of the requested size at the requested core count."""
-    per_reader = _bytes_to_megabytes(byte_count=archive_bytes * _ARCHIVE_DIRECTORY_RATIO)
-
-    # A single-core job takes the sequential path, which opens no extraction pool and holds the body's reader alone.
-    if cores == 1:
-        return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB + per_reader)
-
-    # Every pool child holds a spawned child's baseline and a reader of its own, and the job body holds one of each.
-    readers = cores + 1
-    return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB * readers + per_reader * readers)
-
-
-def _write_archive(archive_path, source_id=1):
-    """Writes a small readable log archive holding five frame messages and two data messages."""
-    create_test_archive(
-        archive_path=archive_path,
-        source_id=source_id,
-        onset_us=1_000_000,
-        frame_timestamps_us=[100, 200, 300, 400, 500],
-        data_timestamps_us=[600, 700],
-    )
 
 
 def test_archive_footprint_fields():
@@ -117,7 +88,7 @@ def test_resolve_archive_footprint_falls_back_for_corrupt_archive(tmp_path):
     assert footprint == _UNMODELED_FOOTPRINT
 
 
-@pytest.mark.parametrize("message_count", [0, 1, PARALLEL_EXTRACTION_THRESHOLD - 1])
+@pytest.mark.parametrize("message_count", [0, 1, _PARALLEL_EXTRACTION_THRESHOLD - 1])
 def test_resolve_job_workers_below_threshold(message_count):
     """Verifies that resolve_job_workers gives a single core to an archive below the parallel extraction threshold."""
     footprint = _modeled_footprint(message_count=message_count, archive_bytes=1024)
@@ -125,13 +96,20 @@ def test_resolve_job_workers_below_threshold(message_count):
     assert resolve_job_workers(footprint=footprint) == 1
 
 
-@pytest.mark.parametrize("message_count", [PARALLEL_EXTRACTION_THRESHOLD, PARALLEL_EXTRACTION_THRESHOLD * 100])
+@pytest.mark.parametrize("message_count", [_PARALLEL_EXTRACTION_THRESHOLD, _PARALLEL_EXTRACTION_THRESHOLD * 100])
 def test_resolve_job_workers_at_or_above_threshold(message_count):
     """Verifies that resolve_job_workers gives the declared core allocation to an archive at or above the threshold."""
     footprint = _modeled_footprint(message_count=message_count, archive_bytes=512 * _MEGABYTE)
 
     # The threshold itself already belongs to the parallel shape, and no archive above it earns more than the
     # declared allocation, so the stage emits these two widths and nothing between or beyond them.
+    assert resolve_job_workers(footprint=footprint) == CAMERA_EXTRACTION_JOB_CORES
+
+
+def test_resolve_job_workers_widens_at_the_threshold():
+    """Verifies that resolve_job_workers reports the declared allocation at the parallel extraction threshold."""
+    footprint = _modeled_footprint(message_count=_PARALLEL_EXTRACTION_THRESHOLD, archive_bytes=64 * _MEGABYTE)
+
     assert resolve_job_workers(footprint=footprint) == CAMERA_EXTRACTION_JOB_CORES
 
 
@@ -381,13 +359,6 @@ def test_size_archive_job_sizes_a_real_archive(tmp_path):
     assert memory_mb == estimate_job_memory_mb(footprint=footprint, cores=cores)
 
 
-def test_resolve_job_workers_widens_at_the_threshold():
-    """Verifies that resolve_job_workers reports the declared allocation at the parallel extraction threshold."""
-    footprint = _modeled_footprint(message_count=PARALLEL_EXTRACTION_THRESHOLD, archive_bytes=64 * _MEGABYTE)
-
-    assert resolve_job_workers(footprint=footprint) == CAMERA_EXTRACTION_JOB_CORES
-
-
 def test_size_archive_job_falls_back_for_an_unreadable_archive(tmp_path):
     """Verifies that size_archive_job reports the baseline floor for an archive it cannot read."""
     cores, memory_mb, modeled = size_archive_job(archive_path=tmp_path / f"missing{LOG_ARCHIVE_SUFFIX}")
@@ -395,3 +366,32 @@ def test_size_archive_job_falls_back_for_an_unreadable_archive(tmp_path):
     assert not modeled
     assert cores == 1
     assert memory_mb == _UNMODELED_MEMORY_MB
+
+
+def _modeled_footprint(message_count: int, archive_bytes: int) -> ArchiveFootprint:
+    """Builds a modeled footprint carrying the requested message count and on-disk size."""
+    return ArchiveFootprint(message_count=message_count, archive_bytes=archive_bytes, modeled=True)
+
+
+def _expected_memory_mb(archive_bytes: int, cores: int) -> int:
+    """Recomputes the modeled memory estimate for an archive of the requested size at the requested core count."""
+    per_reader = _bytes_to_megabytes(byte_count=archive_bytes * _ARCHIVE_DIRECTORY_RATIO)
+
+    # A single-core job takes the sequential path, which opens no extraction pool and holds the body's reader alone.
+    if cores == 1:
+        return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB + per_reader)
+
+    # Every pool child holds a spawned child's baseline and a reader of its own, and the job body holds one of each.
+    readers = cores + 1
+    return _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB * readers + per_reader * readers)
+
+
+def _write_archive(archive_path, source_id=1):
+    """Writes a small readable log archive holding five frame messages and two data messages."""
+    create_test_archive(
+        archive_path=archive_path,
+        source_id=source_id,
+        onset_us=1_000_000,
+        frame_timestamps_us=[100, 200, 300, 400, 500],
+        data_timestamps_us=[600, 700],
+    )

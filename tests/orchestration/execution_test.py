@@ -34,9 +34,9 @@ from ataraxis_video_system.orchestration.execution import (
     _handle_broken_pool,
     _reap_finished_jobs,
     get_execution_state,
-    set_execution_state,
+    _set_execution_state,
     group_jobs_by_tracker,
-    job_execution_manager,
+    _job_execution_manager,
     _select_admissible_jobs,
     start_execution_session,
     _reconcile_unrecorded_job,
@@ -64,97 +64,11 @@ eight variables initialize_worker_threads() writes.
 """
 
 
-class _RecordingPool:
-    """Stands in for the session's shared process pool, recording every submission it accepts."""
-
-    def __init__(self, error=None):
-        self.submissions = []
-        self.shutdown_calls = []
-        self.error = error
-
-    def submit(self, function, job):
-        """Records one submission and returns an already-resolved future, or raises the configured error."""
-        if self.error is not None:
-            raise self.error
-
-        self.submissions.append((function, job))
-        future = Future()
-        future.set_result(None)
-        return future
-
-    def shutdown(self, **arguments):
-        """Records the arguments of every shutdown the manager performs on a broken or a finished pool."""
-        self.shutdown_calls.append(arguments)
-
-
 @pytest.fixture(autouse=True)
 def execution_state_guard():
     """Clears the module-global execution state after every test, so no session leaks into the next test."""
     yield
-    set_execution_state(state=None)
-
-
-def _build_descriptor(directory, source_id, core_weight=1):
-    """Builds a job descriptor rooted in the target directory and carrying the requested core weight."""
-    return JobDescriptor.for_archive(
-        archive_path=directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
-        output_directory=directory,
-        tracker_path=directory / OutputLayout.TRACKER_FILENAME,
-        source_id=source_id,
-        log_directory=directory,
-        core_weight=core_weight,
-    )
-
-
-def _build_sizing(memory_mb, message_count=0, archive_bytes=0):
-    """Builds a sizing record carrying the requested memory figure."""
-    return JobSizing(memory_mb=memory_mb, message_count=message_count, archive_bytes=archive_bytes, modeled=True)
-
-
-def _build_entry(directory, source_id, core_weight=1, memory_mb=0):
-    """Builds the descriptor and sizing pair the pending queue holds for one job."""
-    return (
-        _build_descriptor(directory=directory, source_id=source_id, core_weight=core_weight),
-        _build_sizing(memory_mb=memory_mb),
-    )
-
-
-def _register_job(directory, source_id, core_weight=1):
-    """Registers one scheduled job on a real tracker in the target directory and returns its descriptor."""
-    directory.mkdir(parents=True, exist_ok=True)
-    job = _build_descriptor(directory=directory, source_id=source_id, core_weight=core_weight)
-    ProcessingTracker(file_path=job.tracker_path).initialize_jobs(jobs=[(CAMERA_EXTRACTION_JOB_NAME, source_id)])
-    return job
-
-
-def _job_status(job):
-    """Reads the tracker status the target job's entry currently holds."""
-    return ProcessingTracker(file_path=job.tracker_path).get_job_status(job_id=job.job_id)
-
-
-def _build_archive(directory, source_id, frame_count):
-    """Creates a synthetic log archive for the target source and returns its path."""
-    archive_path = directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
-    create_test_archive(
-        archive_path=archive_path,
-        source_id=source_id,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=[1000 * (index + 1) for index in range(frame_count)],
-    )
-    return archive_path
-
-
-def _build_single_job_batch(tmp_path, frame_count=4):
-    """Prepares and sizes the single-source batch the end-to-end manager tests dispatch."""
-    log_directory = tmp_path / "logs"
-    log_directory.mkdir()
-    _build_archive(directory=log_directory, source_id=1, frame_count=frame_count)
-    write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
-
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-    descriptor, sizing = size_job(job=job_set.jobs[0])
-
-    return job_set, descriptor, sizing
+    _set_execution_state(state=None)
 
 
 @pytest.mark.xdist_group(name="orchestration")
@@ -358,14 +272,14 @@ def test_execution_state_round_trip():
     assert get_execution_state() is None
 
     state = JobExecutionState(core_budget=4, memory_budget_mb=4096)
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
     assert get_execution_state() is state
 
     replacement = JobExecutionState(core_budget=2, memory_budget_mb=2048)
-    set_execution_state(state=replacement)
+    _set_execution_state(state=replacement)
     assert get_execution_state() is replacement
 
-    set_execution_state(state=None)
+    _set_execution_state(state=None)
     assert get_execution_state() is None
 
 
@@ -846,9 +760,9 @@ def test_job_execution_manager_runs_a_prepared_batch(tmp_path):
         memory_budget_mb=8192,
         pool_size=1,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -874,9 +788,9 @@ def test_job_execution_manager_cancellation_skips_dispatch(tmp_path):
         pool_size=1,
         canceled=True,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -901,9 +815,9 @@ def test_job_execution_manager_rebuilds_a_broken_pool(tmp_path):
         pool_size=1,
         pool_broken=True,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -935,9 +849,9 @@ def test_job_execution_manager_fails_a_broken_job_after_a_cancel(tmp_path):
         pool_broken=True,
         canceled=True,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -969,9 +883,9 @@ def test_job_execution_manager_fails_a_job_past_the_requeue_ceiling(tmp_path):
         pool_broken=True,
         requeue_counts={descriptor.dispatch_key: _MAXIMUM_JOB_REQUEUES},
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -997,9 +911,9 @@ def test_job_execution_manager_abandons_past_the_rebuild_ceiling(tmp_path):
         pool_broken=True,
         pool_rebuilds=_MAXIMUM_POOL_REBUILDS,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -1039,9 +953,9 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_rebuilt(tmp_path
         pool_size=1,
         pool_broken=True,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -1066,9 +980,9 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_created(tmp_path
         memory_budget_mb=8192,
         pool_size=0,
     )
-    set_execution_state(state=state)
+    _set_execution_state(state=state)
 
-    manager = Thread(target=job_execution_manager, kwargs={"state": state}, daemon=True)
+    manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
     manager.join(timeout=_MANAGER_TIMEOUT_SECONDS)
 
@@ -1103,3 +1017,98 @@ def test_pin_pool_worker_pins_the_backends_and_meets_the_barrier(monkeypatch):
     # would stall the batch until the warm-up timeout broke the barrier for everyone.
     assert barrier.n_waiting == 0
     assert not barrier.broken
+
+
+class _RecordingPool:
+    """Stands in for the session's shared process pool, recording every submission it accepts.
+
+    Args:
+        error: The exception every submission raises instead of accepting the job, or None to accept every submission.
+
+    Attributes:
+        submissions: Stores the function and job pair of every submission the pool accepted.
+        shutdown_calls: Stores the keyword arguments of every shutdown call the pool received.
+        error: Stores the exception every submission raises, or None when the pool accepts every submission.
+    """
+
+    def __init__(self, error=None):
+        self.submissions = []
+        self.shutdown_calls = []
+        self.error = error
+
+    def submit(self, function, job):
+        """Records one submission and returns an already-resolved future, or raises the configured error."""
+        if self.error is not None:
+            raise self.error
+
+        self.submissions.append((function, job))
+        future = Future()
+        future.set_result(None)
+        return future
+
+    def shutdown(self, **arguments):
+        """Records the arguments of every shutdown the manager performs on a broken or a finished pool."""
+        self.shutdown_calls.append(arguments)
+
+
+def _build_descriptor(directory, source_id, core_weight=1):
+    """Builds a job descriptor rooted in the target directory and carrying the requested core weight."""
+    return JobDescriptor.for_archive(
+        archive_path=directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+        output_directory=directory,
+        tracker_path=directory / OutputLayout.TRACKER_FILENAME,
+        source_id=source_id,
+        log_directory=directory,
+        core_weight=core_weight,
+    )
+
+
+def _build_sizing(memory_mb, message_count=0, archive_bytes=0):
+    """Builds a sizing record carrying the requested memory figure."""
+    return JobSizing(memory_mb=memory_mb, message_count=message_count, archive_bytes=archive_bytes, modeled=True)
+
+
+def _build_entry(directory, source_id, core_weight=1, memory_mb=0):
+    """Builds the descriptor and sizing pair the pending queue holds for one job."""
+    return (
+        _build_descriptor(directory=directory, source_id=source_id, core_weight=core_weight),
+        _build_sizing(memory_mb=memory_mb),
+    )
+
+
+def _register_job(directory, source_id, core_weight=1):
+    """Registers one scheduled job on a real tracker in the target directory and returns its descriptor."""
+    directory.mkdir(parents=True, exist_ok=True)
+    job = _build_descriptor(directory=directory, source_id=source_id, core_weight=core_weight)
+    ProcessingTracker(file_path=job.tracker_path).initialize_jobs(jobs=[(CAMERA_EXTRACTION_JOB_NAME, source_id)])
+    return job
+
+
+def _job_status(job):
+    """Reads the tracker status the target job's entry currently holds."""
+    return ProcessingTracker(file_path=job.tracker_path).get_job_status(job_id=job.job_id)
+
+
+def _build_archive(directory, source_id, frame_count):
+    """Creates a synthetic log archive for the target source and returns its path."""
+    archive_path = directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}"
+    create_test_archive(
+        archive_path=archive_path,
+        source_id=source_id,
+        onset_us=_ONSET_US,
+        frame_timestamps_us=[1000 * (index + 1) for index in range(frame_count)],
+    )
+    return archive_path
+
+
+def _build_single_job_batch(tmp_path, frame_count=4):
+    """Prepares and sizes the single-source batch the end-to-end manager tests dispatch."""
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    _build_archive(directory=log_directory, source_id=1, frame_count=frame_count)
+    write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
+
+    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+    descriptor, sizing = size_job(job=job_set.jobs[0])
+
+    return job_set, descriptor, sizing

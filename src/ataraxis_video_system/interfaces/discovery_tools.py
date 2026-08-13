@@ -40,9 +40,6 @@ them."""
 def read_camera_manifest_tool(manifest_path: str) -> dict[str, Any]:
     """Reads a camera manifest file and returns its contents.
 
-    Reads the specified camera_manifest.yaml file and returns the list of camera sources registered in it.
-    Each source entry contains the numeric source ID and the colloquial name assigned to the camera.
-
     Args:
         manifest_path: The absolute path to the camera_manifest.yaml file to read.
 
@@ -159,7 +156,7 @@ def discover_camera_data_tool(
         requested. A detailed source omits its video or timestamp path when the corresponding file cannot be found. A
         scan confirming no source returns an empty 'sources' list and an empty 'breakdown' whatever the filters name.
         Returns an error dictionary when the root directory does not exist, is not a directory, cannot be searched, or
-        a filter names a value the scan did find no source for.
+        a filter names a value the scan found no source for.
     """
     root_path = Path(root_directory)
 
@@ -273,7 +270,7 @@ def validate_video_file_tool(video_file: str) -> dict[str, Any]:
     """Validates a video file and extracts metadata using ffprobe.
 
     Runs ffprobe on the specified video file to extract duration, frame count, codec, resolution, file size,
-    and bit rate. Verifies video integrity after a recording session.
+    and bit rate.
 
     Important:
         The AI agent calling this tool MUST ask the user to provide the video_file path before calling this
@@ -384,9 +381,6 @@ def assemble_log_archives_tool(
     verify_integrity: bool = False,
 ) -> dict[str, Any]:
     """Consolidates raw .npy log entries in a DataLogger output directory into .npz archives by source ID.
-
-    Assembles the raw .npy files produced by a DataLogger instance into consolidated .npz archives, one per unique
-    source ID.
 
     Important:
         The AI agent calling this tool MUST ask the user to provide the log_directory path before calling this

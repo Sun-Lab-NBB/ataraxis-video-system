@@ -37,7 +37,7 @@ from ataraxis_video_system.orchestration.discovery import (
 from ataraxis_video_system.orchestration.allocation import (
     SPAWNED_CHILD_MEMORY_MB,
     CAMERA_EXTRACTION_JOB_CORES,
-    PARALLEL_EXTRACTION_THRESHOLD,
+    _PARALLEL_EXTRACTION_THRESHOLD,
     _apply_tolerance,
     resolve_job_workers,
     estimate_job_memory_mb,
@@ -49,34 +49,8 @@ _ONSET_US: int = 1700000000000000
 _build_archive().
 """
 
-_WIDE_ARCHIVE_MESSAGES: int = PARALLEL_EXTRACTION_THRESHOLD
+_WIDE_ARCHIVE_MESSAGES: int = _PARALLEL_EXTRACTION_THRESHOLD
 """Stores the message count of the archive used to exercise the multi-core branch of the sizing model."""
-
-
-def _build_archive(directory, source_id, message_count=3):
-    """Writes a synthetic log archive holding the requested number of frame messages for the target source."""
-    directory.mkdir(parents=True, exist_ok=True)
-    create_test_archive(
-        archive_path=directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
-        source_id=source_id,
-        onset_us=_ONSET_US,
-        frame_timestamps_us=list(range(1, message_count + 1)),
-    )
-
-
-def _build_recording(log_directory, source_ids, message_count=3):
-    """Writes one camera manifest entry and one synthetic log archive for each of the requested camera sources."""
-    log_directory.mkdir(parents=True, exist_ok=True)
-    for source_id in source_ids:
-        write_camera_manifest(log_directory=log_directory, source_id=source_id, name=f"cam{source_id}")
-        _build_archive(directory=log_directory, source_id=source_id, message_count=message_count)
-
-
-def _snapshot_tree(directory):
-    """Captures the path, size, and modification time of every filesystem entry under the target directory."""
-    return {
-        path: (path.is_dir(), path.stat().st_size, path.stat().st_mtime_ns) for path in sorted(directory.rglob("*"))
-    }
 
 
 def test_job_source_fields(tmp_path):
@@ -315,9 +289,9 @@ def test_prepare_jobs_reads_no_archive(tmp_path, monkeypatch):
     log_directory = tmp_path / "logs"
     _build_recording(log_directory=log_directory, source_ids=(1, 2))
 
-    def _explode(**kwargs):
+    def _explode(**arguments):
         """Fails the call, standing in for the archive pass prepare_jobs must never perform."""
-        message = f"prepare_jobs read an archive: {kwargs}."
+        message = f"prepare_jobs read an archive: {arguments}."
         raise AssertionError(message)
 
     monkeypatch.setattr(target=discovery, name="resolve_archive_footprint", value=_explode)
@@ -678,7 +652,7 @@ def test_size_job_applies_the_memory_model(tmp_path):
 def test_size_job_narrows_a_small_archive_to_one_core(tmp_path):
     """Verifies that size_job narrows a job below the parallel extraction threshold to the sequential shape."""
     log_directory = tmp_path / "logs"
-    _build_recording(log_directory=log_directory, source_ids=(1,), message_count=PARALLEL_EXTRACTION_THRESHOLD - 1)
+    _build_recording(log_directory=log_directory, source_ids=(1,), message_count=_PARALLEL_EXTRACTION_THRESHOLD - 1)
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
     sized_job, sizing = size_job(job=job_set.jobs[0])
@@ -686,7 +660,7 @@ def test_size_job_narrows_a_small_archive_to_one_core(tmp_path):
     # The prepared descriptor carries the declared allocation until the archive it reads is weighed against it.
     assert job_set.jobs[0].core_weight == CAMERA_EXTRACTION_JOB_CORES
     assert sized_job.core_weight == 1
-    assert sizing.message_count == PARALLEL_EXTRACTION_THRESHOLD - 1
+    assert sizing.message_count == _PARALLEL_EXTRACTION_THRESHOLD - 1
 
 
 def test_size_job_unreadable_archive(tmp_path):
@@ -812,3 +786,29 @@ def test_job_descriptor_round_trips_through_a_mapping(tmp_path):
     job = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output").jobs[0]
 
     assert JobDescriptor.from_mapping(mapping=job.to_mapping()) == job
+
+
+def _build_archive(directory, source_id, message_count=3):
+    """Writes a synthetic log archive holding the requested number of frame messages for the target source."""
+    directory.mkdir(parents=True, exist_ok=True)
+    create_test_archive(
+        archive_path=directory / f"{source_id}{LOG_ARCHIVE_SUFFIX}",
+        source_id=source_id,
+        onset_us=_ONSET_US,
+        frame_timestamps_us=list(range(1, message_count + 1)),
+    )
+
+
+def _build_recording(log_directory, source_ids, message_count=3):
+    """Writes one camera manifest entry and one synthetic log archive for each of the requested camera sources."""
+    log_directory.mkdir(parents=True, exist_ok=True)
+    for source_id in source_ids:
+        write_camera_manifest(log_directory=log_directory, source_id=source_id, name=f"cam{source_id}")
+        _build_archive(directory=log_directory, source_id=source_id, message_count=message_count)
+
+
+def _snapshot_tree(directory):
+    """Captures the path, size, and modification time of every filesystem entry under the target directory."""
+    return {
+        path: (path.is_dir(), path.stat().st_size, path.stat().st_mtime_ns) for path in sorted(directory.rglob("*"))
+    }

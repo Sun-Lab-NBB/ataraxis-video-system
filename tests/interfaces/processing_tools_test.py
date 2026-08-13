@@ -11,17 +11,6 @@ from ataraxis_video_system.interfaces.processing_tools import (
 )
 
 
-def _build_timestamps(intervals_us):
-    """Builds a uint64 timestamp array that starts at zero and steps by each of the requested intervals."""
-    return np.cumsum([0, *intervals_us], dtype=np.uint64)
-
-
-def _write_feather(feather_path, timestamps, column=str(ExtractedDataColumns.FRAME_TIME)):
-    """Writes the given timestamps to a feather file under the requested column name."""
-    pl.DataFrame({column: np.asarray(timestamps, dtype=np.uint64)}).write_ipc(feather_path)
-    return feather_path
-
-
 def test_compute_frame_statistics_clean_run():
     """Verifies that _compute_frame_statistics reports no drops for evenly spaced timestamps."""
     timestamps = np.arange(0, 100_000, 1000, dtype=np.uint64)
@@ -51,7 +40,7 @@ def test_compute_frame_statistics_clean_run():
     assert drop_analysis["longest_gap_us"] == 0
     assert drop_analysis["longest_gap_ms"] == 0.0
     assert drop_analysis["drop_locations"] == []
-    assert drop_analysis["drop_locations_truncated"] is False
+    assert not drop_analysis["drop_locations_truncated"]
 
 
 def test_compute_frame_statistics_detects_drop():
@@ -72,7 +61,7 @@ def test_compute_frame_statistics_detects_drop():
     assert drop_analysis["drop_rate_percent"] == 29.0323
     assert drop_analysis["longest_gap_us"] == 10_000
     assert drop_analysis["longest_gap_ms"] == 10.0
-    assert drop_analysis["drop_locations_truncated"] is False
+    assert not drop_analysis["drop_locations_truncated"]
     assert drop_analysis["drop_locations"] == [
         {"frame_index": 10, "gap_us": 10_000, "gap_ms": 10.0, "estimated_frames_lost": 9}
     ]
@@ -130,14 +119,14 @@ def test_compute_frame_statistics_caps_drop_locations():
     uncapped = _compute_frame_statistics(timestamps=timestamps, drop_threshold_us=0, max_drop_locations=50)
 
     assert len(capped["frame_drop_analysis"]["drop_locations"]) == 5
-    assert capped["frame_drop_analysis"]["drop_locations_truncated"] is True
+    assert capped["frame_drop_analysis"]["drop_locations_truncated"]
     assert capped["frame_drop_analysis"]["total_gaps_detected"] == 20
     assert capped["frame_drop_analysis"]["total_estimated_dropped_frames"] == 160
     capped_indices = [location["frame_index"] for location in capped["frame_drop_analysis"]["drop_locations"]]
     assert capped_indices == [4, 9, 14, 19, 24]
 
     assert len(uncapped["frame_drop_analysis"]["drop_locations"]) == 20
-    assert uncapped["frame_drop_analysis"]["drop_locations_truncated"] is False
+    assert not uncapped["frame_drop_analysis"]["drop_locations_truncated"]
     assert uncapped["frame_drop_analysis"]["total_gaps_detected"] == 20
     assert uncapped["frame_drop_analysis"]["total_estimated_dropped_frames"] == 160
 
@@ -243,3 +232,14 @@ def test_analyze_single_feather_composes_reader_and_statistics(tmp_path):
     missing_result = _analyze_single_feather(feather_file=str(missing_path), drop_threshold_us=0, max_drop_locations=50)
 
     assert missing_result == {"file": str(missing_path), "error": f"File does not exist: {missing_path}"}
+
+
+def _build_timestamps(intervals_us):
+    """Builds a uint64 timestamp array that starts at zero and steps by each of the requested intervals."""
+    return np.cumsum([0, *intervals_us], dtype=np.uint64)
+
+
+def _write_feather(feather_path, timestamps, column=str(ExtractedDataColumns.FRAME_TIME)):
+    """Writes the given timestamps to a feather file under the requested column name."""
+    pl.DataFrame({column: np.asarray(timestamps, dtype=np.uint64)}).write_ipc(file=feather_path)
+    return feather_path

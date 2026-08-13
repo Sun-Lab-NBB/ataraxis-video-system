@@ -242,9 +242,8 @@ def stop_video_session_tool() -> dict[str, Any]:
                 assemble_log_archives(log_directory=log_directory, remove_sources=True, verbose=False)
                 archives_assembled = True
                 source_ids = scan_archive_source_ids(directory=log_directory)
-            except Exception:  # noqa: S110
-                # Archive assembly failure is non-fatal. The primary operation (stopping the session) has already
-                # succeeded. The archives_assembled flag communicates the failure without raising an error.
+            except Exception:  # noqa: S110 - Assembly failure is non-fatal, and archives_assembled reports it.
+                # The primary operation, stopping the session, has already succeeded at this point.
                 pass
 
         return {

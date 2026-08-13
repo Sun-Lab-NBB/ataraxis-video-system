@@ -68,6 +68,9 @@ Notes:
     outcomes, and the midpoint holds the widest margin against jitter in both directions.
 """
 
+type TimestampArray = NDArray[np.uint64] | NDArray[np.int64]
+"""The frame acquisition timestamp column, at either of the two widths a feather file stores it in."""
+
 
 @mcp.tool()
 def prepare_log_processing_batch_tool(
@@ -104,11 +107,10 @@ def prepare_log_processing_batch_tool(
         A dictionary containing a 'success' flag and per-log-directory manifests in 'log_directories'. Each manifest
         carries the tracker path, the output directory, the resolved source IDs, a 'summary' of status counts, and the
         sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
-        descriptors, annotated with their sized cores and memory, their live tracker status, an 'error_message' for a
-        job whose tracker recorded a failure, and the archive figures 'message_count', 'archive_bytes', and 'modeled'
-        that the execution tool requires. Also reports total counts and
-        any invalid paths. Returns an error dictionary when the log directory and output directory lists differ in
-        length.
+        descriptors, annotated with their sized cores and memory and with their live tracker status. Every descriptor
+        adds an 'error_message' for a job whose tracker recorded a failure, and the archive figures 'message_count',
+        'archive_bytes', and 'modeled' that the execution tool requires. Also reports total counts and any invalid
+        paths. Returns an error dictionary when the log directory and output directory lists differ in length.
     """
     if len(output_directories) != len(log_directories):
         return {
@@ -205,9 +207,8 @@ def execute_log_processing_jobs_tool(
     execution manager. Each job's cores and memory are resolved from the archive it reads before dispatch, so a long
     recording and a short one are admitted at their own sizes. An archive below the parallel extraction threshold takes
     a single core and every archive above it takes the declared stage width, collapsed onto the core budget when that
-    budget is narrower. The
-    manager admits a job once the running set has room for both its cores and its memory, and it admits an oversized
-    job alone rather than leaving it queued forever. A job whose estimated memory passes the host's total physical
+    budget is narrower. The manager admits a job once the running set has room for both its cores and its memory, and
+    it admits an oversized job alone rather than leaving it queued forever. A job whose estimated memory passes the
     memory is failed on its tracker instead of being admitted, since it cannot complete wherever it is dispatched.
 
     Important:
@@ -324,9 +325,9 @@ def get_log_processing_status_tool() -> dict[str, Any]:
     exists, returns an inactive status.
 
     Returns:
-        A dictionary containing an 'active' flag, a 'canceled' flag, per-job status entries in 'jobs', each naming the
-        log directory the job reads so jobs sharing a source across recordings stay distinguishable, and a
-        'summary' carrying 'total', 'succeeded', 'failed', 'running', and 'scheduled' counts.
+        A dictionary containing an 'active' flag, a 'canceled' flag, per-job status entries in 'jobs', and a 'summary'
+        carrying 'total', 'succeeded', 'failed', 'running', and 'scheduled' counts. Each job entry names the log
+        directory the job reads, so jobs sharing a source across recordings stay distinguishable.
     """
     state = get_execution_state()
     if state is None:
@@ -412,10 +413,10 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     timestamps from ProcessingTracker.
 
     Returns:
-        A dictionary containing an 'active' flag, per-job timing in 'jobs', each naming the log directory the job
-        reads so jobs sharing a source across recordings stay distinguishable, and a 'session' summary carrying
+        A dictionary containing an 'active' flag, per-job timing in 'jobs', and a 'session' summary carrying
         'total_elapsed_seconds', 'completed_count', 'failed_count', 'running_count', and 'pending_count', plus
-        'throughput_jobs_per_hour' once at least one job has completed. Returns an 'active' flag of False with a
+        'throughput_jobs_per_hour' once at least one job has completed. Each job entry names the log directory the job
+        reads, so jobs sharing a source across recordings stay distinguishable. Returns an 'active' flag of False with a
         'message' and neither 'jobs' nor 'session' when no execution session exists.
     """
     state = get_execution_state()
@@ -879,7 +880,7 @@ def _analyze_single_feather(
     return {"file": feather_file, **statistics}
 
 
-def _read_feather_timestamps(feather_file: str) -> tuple[NDArray[Any] | None, str | None]:
+def _read_feather_timestamps(feather_file: str) -> tuple[TimestampArray | None, str | None]:
     """Reads the frame acquisition timestamp column of a single camera timestamp feather file.
 
     Args:
@@ -909,7 +910,7 @@ def _read_feather_timestamps(feather_file: str) -> tuple[NDArray[Any] | None, st
 
 
 def _compute_frame_statistics(
-    timestamps: NDArray[Any],
+    timestamps: TimestampArray,
     drop_threshold_us: int,
     max_drop_locations: int,
 ) -> dict[str, Any]:
@@ -927,7 +928,6 @@ def _compute_frame_statistics(
     """
     total_frames = len(timestamps)
 
-    # Handles edge cases for empty or single-frame recordings.
     if total_frames == 0:
         return {
             "basic_stats": {"total_frames": 0},
@@ -958,13 +958,12 @@ def _compute_frame_statistics(
     )
     estimated_fps = round((total_frames - 1) / duration_seconds, ndigits=3) if duration_seconds > 0 else 0.0
 
-    # Computes inter-frame interval statistics. Reinterpreting a uint64 buffer as int64 before differencing keeps a
-    # decreasing pair negative and costs no allocation, so it holds the same values the cast produces while dropping
-    # the full-length temporary. A column of any other width keeps the cast, which rounds each difference rather than
-    # each timestamp.
-    intervals_us: NDArray[Any]
+    # Reinterpreting a uint64 buffer as int64 before differencing keeps a decreasing pair negative and costs no
+    # allocation, so it holds the same values the cast produces while dropping the full-length temporary. A column of
+    # any other width keeps the cast, which rounds each difference rather than each timestamp.
+    intervals_us: NDArray[np.int64]
     if timestamps.dtype == np.uint64:
-        intervals_us = np.diff(timestamps.view(np.int64))
+        intervals_us = np.diff(timestamps.view(np.int64))  # type: ignore[assignment]  # A diff over int64 is int64.
     else:
         intervals_us = np.diff(timestamps).astype(np.int64)
     mean_us = round(float(np.mean(intervals_us)), ndigits=2)
@@ -973,7 +972,6 @@ def _compute_frame_statistics(
     min_us = int(np.min(intervals_us))
     max_us = int(np.max(intervals_us))
 
-    # Performs frame drop analysis using the specified or auto-detected threshold.
     if drop_threshold_us > 0:
         threshold = float(drop_threshold_us)
         threshold_source = "user_specified"
@@ -985,7 +983,7 @@ def _compute_frame_statistics(
     drop_indices = np.where(drop_mask)[0]
     total_gaps_detected = len(drop_indices)
 
-    if total_gaps_detected > 0:
+    if total_gaps_detected:
         expected_interval = median_us if median_us > 0 else 1.0
         dropped_per_gap = _estimate_dropped_frames(
             intervals_us=intervals_us, gap_indices=drop_indices, expected_interval=expected_interval
@@ -1082,7 +1080,7 @@ def _compute_frame_statistics(
 
 
 def _estimate_dropped_frames(
-    intervals_us: NDArray[Any], gap_indices: NDArray[Any], expected_interval: float
+    intervals_us: NDArray[np.int64], gap_indices: NDArray[np.intp], expected_interval: float
 ) -> NDArray[np.int64]:
     """Estimates the frames lost at each detected gap, netting every gap against the interval that follows it.
 
@@ -1105,7 +1103,7 @@ def _estimate_dropped_frames(
     """
     gaps = intervals_us[gap_indices].astype(np.float64)
 
-    following = np.full(gaps.shape, expected_interval, dtype=np.float64)
+    following = np.full(shape=gaps.shape, fill_value=expected_interval, dtype=np.float64)
     successor_indices = gap_indices + 1
     resolved = successor_indices < len(intervals_us)
     following[resolved] = intervals_us[successor_indices[resolved]]

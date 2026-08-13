@@ -173,12 +173,12 @@ def load_genicam_config_tool(
 
 
 def _resolve_blacklist(blacklisted_nodes: list[str] | None) -> frozenset[str]:
-    """Resolves an optional blacklist parameter to a frozenset suitable for GenICam configuration functions.
+    """Resolves an optional blacklist parameter, substituting the default blacklist for None.
 
     Args:
-        blacklisted_nodes: A list of GenICam node names to exclude, or None to use the default blacklist.
+        blacklisted_nodes: The GenICam node names to exclude, or None to take the default blacklist.
 
     Returns:
-        A frozenset of blacklisted node names.
+        The node names excluded from enumeration.
     """
     return frozenset(blacklisted_nodes) if blacklisted_nodes is not None else DEFAULT_BLACKLISTED_NODES
