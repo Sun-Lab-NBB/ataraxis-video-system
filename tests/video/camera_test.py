@@ -776,7 +776,7 @@ def test_harvester_connection_releases_the_camera_on_error() -> None:
 
 def test_genicam_runtime_available_tracks_the_imported_runtime(monkeypatch) -> None:
     """Verifies that genicam_runtime_available() reports whether the GenICam runtime imported."""
-    # Patches both states rather than reading the host's own, so the assertions hold on macOS too, where the library
+    # Patches both states rather than reading the host's own, so the assertions hold on the hosts where the library
     # installs no runtime and the guarded import falls back to None.
     monkeypatch.setattr(target=camera_module, name="Harvester", value=object())
     assert genicam_runtime_available()
@@ -816,8 +816,8 @@ def test_discover_camera_ids_skips_genicam_without_the_runtime(monkeypatch) -> N
 @pytest.mark.usefixtures("persisted_cti_directory")
 def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeypatch) -> None:
     """Verifies that camera discovery reports OpenCV cameras alone where no GenTL Producer has been configured."""
-    # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
-    # since resolving the Producer path raises before Harvesters discovery constructs one.
+    # A non-None sentinel keeps the runtime gate open on every platform, including the Macs that install no runtime. It
+    # is never instantiated, since resolving the Producer path raises before Harvesters discovery constructs one.
     monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
     monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
@@ -839,8 +839,8 @@ def test_check_cti_file_reports_an_unsupported_platform(monkeypatch) -> None:
 @pytest.mark.usefixtures("persisted_cti_directory")
 def test_check_cti_file_reports_no_configured_producer(monkeypatch) -> None:
     """Verifies that a machine with no configured Producer reports one as absent instead of raising."""
-    # A non-None sentinel keeps the runtime gate open on every platform, including macOS. It is never instantiated,
-    # since the absent path file answers before any Producer is loaded.
+    # A non-None sentinel keeps the runtime gate open on every platform, including the Macs that install no runtime. It
+    # is never instantiated, since the absent path file answers before any Producer is loaded.
     monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
 
     assert check_cti_file() is None

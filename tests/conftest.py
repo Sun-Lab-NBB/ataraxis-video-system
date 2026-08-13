@@ -45,8 +45,8 @@ def gentl_simulator(simulator_cti_path: Path | None, monkeypatch: pytest.MonkeyP
     leaves the CTI path persisted for the user's real hardware untouched.
     """
     # The simulator is driven through the GenICam camera interface, so a bundled Producer is of no use on a platform
-    # that installs no runtime to load it with. macOS bundles a Producer and installs no runtime, so the two conditions
-    # are checked separately.
+    # that installs no runtime to load it with. Every Mac bundles a Producer while only some install a runtime, so the
+    # two conditions are checked separately.
     if not genicam_runtime_available():
         pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
 
