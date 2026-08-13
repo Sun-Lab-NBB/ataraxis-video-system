@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from enum import StrEnum
+import ctypes
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
 from contextlib import contextmanager
@@ -91,8 +92,32 @@ _CTI_PATH_VARIABLE: str = "AXVS_CTI_PATH"
 for the duration of a single runtime.
 """
 
+_FAIL_CRITICAL_ERRORS_MODE: int = 0x0001
+"""Stores the Windows SEM_FAILCRITICALERRORS error mode, which hands a critical error to the thread that caused it
+instead of announcing the error in a message box."""
+
+_SET_THREAD_ERROR_MODE: Any | None = None
+"""Stores the Windows API that overrides the error mode of the calling thread, or None on a platform whose dynamic
+loader raises no message box.
+
+The entry point is resolved once at import, which keeps the platform decision out of the guard that consumes it.
+"""
+
+if sys.platform == "win32":  # pragma: no cover - platform branch, only a Windows host executes it.
+    _SET_THREAD_ERROR_MODE = ctypes.windll.kernel32.SetThreadErrorMode
+
 _FRAME_POOL_SIZE: int = 10
 """Determines the size of the frame pool used by the MockCamera instances."""
+
+_SLEEP_GRANULARITY: int = 16 if sys.platform == "win32" else 1
+"""Stores the number of milliseconds by which a sleeping millisecond-precision delay overshoots the period it is asked
+for on the host.
+
+Windows resolves a sleep against a system timer tick of roughly 15.6 milliseconds, so a sleep returns at the first tick
+that follows the requested period, while every other supported platform resolves it within a millisecond. A delay that
+has to land inside a deadline therefore sleeps this many milliseconds short of it and spins the remainder, and it spins
+a period shorter than the granularity outright.
+"""
 
 _MAXIMUM_NON_WORKING_IDS: int = 5
 """The consecutive failed probes that end OpenCV index discovery, after which the cameras found so far are
@@ -213,7 +238,8 @@ def add_cti_file(cti_path: Path) -> None:
     cti_path = Path(cti_path).expanduser().resolve()
 
     harvester = Harvester()
-    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    with _suppress_loader_error_dialog():
+        harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
     application_directory = Path(platformdirs.user_data_dir(appname="ataraxis_video_system", appauthor="sun_lab"))
     cti_path_file = application_directory / "cti_path.txt"
@@ -255,7 +281,8 @@ def check_cti_file() -> Path | None:
 
     try:
         harvester = Harvester()
-        harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+        with _suppress_loader_error_dialog():
+            harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
     except Exception:
         # The configured CTI file is no longer valid.
         return None
@@ -576,7 +603,8 @@ class HarvestersCamera:
         _require_genicam_runtime(action=f"connect to the GenICam camera at index {self._camera_index}")
 
         self._harvester = Harvester()
-        self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
+        with _suppress_loader_error_dialog():
+            self._harvester.add_file(file_path=str(_get_cti_path()), check_existence=True, check_validity=True)
         # Suppresses stdout and stderr to avoid verbose CTI printouts.
         with _suppress_output():
             self._harvester.update()
@@ -1071,12 +1099,14 @@ class MockCamera:
             self._acquiring = True
 
         # Simulates the blocking behavior of physical camera interfaces by using the timer class to enforce a certain
-        # frame rate. Sleeping all but the final millisecond releases the logical core the way a physical interface
-        # blocking on its driver does. The spin that follows absorbs the sleep's overshoot, so the frame period lands
-        # on the same millisecond the timer reaches when the whole interval is spun.
-        sleep_time = int(self._time_between_frames - self._timer.elapsed) - 1
+        # frame rate. Sleeping all but the host's sleep granularity releases the logical core the way a physical
+        # interface blocking on its driver does. The spin that follows absorbs the sleep's overshoot, so the frame
+        # period lands on the same millisecond the timer reaches when the whole interval is spun. A wait shorter than
+        # the granularity is spun instead, because a sleep that short returns past the frame deadline and costs the
+        # simulation the frame rate it is asked for.
+        sleep_time = int(self._time_between_frames - self._timer.elapsed) - _SLEEP_GRANULARITY
         if sleep_time > 0:
-            self._timer.delay(delay=sleep_time, allow_sleep=True)
+            self._timer.delay(delay=sleep_time, allow_sleep=sleep_time >= _SLEEP_GRANULARITY)
         while self._timer.elapsed < self._time_between_frames:
             pass
 
@@ -1217,7 +1247,8 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     # the configured path unvalidated and a Producer that cannot be loaded would otherwise leave discovery reporting
     # an empty camera list that is indistinguishable from a healthy Producer with no cameras attached.
     harvester = Harvester()
-    harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
+    with _suppress_loader_error_dialog():
+        harvester.add_file(file_path=str(cti_path), check_existence=True, check_validity=True)
 
     # Suppresses stdout and stderr to avoid verbose printouts about missing CTI features.
     with _suppress_output():
@@ -1357,3 +1388,27 @@ def _suppress_output() -> Generator[None, None, None]:
         os.close(devnull)
         os.close(old_stdout)
         os.close(old_stderr)
+
+
+@contextmanager
+def _suppress_loader_error_dialog() -> Generator[None, None, None]:
+    """Reports a Windows dynamic loader failure through the raised exception alone, without a message box.
+
+    Windows treats a file that is not a valid dynamic library as a critical error and announces it in a 'Bad Image'
+    message box, which blocks the thread that attempted the load until a human dismisses it. The Producer validity
+    check loads the configured file, so a mistyped or damaged Producer would otherwise stall the CLI, the MCP server,
+    and the test suite behind a dialog no headless caller is able to answer. Every other platform reports the same
+    failure through the raised exception.
+    """
+    if _SET_THREAD_ERROR_MODE is None:
+        yield
+        return
+
+    # Overrides the error mode of the calling thread rather than the process, so that the application the library runs
+    # inside keeps the error handling it configured for its own threads.
+    previous_mode = ctypes.c_uint()
+    _SET_THREAD_ERROR_MODE(_FAIL_CRITICAL_ERRORS_MODE, ctypes.byref(previous_mode))
+    try:
+        yield
+    finally:
+        _SET_THREAD_ERROR_MODE(previous_mode.value, None)

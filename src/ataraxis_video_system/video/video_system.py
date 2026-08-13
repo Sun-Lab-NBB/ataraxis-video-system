@@ -60,6 +60,10 @@ _MULTIPROCESSING_CONTEXT: SpawnContext = get_context("spawn")
 """The spawn-based multiprocessing context used to create the frame producer and consumer processes, ensuring
 identical cross-platform behavior on all supported platforms."""
 
+_HOST_IS_MACOS: bool = sys.platform == "darwin"
+"""Tracks whether the host runs macOS, which supports no frame display, as the display loop runs on a daemon thread and
+macOS confines GUI windows to the main thread."""
+
 _PROCESS_INITIALIZATION_TIME: int = 20
 """The maximum number of seconds to wait for the consumer and producer processes to initialize."""
 
@@ -372,7 +376,7 @@ class VideoSystem:
             console.error(message=message, error=TypeError if not isinstance(display_frame_rate, int) else ValueError)
 
         # Disables frame displaying on macOS as this OS does not support displaying frames outside the main thread.
-        if display_frame_rate is not None and "darwin" in sys.platform:
+        if display_frame_rate is not None and _HOST_IS_MACOS:
             warnings.warn(
                 message=(
                     f"Displaying frames is currently not supported for Apple Silicon devices. See README for details. "

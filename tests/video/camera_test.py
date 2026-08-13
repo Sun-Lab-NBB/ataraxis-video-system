@@ -14,6 +14,7 @@ from ataraxis_video_system.video import camera as camera_module
 from ataraxis_video_system.video.camera import (
     _MAXIMUM_NON_WORKING_IDS,
     GENICAM_UNAVAILABLE_REASON,
+    _FAIL_CRITICAL_ERRORS_MODE,
     MockCamera,
     OpenCVCamera,
     HarvestersCamera,
@@ -25,6 +26,7 @@ from ataraxis_video_system.video.camera import (
     discover_camera_ids,
     harvester_connection,
     genicam_runtime_available,
+    _suppress_loader_error_dialog,
 )
 
 _SIMULATED_DEVICE_COUNT: int = 4
@@ -942,6 +944,40 @@ def test_add_cti_file_rejects_a_file_that_is_not_a_producer(persisted_cti_direct
     # is what separates a configured Producer from a merely present file.
     assert not isinstance(loader_error.value, FileNotFoundError)
     assert not (persisted_cti_directory / "cti_path.txt").exists()
+
+
+def test_suppress_loader_error_dialog_overrides_and_restores_the_thread_error_mode(monkeypatch) -> None:
+    """Verifies that the loader guard suppresses the critical error dialog for the load it wraps alone."""
+    requested_modes: list[int] = []
+
+    def _record_error_mode(mode: int, previous_mode) -> int:
+        """Stands in for the Windows API that overrides the error mode of the calling thread."""
+        if previous_mode is not None:
+            previous_mode._obj.value = 32
+        requested_modes.append(mode)
+        return 1
+
+    # The module resolves the Windows entry point into its own constant, which makes the branch that suppresses the
+    # dialog reachable from any host.
+    monkeypatch.setattr(target=camera_module, name="_SET_THREAD_ERROR_MODE", value=_record_error_mode)
+
+    with _suppress_loader_error_dialog():
+        pass
+
+    # A guard that leaves the override in place would silence every critical error raised by the application the
+    # library runs inside, so the mode captured on entry has to be written back on exit.
+    assert requested_modes == [_FAIL_CRITICAL_ERRORS_MODE, 32]
+
+
+def test_suppress_loader_error_dialog_leaves_a_platform_without_a_dialog_alone(monkeypatch) -> None:
+    """Verifies that the loader guard runs the load it wraps where the dynamic loader raises no message box."""
+    monkeypatch.setattr(target=camera_module, name="_SET_THREAD_ERROR_MODE", value=None)
+
+    guarded_load_ran = False
+    with _suppress_loader_error_dialog():
+        guarded_load_ran = True
+
+    assert guarded_load_ran
 
 
 @pytest.mark.usefixtures("persisted_cti_directory")

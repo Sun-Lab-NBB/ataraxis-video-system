@@ -29,7 +29,10 @@ _MONOCHROME_FORMATS: set[str]
 _COLOR_FORMATS: set[str]
 _ALL_RGB_FORMATS: set[str]
 _CTI_PATH_VARIABLE: str
+_FAIL_CRITICAL_ERRORS_MODE: int
+_SET_THREAD_ERROR_MODE: Any | None
 _FRAME_POOL_SIZE: int
+_SLEEP_GRANULARITY: int
 _MAXIMUM_NON_WORKING_IDS: int
 _MAXIMUM_EVALUATED_IDS: int
 
@@ -190,3 +193,5 @@ def _get_frame_rate_node(node_map: NodeMap) -> Any | None: ...
 def _get_cti_path() -> Path: ...
 @contextmanager
 def _suppress_output() -> Generator[None, None, None]: ...
+@contextmanager
+def _suppress_loader_error_dialog() -> Generator[None, None, None]: ...

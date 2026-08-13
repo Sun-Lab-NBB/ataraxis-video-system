@@ -1,10 +1,10 @@
 """Contains tests for classes and methods provided by the video_system.py module."""
 
 import re
-import sys
 from queue import Queue
 from random import randint
 import threading
+from multiprocessing.shared_memory import SharedMemory
 
 import cv2
 import numpy as np
@@ -902,6 +902,11 @@ def test_frame_saving_loop_pairs_every_frame_with_its_timestamp() -> None:
     # The end-of-stream sentinel the shutdown appends, which is the loop's only exit.
     saver_queue.put(None)
 
+    # A recording runs this loop in the consumer process while the parent process holds the buffer open. Calling it in
+    # this process leaves the instance above as the only handle, and the loop closes it, so this second handle stands
+    # in for the parent's and keeps Windows from destroying the buffer before the readout below.
+    buffer_handle = SharedMemory(name="129_terminator_array", create=False)
+
     try:
         VideoSystem._frame_saving_loop(
             system_id=np.uint8(129),
@@ -916,6 +921,7 @@ def test_frame_saving_loop_pairs_every_frame_with_its_timestamp() -> None:
         terminator_array.connect()
         assert terminator_array[3] == 1
     finally:
+        buffer_handle.close()
         terminator_array.destroy()
 
     # The encoder is started once, fed every frame in queue order, and stopped after the last frame rather than
@@ -1160,9 +1166,10 @@ def test_init_rejects_an_invalid_display_frame_rate(data_logger, tmp_path) -> No
 
 def test_init_disables_frame_display_on_macos(data_logger, monkeypatch) -> None:
     """Verifies that macOS degrades a requested frame display to disabled instead of rejecting the request."""
-    # The constructor reads sys.platform at call time, which makes the macOS branch reachable from any host. Every
-    # other platform read in the package resolves at import time and is therefore unaffected by this override.
-    monkeypatch.setattr(target=sys, name="platform", value="darwin")
+    # The module resolves the host platform into its own constant, which makes the macOS branch reachable from any
+    # host. Overriding sys.platform itself would reach the multiprocessing machinery the constructor runs on, where a
+    # Windows host refuses the named pipe family it selected at import time.
+    monkeypatch.setattr(target=video_system_module, name="_HOST_IS_MACOS", value=True)
 
     # The output directory is left unset, so the degradation is exercised without requiring FFMPEG on the host.
     with pytest.warns(UserWarning, match="Displaying frames is currently not supported") as warning_records:
