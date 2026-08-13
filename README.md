@@ -26,7 +26,7 @@ ___
 
 ## Features
 
-- Supports Windows, Linux, and macOS, with the GenICam camera interface covering Windows and Linux.
+- Supports Windows, Linux, and macOS, with the GenICam camera interface covering Windows, Linux, and Apple Silicon.
 - Uses OpenCV or GenICam (Harvesters) to interface with a wide range of consumer, industrial, and scientific cameras.
 - Uses FFMPEG to efficiently encode acquired data as videos in real time using CPU or GPU.
 - Exposes encoder, preset, pixel format, and quantization parameters for tuning quality against throughput.
@@ -131,12 +131,13 @@ interferes with the library, as it displays the acquired frames from the same pr
 minimize the visual lag between grabbing and displaying the frame. The restriction is imposed by the operating system
 and applies to every application.
 
-***Note,*** macOS does not support the GenICam ('harvesters') camera interface. The `genicam` distribution that supplies
-the interface runtime publishes no macOS wheel for every Python version this library supports. The library therefore
-declares neither `harvesters` nor `genicam` on macOS, and every entry point that reaches GenICam hardware aborts with an
-error naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a Linux or
-Windows host. Every other library feature, including video encoding and log processing, works on macOS under every
-supported Python version.
+***Note,*** the GenICam ('harvesters') camera interface covers Apple Silicon Macs running Python 3.12 or 3.13, which is
+the only combination the `genicam` distribution publishes a macOS wheel for. That wheel targets macOS 13 and later. On
+an Intel Mac, or on any Mac running Python 3.14, the library declares neither `harvesters` nor `genicam`, and every
+entry point that reaches GenICam hardware aborts with an error naming the limitation. Use the 'opencv' camera interface
+there, or drive GenICam cameras from a Linux or Windows host. The macOS wheel ships only up to `genicam` 1.5.0, so a Mac
+resolves one release behind the other platforms. Every other library feature, including video encoding and log
+processing, works on every Mac under every supported Python version.
 
 ### Quickstart
 
@@ -410,8 +411,8 @@ available.
 This library supports all cameras compatible with the [GenICam](https://www.emva.org/standards-technology/genicam/) 
 standard, which includes most GigE+ scientific and machine vision cameras. 
 
-***Note,*** this interface is available on Windows and Linux. See the [macOS](#macos) section for the platform
-limitation that leaves it out there.
+***Note,*** this interface is available on Windows, Linux, and Apple Silicon Macs running Python 3.12 or 3.13. See the
+[macOS](#macos) section for the limitation that leaves it out on the remaining Macs.
 
 ***Note,*** before using the library with a GenICam camera, it must be provided with the path to the .cti GenTL Producer
 Interface file. Use the `axvs cti set` CLI command to configure the library to use the .cti file provided by the camera

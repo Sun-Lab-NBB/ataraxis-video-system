@@ -49,12 +49,15 @@ dependencies = [
     # Video Acquisition
     "opencv-python>=5,<6",
 
-    # GenICam Video Acquisition. The 'genicam' distribution publishes no macOS wheel for every Python version this
-    # library supports, so the GenICam camera interface is unavailable on macOS and its runtime is left out of the
-    # installation there. Live frame display is also unavailable there, since macOS forbids GUI updates outside the
-    # main thread. Every other library feature works on macOS as usual.
-    "harvesters>=1,<2; sys_platform != 'darwin'",
-    "genicam>=1,<2; sys_platform != 'darwin'",
+    # GenICam Video Acquisition. The 'genicam' distribution publishes a macOS wheel only for Apple Silicon on Python
+    # 3.12 and 3.13, so the markers below claim the runtime exactly where that wheel exists. Intel Macs and Python 3.14
+    # claim neither distribution, because 'genicam' ships no source archive to build from and a marker satisfied where
+    # no wheel exists fails the whole installation instead of dropping the interface. The macOS wheel also carries a
+    # macOS 13 minimum, which no marker expresses, and it ships only up to 'genicam' 1.5.0, so macOS resolves one
+    # release behind the other platforms. Live frame display is unavailable on every macOS host, since macOS forbids
+    # GUI updates outside the main thread. Every other library feature works on macOS as usual.
+    "harvesters>=1,<2; sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64')",
+    "genicam>=1,<2; sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64')",
 
     # CLI
     "click>=8,<9",
@@ -147,6 +150,9 @@ lint.ignore = [
     "PLW0603", # While global statement usage is not ideal, it streamlines certain development patterns
     "TID252",  # Conflicts with the library import management strategy, which requires parent-relative imports
     "CPY001",  # The license is declared in the LICENSE file and the license and license-files metadata fields
+
+    "S603",    # Every subprocess call passes a fixed argument vector, with no shell and no user input
+    "S607",    # FFMPEG and nvidia-smi resolve from PATH by design, which the library documents as a host requirement
 ]
 
 # Additional formatting configurations
@@ -226,8 +232,9 @@ exclude = [
     "tests/",
 ]
 
-# Treats the GenICam runtime as untyped, which it is, and also keeps the source type-checking on macOS, where the
-# runtime is not installed at all and would otherwise be reported as a missing import rather than an untyped one.
+# Treats the GenICam runtime as untyped, which it is, and also keeps the source type-checking on the macOS and Python
+# combinations that install no runtime, where it would otherwise be reported as a missing import rather than an untyped
+# one.
 [[tool.mypy.overrides]]
 module = ["harvesters.*", "genicam.*"]
 ignore_missing_imports = true

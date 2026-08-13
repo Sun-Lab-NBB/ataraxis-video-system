@@ -190,7 +190,7 @@ class VideoSystem:
             to use hardware encoding).
         OverflowError: If 'system_id' falls outside the 0 to 255 range the uint8 identifier supports.
         NotImplementedError: If the Harvesters camera interface is requested where the GenICam runtime is absent,
-            which is every macOS host.
+            which is every Intel Mac and every macOS host running Python 3.14.
         FileNotFoundError: If the Harvesters camera interface is requested before a .cti file has been configured, or
             if the configured .cti file no longer exists.
         OSError: If the configured .cti file is not a loadable GenTL Producer.

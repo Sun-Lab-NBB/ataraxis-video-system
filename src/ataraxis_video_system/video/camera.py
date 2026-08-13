@@ -12,6 +12,7 @@ from enum import StrEnum
 import ctypes
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
+import platform
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -31,12 +32,12 @@ try:
     from harvesters.core import Harvester, ImageAcquirer
     from harvesters.util.pfnc import bgr_formats, rgb_formats, mono_location_formats
 except ImportError:  # pragma: no cover
-    # The GenICam camera runtime is not installed on macOS, where the 'genicam' distribution publishes no wheel for
-    # every supported Python version. Guarding the import keeps this module usable for the OpenCV and Mock interfaces
-    # there, and every entry point that reaches GenICam hardware calls _require_genicam_runtime() before touching the
-    # names below. The format collections fall back to empty, which no reachable code consults, because the frame grab
-    # loop that reads them is only reachable through a connection the guard refuses to open. Only one of the two
-    # branches runs on any single host, so the fallback stays out of coverage measurement.
+    # The GenICam camera runtime is not installed on the macOS hosts that _GENICAM_RUNTIME_CLAIMED excludes, where the
+    # 'genicam' distribution publishes no wheel. Guarding the import keeps this module usable for the OpenCV and Mock
+    # interfaces there, and every entry point that reaches GenICam hardware calls _require_genicam_runtime() before
+    # touching the names below. The format collections fall back to empty, which no reachable code consults, because
+    # the frame grab loop that reads them is only reachable through a connection the guard refuses to open. Only one of
+    # the two branches runs on any single host, so the fallback stays out of coverage measurement.
     Harvester = None
     ImageAcquirer = None
     bgr_formats = ()
@@ -55,25 +56,37 @@ from .configuration import (
     apply_genicam_configuration,
 )
 
+_GENICAM_RUNTIME_CLAIMED: bool = sys.platform != "darwin" or (
+    sys.version_info < (3, 14) and platform.machine() == "arm64"
+)
+"""Tracks whether this library claims the GenICam camera runtime as a dependency on the host evaluating it.
+
+This mirrors the environment marker the 'harvesters' and 'genicam' distributions carry in the project metadata, which is
+the only way to separate a host that never installs the runtime from one whose installation is damaged. The marker and
+this expression are edited together. The 'genicam' distribution publishes a macOS wheel only for Apple Silicon on Python
+3.12 and 3.13, so Intel Macs and Python 3.14 install no runtime while every other platform installs one.
+"""
+
 GENICAM_UNAVAILABLE_REASON: str = (
     (
-        "macOS does not support the GenICam camera interface, as the 'genicam' distribution that supplies its runtime "
-        "publishes no macOS wheel for every Python version this library supports. Use the 'opencv' camera interface, "
-        "or drive the GenICam cameras from a Linux or Windows host."
-    )
-    if sys.platform == "darwin"
-    else (
         "The 'harvesters' and 'genicam' distributions that supply the GenICam camera runtime install together with "
         "this library on this platform, so a runtime that does not import indicates a damaged installation. Reinstall "
         "the library to restore the GenICam camera interface."
     )
+    if _GENICAM_RUNTIME_CLAIMED
+    else (
+        "This host does not support the GenICam camera interface, as the 'genicam' distribution that supplies its "
+        "runtime publishes a macOS wheel only for Apple Silicon running Python 3.12 or 3.13. Use the 'opencv' camera "
+        "interface, or drive the GenICam cameras from a Linux host, a Windows host, or an Apple Silicon Mac running "
+        "Python 3.12 or 3.13."
+    )
 )
 """Explains why the GenICam camera runtime is unavailable, which every interface reports when the runtime is absent.
 
-The explanation is resolved from the host platform rather than from the failed import, because macOS never installs the
-runtime while every other platform installs it alongside the library, making an absent runtime a broken environment
-there. Resolving it as a single conditional expression keeps both wordings out of a platform branch that only one host
-is ever able to execute.
+The explanation is resolved from the host rather than from the failed import, because the hosts that install no runtime
+report an expected limitation while every other host installs it alongside the library, making an absent runtime a
+broken environment there. Resolving it as a single conditional expression keeps both wordings out of a platform branch
+that only one host is ever able to execute.
 """
 
 _MONOCHROME_FORMATS: set[str] = set(mono_location_formats)
@@ -176,7 +189,8 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
         function, the 'axvs cti set' CLI command, or the ``AXVS_CTI_PATH`` environment variable, which takes precedence
         over the persisted path. If no CTI file is configured, Harvesters camera discovery is skipped. Harvesters
-        discovery is also skipped where the GenICam runtime is absent, which is every macOS host.
+        discovery is also skipped where the GenICam runtime is absent, which is every Intel Mac and every macOS host
+        running Python 3.14.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
@@ -202,7 +216,7 @@ def genicam_runtime_available() -> bool:
     """Determines whether the GenICam camera runtime is available in this environment.
 
     The runtime is supplied by the 'harvesters' and 'genicam' distributions, which this library installs on every
-    platform other than macOS.
+    platform other than the Intel Macs and the macOS hosts running Python 3.14, where 'genicam' publishes no wheel.
 
     Returns:
         True when the runtime is importable, False otherwise.
@@ -259,7 +273,8 @@ def check_cti_file() -> Path | None:
 
     Returns:
         The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None where the
-        GenICam runtime that consumes the Producer is absent, which is every macOS host.
+        GenICam runtime that consumes the Producer is absent, which is every Intel Mac and every macOS host running
+        Python 3.14.
     """
     # Reports the unusable state rather than raising, since this function answers whether the interface is ready to use
     # and an unsupported platform is one of the ways it is not.
