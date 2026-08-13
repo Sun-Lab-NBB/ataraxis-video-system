@@ -49,9 +49,9 @@ dependencies = [
     # Video Acquisition
     "opencv-python>=5,<6",
 
-    # GenICam Video Acquisition. The 'genicam' distribution publishes no macOS wheel for every Python version this
-    # library supports, so the GenICam camera interface is unavailable on macOS and its runtime is left out of the
-    # installation there. Live frame display is also unavailable there, since macOS forbids GUI updates outside the
+    # GenICam Video Acquisition. The 'genicam' distribution publishes no macOS wheel for some of the Python versions
+    # this library supports, so the GenICam camera interface is left out of the macOS installation rather than offered
+    # on a subset of them. Live frame display is also unavailable there, since macOS forbids GUI updates outside the
     # main thread. Every other library feature works on macOS as usual.
     "harvesters>=1,<2; sys_platform != 'darwin'",
     "genicam>=1,<2; sys_platform != 'darwin'",

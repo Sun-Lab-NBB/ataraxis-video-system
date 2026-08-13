@@ -58,8 +58,8 @@ from .configuration import (
 GENICAM_UNAVAILABLE_REASON: str = (
     (
         "macOS does not support the GenICam camera interface, as the 'genicam' distribution that supplies its runtime "
-        "publishes no macOS wheel for every Python version this library supports. Use the 'opencv' camera interface, "
-        "or drive the GenICam cameras from a Linux or Windows host."
+        "publishes no macOS wheel for some of the Python versions this library supports. Use the 'opencv' camera "
+        "interface, or drive the GenICam cameras from a Linux or Windows host."
     )
     if sys.platform == "darwin"
     else (

@@ -132,11 +132,11 @@ minimize the visual lag between grabbing and displaying the frame. The restricti
 and applies to every application.
 
 ***Note,*** macOS does not support the GenICam ('harvesters') camera interface. The `genicam` distribution that supplies
-the interface runtime publishes no macOS wheel for every Python version this library supports. The library therefore
-declares neither `harvesters` nor `genicam` on macOS, and every entry point that reaches GenICam hardware aborts with an
-error naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a Linux or
-Windows host. Every other library feature, including video encoding and log processing, works on macOS under every
-supported Python version.
+the interface runtime publishes no macOS wheel for some of the Python versions this library supports. The library
+therefore declares neither `harvesters` nor `genicam` on macOS, and every entry point that reaches GenICam hardware
+aborts with an error naming the limitation. Use the 'opencv' camera interface on macOS, or drive GenICam cameras from a
+Linux or Windows host. Every other library feature, including video encoding and log processing, works on macOS under
+every supported Python version.
 
 ### Quickstart
 
