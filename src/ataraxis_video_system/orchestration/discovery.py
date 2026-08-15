@@ -26,6 +26,7 @@ from .jobs import (
 from ..video import CAMERA_MANIFEST_FILENAME, CameraManifest
 from .allocation import (
     CAMERA_EXTRACTION_JOB_CORES,
+    ArchiveFootprint,
     resolve_job_workers,
     estimate_job_memory_mb,
     resolve_archive_footprint,
@@ -383,7 +384,7 @@ def prepare_jobs(
     )
 
 
-def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing]:
+def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing, ArchiveFootprint]:
     """Sizes one prepared job from the archive it reads.
 
     Notes:
@@ -393,17 +394,17 @@ def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing]:
         job: The prepared job to size.
 
     Returns:
-        The job carrying its resolved width, and the figures the sizing produced.
+        The job carrying its resolved width, the resources the sizing produced, and the archive footprint they
+        follow from, in that order.
+
+    Raises:
+        FileNotFoundError: If the archive cannot be read, in which case the job that reads it cannot run.
     """
     footprint = resolve_archive_footprint(archive_path=job.archive_path)
     core_weight = resolve_job_workers(footprint=footprint)
 
     return (
         replace(job, core_weight=core_weight),
-        JobSizing(
-            memory_mb=estimate_job_memory_mb(footprint=footprint, cores=core_weight),
-            message_count=footprint.message_count,
-            archive_bytes=footprint.archive_bytes,
-            modeled=footprint.modeled,
-        ),
+        JobSizing(cores=core_weight, memory_mb=estimate_job_memory_mb(footprint=footprint, cores=core_weight)),
+        footprint,
     )

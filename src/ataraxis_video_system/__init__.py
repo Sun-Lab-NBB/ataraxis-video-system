@@ -61,6 +61,7 @@ from .video import (
 from .orchestration import (
     CAMERA_EXTRACTION_JOB_NAME,
     CAMERA_EXTRACTION_JOB_CORES,
+    JobSizing,
     JobSource,
     JobUniverse,
     execute_job,
@@ -84,6 +85,7 @@ __all__ = [
     "GenicamConfiguration",
     "GenicamNodeInfo",
     "InputPixelFormats",
+    "JobSizing",
     "JobSource",
     "JobUniverse",
     "OutputPixelFormats",

@@ -108,8 +108,8 @@ def prepare_log_processing_batch_tool(
         carries the tracker path, the output directory, the resolved source IDs, a 'summary' of status counts, and the
         sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
         descriptors, annotated with their sized cores and memory and with their live tracker status. Every descriptor
-        adds an 'error_message' for a job whose tracker recorded a failure, and the archive figures 'message_count',
-        'archive_bytes', and 'modeled' that the execution tool requires. Also reports total counts and any invalid
+        adds an 'error_message' for a job whose tracker recorded a failure, and the archive figures 'message_count'
+        and 'archive_bytes' that the execution tool requires. Also reports total counts and any invalid
         paths. Returns an error dictionary when the log directory and output directory lists differ in length.
     """
     if len(output_directories) != len(log_directories):
@@ -157,12 +157,11 @@ def prepare_log_processing_batch_tool(
         recorded = {entry["job_id"]: entry for entry in tracker_status.get("jobs", [])}
 
         jobs: list[dict[str, Any]] = []
-        for descriptor, sizing in sized_jobs:
+        for descriptor, sizing, footprint in sized_jobs:
             entry: dict[str, Any] = dict(descriptor.to_mapping())
             entry["memory_mb"] = sizing.memory_mb
-            entry["message_count"] = sizing.message_count
-            entry["archive_bytes"] = sizing.archive_bytes
-            entry["modeled"] = sizing.modeled
+            entry["message_count"] = footprint.message_count
+            entry["archive_bytes"] = footprint.archive_bytes
             entry["status"] = recorded.get(descriptor.job_id, {}).get("status", "SCHEDULED")
             error_message = recorded.get(descriptor.job_id, {}).get("error_message")
             if error_message is not None:
@@ -172,7 +171,7 @@ def prepare_log_processing_batch_tool(
         result_log_directories[log_directory_string] = {
             "tracker_path": str(job_set.tracker_path),
             "output_directory": str(job_set.output_directory),
-            "source_ids": [descriptor.source_id for descriptor, _ in sized_jobs],
+            "source_ids": [descriptor.source_id for descriptor, _, _ in sized_jobs],
             "jobs": jobs,
             "summary": tracker_status.get("summary", {}),
             "skipped_sources": [
@@ -226,8 +225,8 @@ def execute_log_processing_jobs_tool(
     Returns:
         A dictionary containing a 'started' flag, 'total_jobs', the resolved 'core_budget', 'memory_budget_mb', and
         'pool_size', a 'job_allocations' entry per job carrying its 'job_id', 'source_id', 'cores', 'memory_mb',
-        'message_count', and 'modeled', and any invalid jobs. Returns an error dictionary when an execution session
-        is already active, and one carrying 'invalid_jobs' when no submitted job is valid.
+        and 'message_count', and any invalid jobs. Returns an error dictionary when an execution session is already
+        active, and one carrying 'invalid_jobs' when no submitted job is valid.
     """
     # Resolves both budgets before sizing, since the core budget bounds the width any single job receives.
     resolved_cores = resolve_core_budget(requested_budget=core_budget)
@@ -256,7 +255,6 @@ def execute_log_processing_jobs_tool(
             footprint = ArchiveFootprint(
                 message_count=int(job_dict["message_count"]),
                 archive_bytes=int(job_dict["archive_bytes"]),
-                modeled=bool(job_dict["modeled"]),
             )
         except (KeyError, TypeError, ValueError):
             invalid_jobs.append({**job_dict, "error": "Missing or unreadable sizing keys from the prepared manifest."})
@@ -264,12 +262,7 @@ def execute_log_processing_jobs_tool(
 
         core_weight = min(resolve_job_workers(footprint=footprint), resolved_cores)
         descriptor = replace(descriptor, core_weight=core_weight)
-        sizing = JobSizing(
-            memory_mb=estimate_job_memory_mb(footprint=footprint, cores=core_weight),
-            message_count=footprint.message_count,
-            archive_bytes=footprint.archive_bytes,
-            modeled=footprint.modeled,
-        )
+        sizing = JobSizing(cores=core_weight, memory_mb=estimate_job_memory_mb(footprint=footprint, cores=core_weight))
 
         pending.append((descriptor, sizing))
         all_jobs[descriptor.dispatch_key] = descriptor
@@ -277,10 +270,9 @@ def execute_log_processing_jobs_tool(
             {
                 "job_id": descriptor.job_id,
                 "source_id": descriptor.source_id,
-                "cores": core_weight,
+                "cores": sizing.cores,
                 "memory_mb": sizing.memory_mb,
-                "message_count": sizing.message_count,
-                "modeled": sizing.modeled,
+                "message_count": footprint.message_count,
             }
         )
 

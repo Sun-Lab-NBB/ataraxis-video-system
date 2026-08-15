@@ -16,6 +16,7 @@ from ..video import (
 )
 from .allocation import (
     CAMERA_EXTRACTION_JOB_CORES as CAMERA_EXTRACTION_JOB_CORES,
+    ArchiveFootprint as ArchiveFootprint,
     resolve_job_workers as resolve_job_workers,
     estimate_job_memory_mb as estimate_job_memory_mb,
     resolve_archive_footprint as resolve_archive_footprint,
@@ -56,4 +57,4 @@ def prepare_jobs(
     *,
     strict_sources: bool = True,
 ) -> JobSet: ...
-def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing]: ...
+def size_job(job: JobDescriptor) -> tuple[JobDescriptor, JobSizing, ArchiveFootprint]: ...

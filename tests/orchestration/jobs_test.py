@@ -412,27 +412,16 @@ def test_job_descriptor_crosses_spawned_worker(tmp_path):
 
 
 def test_job_sizing_stores_every_field():
-    """Verifies that JobSizing stores the figures one archive sizing pass resolved."""
-    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+    """Verifies that JobSizing stores the resources one sizing pass resolved."""
+    sizing = JobSizing(cores=4, memory_mb=2048)
 
+    assert sizing.cores == 4
     assert sizing.memory_mb == 2048
-    assert sizing.message_count == 1500
-    assert sizing.archive_bytes == 4096
-    assert sizing.modeled
-
-
-def test_job_sizing_baseline_figures():
-    """Verifies that JobSizing carries the unmodeled flag when the figures fall back to the job baseline."""
-    sizing = JobSizing(memory_mb=1024, message_count=0, archive_bytes=0, modeled=False)
-
-    assert not sizing.modeled
-    assert sizing.message_count == 0
-    assert sizing.archive_bytes == 0
 
 
 def test_job_sizing_is_frozen():
     """Verifies that the resolved sizing figures cannot drift after a scheduler receives them."""
-    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+    sizing = JobSizing(cores=4, memory_mb=2048)
 
     with pytest.raises(AttributeError):
         sizing.memory_mb = 10
@@ -440,7 +429,7 @@ def test_job_sizing_is_frozen():
 
 def test_job_sizing_pickle_round_trip():
     """Verifies that a sizing record pickles unchanged, as a cross-process scheduler payload requires."""
-    sizing = JobSizing(memory_mb=2048, message_count=1500, archive_bytes=4096, modeled=True)
+    sizing = JobSizing(cores=4, memory_mb=2048)
 
     assert pickle.loads(pickle.dumps(sizing)) == sizing  # noqa: S301 - The payload is the record built one line above.
 

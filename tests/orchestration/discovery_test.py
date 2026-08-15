@@ -35,13 +35,10 @@ from ataraxis_video_system.orchestration.discovery import (
     resolve_jobs,
 )
 from ataraxis_video_system.orchestration.allocation import (
-    SPAWNED_CHILD_MEMORY_MB,
     CAMERA_EXTRACTION_JOB_CORES,
     _PARALLEL_EXTRACTION_THRESHOLD,
-    _apply_tolerance,
     resolve_job_workers,
     estimate_job_memory_mb,
-    resolve_archive_footprint,
 )
 
 _ONSET_US: int = 1700000000000000
@@ -636,17 +633,16 @@ def test_size_job_applies_the_memory_model(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,), message_count=_WIDE_ARCHIVE_MESSAGES)
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    sized_job, sizing = size_job(job=job_set.jobs[0])
+    sized_job, sizing, footprint = size_job(job=job_set.jobs[0])
 
-    footprint = resolve_archive_footprint(archive_path=job_set.jobs[0].archive_path)
     expected_cores = resolve_job_workers(footprint=footprint)
     assert sized_job.core_weight == expected_cores
     # An archive holding the parallel extraction threshold takes the pooled shape at the declared allocation.
     assert sized_job.core_weight == CAMERA_EXTRACTION_JOB_CORES
+    assert sizing.cores == expected_cores
     assert sizing.memory_mb == estimate_job_memory_mb(footprint=footprint, cores=expected_cores)
-    assert sizing.message_count == _WIDE_ARCHIVE_MESSAGES
-    assert sizing.archive_bytes == job_set.jobs[0].archive_path.stat().st_size
-    assert sizing.modeled
+    assert footprint.message_count == _WIDE_ARCHIVE_MESSAGES
+    assert footprint.archive_bytes == job_set.jobs[0].archive_path.stat().st_size
 
 
 def test_size_job_narrows_a_small_archive_to_one_core(tmp_path):
@@ -655,29 +651,30 @@ def test_size_job_narrows_a_small_archive_to_one_core(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,), message_count=_PARALLEL_EXTRACTION_THRESHOLD - 1)
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
-    sized_job, sizing = size_job(job=job_set.jobs[0])
+    sized_job, sizing, footprint = size_job(job=job_set.jobs[0])
 
     # The prepared descriptor carries the declared allocation until the archive it reads is weighed against it.
     assert job_set.jobs[0].core_weight == CAMERA_EXTRACTION_JOB_CORES
     assert sized_job.core_weight == 1
-    assert sizing.message_count == _PARALLEL_EXTRACTION_THRESHOLD - 1
+    assert sizing.cores == 1
+    assert footprint.message_count == _PARALLEL_EXTRACTION_THRESHOLD - 1
 
 
-def test_size_job_unreadable_archive(tmp_path):
-    """Verifies that size_job falls back to the spawned child baseline for an archive it cannot read."""
+def test_size_job_rejects_an_unreadable_archive(tmp_path):
+    """Verifies that size_job rejects an archive it cannot read rather than charging a baseline floor."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
     (log_directory / f"1{LOG_ARCHIVE_SUFFIX}").write_text("This is not a valid numpy archive.")
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+    message = (
+        f"Unable to size the camera timestamp extraction job that reads the log archive "
+        f"{job_set.jobs[0].archive_path}. The archive cannot be read, so the job reading it cannot run. Verify that "
+        f"the path names a readable .npz log archive."
+    )
 
-    sized_job, sizing = size_job(job=job_set.jobs[0])
-
-    assert not sizing.modeled
-    assert sizing.message_count == 0
-    assert sizing.archive_bytes == 0
-    assert sizing.memory_mb == _apply_tolerance(memory_mb=SPAWNED_CHILD_MEMORY_MB)
-    assert sized_job.core_weight == 1
+    with pytest.raises(FileNotFoundError, match=error_format(message)):
+        size_job(job=job_set.jobs[0])
 
 
 def test_size_job_preserves_descriptor_identity(tmp_path):
@@ -686,7 +683,7 @@ def test_size_job_preserves_descriptor_identity(tmp_path):
     _build_recording(log_directory=log_directory, source_ids=(1,))
     job = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output").jobs[0]
 
-    sized_job, _ = size_job(job=job)
+    sized_job, _, _ = size_job(job=job)
 
     assert sized_job is not job
     assert sized_job.core_weight == 1

@@ -742,7 +742,7 @@ def test_abandon_batch_fails_the_jobs_a_caller_already_drained_from_the_state(tm
     _abandon_batch(
         state=state,
         reason="the pool broke",
-        orphaned=[(job, JobSizing(memory_mb=0, message_count=0, archive_bytes=0, modeled=False))],
+        orphaned=[(job, JobSizing(cores=1, memory_mb=0))],
     )
 
     assert ProcessingTracker(file_path=tracker_path).snapshot()[job.job_id].status is ProcessingStatus.FAILED
@@ -1063,9 +1063,9 @@ def _build_descriptor(directory, source_id, core_weight=1):
     )
 
 
-def _build_sizing(memory_mb, message_count=0, archive_bytes=0):
+def _build_sizing(memory_mb, cores=1):
     """Builds a sizing record carrying the requested memory figure."""
-    return JobSizing(memory_mb=memory_mb, message_count=message_count, archive_bytes=archive_bytes, modeled=True)
+    return JobSizing(cores=cores, memory_mb=memory_mb)
 
 
 def _build_entry(directory, source_id, core_weight=1, memory_mb=0):
@@ -1109,6 +1109,6 @@ def _build_single_job_batch(tmp_path, frame_count=4):
     write_camera_manifest(log_directory=log_directory, source_id=1, name="cam1")
 
     job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-    descriptor, sizing = size_job(job=job_set.jobs[0])
+    descriptor, sizing, _ = size_job(job=job_set.jobs[0])
 
     return job_set, descriptor, sizing
