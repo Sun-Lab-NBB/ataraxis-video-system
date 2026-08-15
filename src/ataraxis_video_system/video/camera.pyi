@@ -24,6 +24,7 @@ from .configuration import (
     apply_genicam_configuration as apply_genicam_configuration,
 )
 
+_GENICAM_RUNTIME_CLAIMED: bool
 GENICAM_UNAVAILABLE_REASON: str
 _MONOCHROME_FORMATS: set[str]
 _COLOR_FORMATS: set[str]
