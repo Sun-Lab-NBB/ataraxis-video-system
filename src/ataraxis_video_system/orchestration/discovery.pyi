@@ -46,7 +46,6 @@ class JobSet:
     universe: tuple[tuple[str, str], ...]
     jobs: tuple[JobDescriptor, ...]
     skipped_sources: tuple[tuple[str, str], ...]
-    def resolve_job(self, job_id: str) -> JobDescriptor: ...
 
 def resolve_jobs(log_directory: Path) -> JobUniverse: ...
 def prepare_jobs(

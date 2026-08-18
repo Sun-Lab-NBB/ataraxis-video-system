@@ -167,7 +167,7 @@ def test_init_builds_the_opencv_interface(data_logger, monkeypatch) -> None:
     assert isinstance(video_system._camera, OpenCVCamera)
     assert video_system._camera.frame_width == 640
     assert video_system._camera.frame_height == 480
-    assert not video_system._camera.is_connected
+    assert video_system._camera._camera is None
 
 
 def test_empty_display_queue_releases_every_retained_frame() -> None:
@@ -718,7 +718,7 @@ def test_frame_production_loop_streams_frames_and_honors_the_saving_gate() -> No
     assert not loop_thread.is_alive()
 
     # The loop releases the camera handle on its way out, even though it was stopped through the array.
-    assert not camera.is_connected
+    assert not camera._camera
 
     # The producer logs exactly one entry, the onset anchor. The per-frame entries are the consumer's responsibility.
     logger_entries = _drain_queue(target_queue=logger_queue)

@@ -7,12 +7,19 @@ from .jobs import (
     JobSizing,
     OutputLayout,
     JobDescriptor,
+    generate_job_ids,
     resolve_timestamps_path,
 )
 from .worker import execute_job
 from .pipeline import run_log_processing_pipeline
 from .discovery import JobSet, JobSource, JobUniverse, size_job, prepare_jobs, resolve_jobs
-from .execution import JobExecutionState, get_execution_state, group_jobs_by_tracker, start_execution_session
+from .execution import (
+    ActiveJob,
+    JobExecutionState,
+    get_execution_state,
+    group_jobs_by_tracker,
+    start_execution_session,
+)
 from .allocation import (
     CAMERA_EXTRACTION_JOB_CORES,
     ArchiveFootprint,
@@ -27,6 +34,7 @@ from .allocation import (
 __all__ = [
     "CAMERA_EXTRACTION_JOB_CORES",
     "CAMERA_EXTRACTION_JOB_NAME",
+    "ActiveJob",
     "ArchiveFootprint",
     "JobDescriptor",
     "JobExecutionState",
@@ -37,6 +45,7 @@ __all__ = [
     "OutputLayout",
     "estimate_job_memory_mb",
     "execute_job",
+    "generate_job_ids",
     "get_execution_state",
     "group_jobs_by_tracker",
     "prepare_jobs",

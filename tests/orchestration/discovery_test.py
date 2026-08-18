@@ -692,56 +692,6 @@ def test_size_job_preserves_descriptor_identity(tmp_path):
         assert getattr(sized_job, field_name) == getattr(job, field_name)
 
 
-def test_job_set_resolve_job(tmp_path):
-    """Verifies that JobSet.resolve_job returns the descriptor carrying the requested job identifier."""
-    log_directory = tmp_path / "logs"
-    _build_recording(log_directory=log_directory, source_ids=(1, 2))
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-    identifiers = generate_job_ids(source_ids=["1", "2"])
-
-    for source_id in ("1", "2"):
-        resolved = job_set.resolve_job(job_id=identifiers[source_id])
-
-        assert resolved.job_id == identifiers[source_id]
-        assert resolved.source_id == source_id
-        assert resolved in job_set.jobs
-
-
-def test_job_set_resolve_job_unknown_id(tmp_path):
-    """Verifies that JobSet.resolve_job raises ValueError for an unknown identifier and names the jobs it holds."""
-    log_directory = tmp_path / "logs"
-    _build_recording(log_directory=log_directory, source_ids=(1,))
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
-
-    message = (
-        f"Unable to resolve the camera timestamp extraction job 'deadbeefdeadbeef' in '{log_directory}'. The prepared "
-        f"job set holds no job with that identifier. Held job IDs: {job_set.jobs[0].job_id}."
-    )
-
-    with pytest.raises(ValueError, match=error_format(message)):
-        job_set.resolve_job(job_id="deadbeefdeadbeef")
-
-
-def test_job_set_resolve_job_empty_set(tmp_path):
-    """Verifies that JobSet.resolve_job raises ValueError for an unknown identifier when the set holds no job."""
-    job_set = JobSet(
-        log_directory=tmp_path,
-        output_directory=tmp_path / OutputLayout.DIRECTORY_NAME,
-        tracker_path=tmp_path / OutputLayout.DIRECTORY_NAME / OutputLayout.TRACKER_FILENAME,
-        universe=((CAMERA_EXTRACTION_JOB_NAME, "1"),),
-        jobs=(),
-        skipped_sources=(("1", "The source's log archive is absent or resolves to more than one file."),),
-    )
-
-    message = (
-        f"Unable to resolve the camera timestamp extraction job 'deadbeefdeadbeef' in '{tmp_path}'. The prepared job "
-        f"set holds no job with that identifier. Held job IDs: none."
-    )
-
-    with pytest.raises(ValueError, match=error_format(message)):
-        job_set.resolve_job(job_id="deadbeefdeadbeef")
-
-
 def test_job_descriptor_from_mapping_missing_key(tmp_path):
     """Verifies that JobDescriptor.from_mapping raises ValueError for an incomplete mapping."""
     log_directory = tmp_path / "logs"

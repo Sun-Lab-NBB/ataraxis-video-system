@@ -24,9 +24,9 @@ from ataraxis_video_system.orchestration.discovery import size_job, prepare_jobs
 from ataraxis_video_system.orchestration.execution import (
     _MAXIMUM_JOB_REQUEUES,
     _MAXIMUM_POOL_REBUILDS,
+    ActiveJob,
     JobExecutionState,
     _fail_job,
-    _ActiveJob,
     _reset_job,
     _abandon_batch,
     _job_is_unrecorded,
@@ -34,7 +34,6 @@ from ataraxis_video_system.orchestration.execution import (
     _handle_broken_pool,
     _reap_finished_jobs,
     get_execution_state,
-    _set_execution_state,
     group_jobs_by_tracker,
     _job_execution_manager,
     _select_admissible_jobs,
@@ -64,11 +63,17 @@ eight variables initialize_worker_threads() writes.
 """
 
 
+def _publish_execution_state(state):
+    """Installs one execution state as the module-global session of record, or clears it when state is None."""
+    with execution._EXECUTION_LOCK:
+        execution._execution_state = state
+
+
 @pytest.fixture(autouse=True)
 def execution_state_guard():
     """Clears the module-global execution state after every test, so no session leaks into the next test."""
     yield
-    _set_execution_state(state=None)
+    _publish_execution_state(state=None)
 
 
 @pytest.mark.xdist_group(name="orchestration")
@@ -272,14 +277,14 @@ def test_execution_state_round_trip():
     assert get_execution_state() is None
 
     state = JobExecutionState(core_budget=4, memory_budget_mb=4096)
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
     assert get_execution_state() is state
 
     replacement = JobExecutionState(core_budget=2, memory_budget_mb=2048)
-    _set_execution_state(state=replacement)
+    _publish_execution_state(state=replacement)
     assert get_execution_state() is replacement
 
-    _set_execution_state(state=None)
+    _publish_execution_state(state=None)
     assert get_execution_state() is None
 
 
@@ -611,7 +616,7 @@ def test_reap_finished_jobs_keeps_a_running_job(tmp_path):
     sizing = _build_sizing(memory_mb=1024)
 
     state = JobExecutionState()
-    state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=sizing, future=Future())
+    state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=sizing, future=Future())
 
     _reap_finished_jobs(state=state)
 
@@ -627,7 +632,7 @@ def test_reap_finished_jobs_reconciles_an_unrecorded_return(tmp_path):
     future.set_result(None)
 
     state = JobExecutionState()
-    state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
+    state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
 
     _reap_finished_jobs(state=state)
 
@@ -645,7 +650,7 @@ def test_reap_finished_jobs_keeps_a_recorded_failure(tmp_path):
     future.set_exception(RuntimeError("The archive is empty."))
 
     state = JobExecutionState()
-    state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
+    state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
 
     _reap_finished_jobs(state=state)
 
@@ -667,7 +672,7 @@ def test_reap_finished_jobs_records_a_pool_break(tmp_path):
     future.set_exception(BrokenProcessPool("A worker process terminated abruptly."))
 
     state = JobExecutionState()
-    state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=sizing, future=future)
+    state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=sizing, future=future)
 
     _reap_finished_jobs(state=state)
 
@@ -689,7 +694,7 @@ def test_reap_finished_jobs_ignores_a_break_after_a_recorded_outcome(tmp_path):
     future.set_exception(BrokenProcessPool("A worker process terminated abruptly."))
 
     state = JobExecutionState()
-    state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
+    state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=_build_sizing(memory_mb=1024), future=future)
 
     _reap_finished_jobs(state=state)
 
@@ -707,7 +712,7 @@ def test_abandon_batch_fails_every_unfinished_job(tmp_path):
 
     sizing = _build_sizing(memory_mb=1024)
     state = JobExecutionState()
-    state.active_jobs[active_job.dispatch_key] = _ActiveJob(job=active_job, sizing=sizing, future=Future())
+    state.active_jobs[active_job.dispatch_key] = ActiveJob(job=active_job, sizing=sizing, future=Future())
     state.pending_jobs.append((pending_job, sizing))
     state.broken_jobs.append((broken_job, sizing))
 
@@ -760,7 +765,7 @@ def test_job_execution_manager_runs_a_prepared_batch(tmp_path):
         memory_budget_mb=8192,
         pool_size=1,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -788,7 +793,7 @@ def test_job_execution_manager_cancellation_skips_dispatch(tmp_path):
         pool_size=1,
         canceled=True,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -815,7 +820,7 @@ def test_job_execution_manager_rebuilds_a_broken_pool(tmp_path):
         pool_size=1,
         pool_broken=True,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -849,7 +854,7 @@ def test_job_execution_manager_fails_a_broken_job_after_a_cancel(tmp_path):
         pool_broken=True,
         canceled=True,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -883,7 +888,7 @@ def test_job_execution_manager_fails_a_job_past_the_requeue_ceiling(tmp_path):
         pool_broken=True,
         requeue_counts={descriptor.dispatch_key: _MAXIMUM_JOB_REQUEUES},
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -911,7 +916,7 @@ def test_job_execution_manager_abandons_past_the_rebuild_ceiling(tmp_path):
         pool_broken=True,
         pool_rebuilds=_MAXIMUM_POOL_REBUILDS,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -953,7 +958,7 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_rebuilt(tmp_path
         pool_size=1,
         pool_broken=True,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()
@@ -980,7 +985,7 @@ def test_job_execution_manager_abandons_when_the_pool_cannot_be_created(tmp_path
         memory_budget_mb=8192,
         pool_size=0,
     )
-    _set_execution_state(state=state)
+    _publish_execution_state(state=state)
 
     manager = Thread(target=_job_execution_manager, kwargs={"state": state}, daemon=True)
     manager.start()

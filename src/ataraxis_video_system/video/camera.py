@@ -442,16 +442,6 @@ class OpenCVCamera:
         self._camera = None
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if the instance is connected to the camera hardware."""
-        return self._camera is not None
-
-    @property
-    def is_acquiring(self) -> bool:
-        """Returns True if the camera is currently acquiring video frames."""
-        return self._acquiring
-
-    @property
     def frame_rate(self) -> int:
         """Returns the acquisition rate of the camera, in frames per second (fps)."""
         return self._frame_rate
@@ -1049,16 +1039,6 @@ class MockCamera:
         self._timer = None
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if the instance is 'connected' to the camera hardware."""
-        return self._camera
-
-    @property
-    def is_acquiring(self) -> bool:
-        """Returns True if the camera is currently 'acquiring' video frames."""
-        return self._acquiring
-
-    @property
     def frame_rate(self) -> int:
         """Returns the acquisition rate of the camera, in frames per second (fps)."""
         return self._frame_rate
@@ -1072,11 +1052,6 @@ class MockCamera:
     def frame_height(self) -> int:
         """Returns the height of the acquired frames, in pixels."""
         return self._frame_height
-
-    @property
-    def frame_pool(self) -> tuple[NDArray[np.uint8], ...]:
-        """Returns the pool of camera frames sampled by the grab_frame() method."""
-        return self._frames
 
     @property
     def pixel_color_format(self) -> InputPixelFormats:

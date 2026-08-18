@@ -312,11 +312,6 @@ class VideoSaver:
         """Stops the FFMPEG encoder process on context manager exit."""
         self.stop()
 
-    @property
-    def is_active(self) -> bool:
-        """Returns True if the instance's encoder process has been started and not yet stopped."""
-        return self._ffmpeg_process is not None
-
     def start(self) -> None:
         """Creates the FFMPEG encoder process and sets up the data stream to pipe incoming camera frames to the
         process.

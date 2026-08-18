@@ -138,7 +138,7 @@ def test_video_saver_init_stores_parameters_and_renders_its_repr(tmp_path, has_f
 
     assert saver._system_id == 1
     assert saver._ffmpeg_process is None
-    assert not saver.is_active
+    assert saver._ffmpeg_process is None
 
     assert "VideoSaver(" in repr(saver)
     assert "output_file=" in repr(saver)
@@ -401,11 +401,11 @@ def test_video_saver_context_manager_starts_and_stops_the_encoder(tmp_path, has_
         frame_rate=10.0,
         gpu=-1,
     ) as saver:
-        assert saver.is_active
+        assert saver._ffmpeg_process is not None
         frame = np.zeros((100, 100, 3), dtype=np.uint8)
         saver.save_frame(frame)
 
-    assert not saver.is_active
+    assert saver._ffmpeg_process is None
 
 
 def test_video_saver_save_frame_accepts_a_non_contiguous_frame(tmp_path, has_ffmpeg) -> None:
@@ -535,14 +535,14 @@ def test_video_saver_stop_kills_an_unresponsive_encoder(tmp_path, has_ffmpeg) ->
         assert process.returncode != 0
 
         assert saver._ffmpeg_process is None
-        assert not saver.is_active
+        assert saver._ffmpeg_process is None
 
         # A forced shutdown leaves the instance in the same state a clean one does: stopping again is a no-op, and
         # the saver remains usable for another recording.
         saver.stop()
         assert saver._ffmpeg_process is None
         saver.start()
-        assert saver.is_active
+        assert saver._ffmpeg_process is not None
     finally:
         # The no-op close transferred the ownership of the real pipe to this test.
         with suppress(OSError):
@@ -587,7 +587,7 @@ def test_video_saver_save_frame_reports_a_broken_encoder_pipe(tmp_path, has_ffmp
 
         # The write failure is reported to the caller, but the encoder process is deliberately left running, so the
         # consumer process can decide whether to drop the frame or shut the saver down.
-        assert saver.is_active
+        assert saver._ffmpeg_process is not None
         assert saver._ffmpeg_process.poll() is None
     finally:
         # Restoring the real pipe is load-bearing: stop() closes stdin to signal EOF, and the stub defines no close(),

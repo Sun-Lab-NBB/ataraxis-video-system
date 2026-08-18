@@ -66,6 +66,18 @@ of every cancellation tool."""
 
 
 @dataclass(slots=True)
+class ActiveJob:
+    """Tracks one job executing in a worker of the shared job pool."""
+
+    job: JobDescriptor
+    """The descriptor the pool was handed."""
+    sizing: JobSizing
+    """The resource figures this job was admitted at."""
+    future: Future[None]
+    """The future the pool returned, which carries the job body's outcome."""
+
+
+@dataclass(slots=True)
 class JobExecutionState:
     """Tracks runtime state for one batch execution session budgeted by both cores and memory.
 
@@ -80,7 +92,7 @@ class JobExecutionState:
     """Every submitted job, keyed by its dispatch key."""
     pending_jobs: list[tuple[JobDescriptor, JobSizing]] = field(default_factory=list)
     """Jobs awaiting admission, each paired with the figures it was sized at."""
-    active_jobs: dict[tuple[str, str], _ActiveJob] = field(default_factory=dict)
+    active_jobs: dict[tuple[str, str], ActiveJob] = field(default_factory=dict)
     """Jobs currently executing, keyed by dispatch key so a broken future is matched to its descriptor."""
     core_budget: int = 1
     """The cores the batch may commit across all concurrently running jobs."""
@@ -103,18 +115,6 @@ class JobExecutionState:
     requeue_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     """The requeues charged to each job, keyed by dispatch key. Only a job that broke the pool while running alone
     is charged, since a break fails every in-flight job whatever caused it."""
-
-
-@dataclass(slots=True)
-class _ActiveJob:
-    """Tracks one job executing in a worker of the shared job pool."""
-
-    job: JobDescriptor
-    """The descriptor the pool was handed."""
-    sizing: JobSizing
-    """The resource figures this job was admitted at."""
-    future: Future[None]
-    """The future the pool returned, which carries the job body's outcome."""
 
 
 _execution_state: JobExecutionState | None = None
@@ -227,18 +227,6 @@ def _job_execution_manager(state: JobExecutionState) -> None:
     finally:
         if executor is not None:
             executor.shutdown(wait=True, cancel_futures=True)
-
-
-def _set_execution_state(state: JobExecutionState | None) -> None:
-    """Stores the active batch log processing execution state, replacing any existing session reference.
-
-    Args:
-        state: The execution state to store, or None to clear the active session.
-    """
-    global _execution_state
-
-    with _EXECUTION_LOCK:
-        _execution_state = state
 
 
 def _select_admissible_jobs(
@@ -430,7 +418,7 @@ def _admit_pending_jobs(state: JobExecutionState, executor: ProcessPoolExecutor)
             state.pool_broken = True
             deferred.extend(admitted[index:])
             break
-        state.active_jobs[job.dispatch_key] = _ActiveJob(job=job, sizing=sizing, future=future)
+        state.active_jobs[job.dispatch_key] = ActiveJob(job=job, sizing=sizing, future=future)
 
     state.pending_jobs = deferred
 
