@@ -115,8 +115,11 @@ def prepare_log_processing_batch_tool(
         sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
         descriptors, annotated with their sized cores and memory and with their live tracker status. Every descriptor
         adds an 'error_message' for a job whose tracker recorded a failure, and the archive figures 'message_count'
-        and 'archive_bytes' that the execution tool requires. Also reports total counts and any invalid
-        paths. Returns an error dictionary when the log directory and output directory lists differ in length.
+        and 'archive_bytes' that the execution tool requires. Also reports total counts, any path that is not a
+        directory under 'invalid_paths', and any directory whose preparation raised under 'failed_directories' as an
+        entry carrying 'log_directory' and 'error'. The 'success' flag reads False when no directory prepared and at
+        least one failed. Returns an error dictionary when the log directory and output directory lists differ in
+        length.
     """
     if len(output_directories) != len(log_directories):
         return {
@@ -128,6 +131,7 @@ def prepare_log_processing_batch_tool(
 
     result_log_directories: dict[str, Any] = {}
     invalid_paths: list[str] = []
+    failed_directories: list[dict[str, str]] = []
     total_jobs = 0
 
     for entry_index, log_directory_string in enumerate(log_directories):
@@ -149,8 +153,10 @@ def prepare_log_processing_batch_tool(
             )
             sized_jobs = [size_job(job=job) for job in job_set.jobs]
             sized_jobs.sort(key=lambda entry: entry[1].memory_mb, reverse=True)
-        except Exception:
-            invalid_paths.append(log_directory_string)
+        except Exception as error:
+            # Carries the reason the preparation reported, since a directory that holds no manifest, holds several,
+            # or spans several loggers is diagnosed by that message rather than by the path alone.
+            failed_directories.append({"log_directory": log_directory_string, "error": str(error)})
             continue
 
         # Merges the tracker's live state over the sized set, so a directory prepared twice reports what its jobs
@@ -186,8 +192,10 @@ def prepare_log_processing_batch_tool(
         }
         total_jobs += len(jobs)
 
+    # A request that prepared no directory while at least one raised reports no success, since the caller holds no
+    # manifest to execute and the recorded failures are the reason.
     result: dict[str, Any] = {
-        "success": True,
+        "success": bool(result_log_directories) or not failed_directories,
         "log_directories": result_log_directories,
         "total_log_directories": len(result_log_directories),
         "total_jobs": total_jobs,
@@ -195,6 +203,9 @@ def prepare_log_processing_batch_tool(
 
     if invalid_paths:
         result["invalid_paths"] = invalid_paths
+
+    if failed_directories:
+        result["failed_directories"] = failed_directories
 
     return result
 
