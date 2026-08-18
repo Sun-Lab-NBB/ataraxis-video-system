@@ -169,13 +169,19 @@ video encoding using CPU or GPU.
 - **Log Processing**: Extracts frame acquisition timestamps from DataLogger `.npz` archives, one job per archive, into
   Feather files under a `camera_timestamps/` directory. `resolve_jobs()` reads the recording manifest, `prepare_jobs()`
   registers the resolved jobs without reading an archive, and `size_job()` resolves a job's width and memory from one
-  archive read. `run_log_processing_pipeline()` runs one recording sequentially, or one job by canonical identifier.
+  archive read. `prepare_jobs()` rejects a tree holding no `camera_manifest.yaml` whatever `strict_sources` is set to,
+  because the absent manifest is a property of the directory rather than of a requested source.
+  `run_log_processing_pipeline()` runs one recording sequentially, or one job by canonical identifier.
 - **MCP Server**: A shared `MCPServer` instance (`name="ataraxis-video-system"`) in `interfaces/mcp_instance.py` backs
   the tools in the `interfaces/*_tools.py` modules, and session globals in `interfaces/session_tools.py` enforce one
   active VideoSystem session. Batch log processing sizes each job with `size_job()` and admits what the core and memory
-  budgets fit, running an oversized job alone. The ataraxis **video** plugin registers the server with MCP clients.
+  budgets fit, running an oversized job alone. A batch session is live while its manager thread runs, so the ending
+  thread frees the single session slot and `finish_execution_session()` waits for that and reports whether the slot is
+  free through the cancellation's `session_ended` flag. The ataraxis **video** plugin registers the server with MCP
+  clients.
 - **CLI**: Click command groups (`cti`, `check`, `configure`) with `run` for interactive sessions, `process` for
-  log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112.
+  log data processing, and `mcp` for starting the MCP server. CLI uses system_id 111, MCP uses 112. The
+  `_report_command_failure` decorator reports a failed command's message at `LogLevel.ERROR` and exits zero.
 
 ### Key patterns
 

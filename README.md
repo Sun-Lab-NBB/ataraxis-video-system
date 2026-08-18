@@ -352,7 +352,12 @@ This library provides the `axvs` CLI that exposes the following commands:
 | `configure dump`      | Dumps GenICam configuration from a camera to a YAML file                       |
 | `configure load`      | Loads GenICam configuration from a YAML file to a camera                       |
 
-Use `axvs --help` or `axvs COMMAND --help` for detailed usage information.
+Use `axvs --help` or `axvs COMMAND --help` for detailed usage information. A command whose execution fails reports the
+reason through the console at the error level and exits zero, so a shell driving the CLI reads the reported message
+rather than an interpreter traceback. Click rejects a missing or malformed option before the command runs and exits 2.
+
+***Note,*** a script chaining commands with `set -e` or `&&` therefore continues past a failed command. Such a script
+reads the reported output to decide whether the command succeeded.
 
 ### MCP Server
 

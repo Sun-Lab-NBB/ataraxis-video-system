@@ -19,9 +19,11 @@ from .discovery import (
 from .execution import (
     ActiveJob as ActiveJob,
     JobExecutionState as JobExecutionState,
+    session_is_active as session_is_active,
     get_execution_state as get_execution_state,
     group_jobs_by_tracker as group_jobs_by_tracker,
     start_execution_session as start_execution_session,
+    finish_execution_session as finish_execution_session,
 )
 from .allocation import (
     CAMERA_EXTRACTION_JOB_CORES as CAMERA_EXTRACTION_JOB_CORES,
@@ -48,6 +50,7 @@ __all__ = [
     "OutputLayout",
     "estimate_job_memory_mb",
     "execute_job",
+    "finish_execution_session",
     "generate_job_ids",
     "get_execution_state",
     "group_jobs_by_tracker",
@@ -59,6 +62,7 @@ __all__ = [
     "resolve_pool_size",
     "resolve_timestamps_path",
     "run_log_processing_pipeline",
+    "session_is_active",
     "size_archive_job",
     "size_job",
     "start_execution_session",

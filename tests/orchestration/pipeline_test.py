@@ -7,7 +7,7 @@ from ataraxis_base_utilities import error_format
 from ataraxis_data_structures import LOG_ARCHIVE_SUFFIX, ProcessingStatus, ProcessingTracker
 
 from ataraxis_video_system.orchestration import pipeline, discovery
-from ataraxis_video_system.video.manifest import write_camera_manifest
+from ataraxis_video_system.video.manifest import CAMERA_MANIFEST_FILENAME, write_camera_manifest
 from ataraxis_video_system.video.timestamps import ExtractedDataColumns
 from ataraxis_video_system.orchestration.jobs import (
     OutputLayout,
@@ -130,13 +130,14 @@ def test_run_log_processing_pipeline_missing_log_directory(tmp_path):
 
 
 def test_run_log_processing_pipeline_missing_manifest(tmp_path):
-    """Verifies that the pipeline fails loudly when the recording resolves no extraction job."""
+    """Verifies that the pipeline fails loudly when the recording's tree holds no camera manifest."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     message = (
-        f"Unable to process camera log archives in '{log_directory}'. The recording resolved no extraction job. Its "
-        f"tree holds no camera manifest, or the manifest registers no source whose log archive resolves to exactly "
-        f"one file beneath it."
+        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. Its tree holds no "
+        f"{CAMERA_MANIFEST_FILENAME}, so no source in it is registered and no requested source can be prepared. The "
+        f"archives beneath it were not produced by ataraxis-video-system, or the recording was logged without a "
+        f"manifest."
     )
 
     with pytest.raises(FileNotFoundError, match=error_format(message)):

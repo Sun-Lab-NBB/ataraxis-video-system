@@ -37,12 +37,14 @@ from ..orchestration import (
     size_job,
     prepare_jobs,
     resolve_pool_size,
+    session_is_active,
     get_execution_state,
     resolve_core_budget,
     resolve_job_workers,
     group_jobs_by_tracker,
     estimate_job_memory_mb,
     start_execution_session,
+    finish_execution_session,
     resolve_memory_budget_mb,
 )
 
@@ -314,7 +316,12 @@ def execute_log_processing_jobs_tool(
     )
 
     if not start_execution_session(state=state):
-        return {"error": "An execution session is already active. Cancel it first or wait for completion."}
+        return {
+            "error": (
+                "An execution session is already active. Cancel it with cancel_log_processing_tool, then read "
+                "'session_ended' from that call and poll get_log_processing_status_tool only while it reads false."
+            )
+        }
 
     result: dict[str, Any] = {
         "started": True,
@@ -538,17 +545,20 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
 def cancel_log_processing_tool() -> dict[str, Any]:
     """Cancels the active log processing execution session.
 
-    Clears the pending job queue so no new jobs are dispatched. Active jobs complete naturally but no new jobs
-    are started.
+    Clears the pending job queue so no new jobs are dispatched. Active jobs complete naturally. A call that leaves no
+    job running waits for the session to end, and reports through 'session_ended' whether it did.
 
     Returns:
-        A dictionary containing a 'canceled' flag, a 'message', and 'final_state' with counts for succeeded,
-        failed, and active jobs at the time of cancellation. Returns a 'canceled' flag of False with a 'message' and
-        no 'final_state' when no execution session is active.
+        A dictionary containing a 'canceled' flag, a 'message', a 'session_ended' flag reporting whether the next
+        execution can start immediately, and 'final_state' with counts for the jobs this session itself finished
+        alongside the jobs still running at cancellation. A call made with no active execution session returns the
+        'canceled' flag set to False and 'session_ended' set to True, without 'final_state'.
     """
     state = get_execution_state()
-    if state is None:
-        return {"canceled": False, "message": "No execution session is active."}
+    if state is None or not session_is_active(state=state):
+        # Reports the ended session as ended, so a caller reading 'session_ended' finds it on every response this
+        # tool returns rather than only on the ones that canceled something.
+        return {"canceled": False, "session_ended": True, "message": "No execution session is active."}
 
     with state.lock:
         state.canceled = True
@@ -556,24 +566,49 @@ def cancel_log_processing_tool() -> dict[str, Any]:
         state.pending_jobs.clear()
         active_count = len(state.active_jobs)
 
+    # Waits out the session once nothing is left running, so the guard that admits one session at a time is usually
+    # open by the time this call returns, and 'session_ended' reports whether it is. A session still running a body
+    # is left to finish it, since its jobs are not this call's to interrupt.
+    session_ended = False
+    if active_count == 0:
+        session_ended = finish_execution_session(state=state)
+
+    # A tracker records every job that ever wrote to its directory, so the count is the intersection of the keys
+    # this session finished with the tracker's terminal entries.
     succeeded = 0
     failed = 0
-    tracker_paths: set[Path] = {job.tracker_path for job in state.all_jobs.values()}
 
-    for tracker_path in tracker_paths:
+    with state.lock:
+        finished_keys = set(state.finished_jobs)
+
+    for tracker_path, path_jobs in group_jobs_by_tracker(state=state).items():
         try:
             registry = ProcessingTracker(file_path=tracker_path).snapshot()
-            for job_state in registry.values():
-                if job_state.status == ProcessingStatus.SUCCEEDED:
-                    succeeded += 1
-                elif job_state.status == ProcessingStatus.FAILED:
-                    failed += 1
-        except Exception:  # noqa: S110 - An unreadable tracker contributes no counts, since cancellation still holds.
-            pass
+        except Exception:  # noqa: S112 - a tracker that cannot be read contributes no counts, so the loop skips it.
+            continue
+
+        for job in path_jobs:
+            if job.dispatch_key not in finished_keys or job.job_id not in registry:
+                continue
+
+            job_state = registry[job.job_id]
+            if job_state.status == ProcessingStatus.SUCCEEDED:
+                succeeded += 1
+            elif job_state.status == ProcessingStatus.FAILED:
+                failed += 1
+
+    if active_count > 0:
+        message = (
+            f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing. Poll "
+            f"get_log_processing_status_tool until 'active' reads false before starting another execution."
+        )
+    else:
+        message = f"Canceled. Cleared {cleared_count} pending job(s). No job was still running."
 
     return {
         "canceled": True,
-        "message": f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing.",
+        "session_ended": session_ended,
+        "message": message,
         "final_state": {
             "succeeded_jobs": succeeded,
             "failed_jobs": failed,

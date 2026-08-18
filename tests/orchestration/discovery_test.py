@@ -561,15 +561,27 @@ def test_prepare_jobs_propagates_manifest_guards(tmp_path):
         prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
 
 
-def test_prepare_jobs_prepares_nothing_when_the_tree_holds_no_manifest(tmp_path):
-    """Verifies that prepare_jobs prepares no job for a tree holding no camera manifest."""
+def test_prepare_jobs_rejects_a_tree_holding_no_manifest(tmp_path):
+    """Verifies that prepare_jobs raises for a tree holding no camera manifest under either sourcing mode."""
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     _build_archive(directory=log_directory, source_id=1)
 
-    job_set = prepare_jobs(log_directory=log_directory, output_directory=tmp_path / "output")
+    message = (
+        f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. Its tree holds no "
+        f"{CAMERA_MANIFEST_FILENAME}, so no source in it is registered and no requested source can be prepared. The "
+        f"archives beneath it were not produced by ataraxis-video-system, or the recording was logged without a "
+        f"manifest."
+    )
 
-    assert job_set.jobs == ()
+    # The absent manifest is a property of the directory, so both sourcing modes report it the same way.
+    for strict_sources in (True, False):
+        with pytest.raises(FileNotFoundError, match=error_format(message)):
+            prepare_jobs(
+                log_directory=log_directory,
+                output_directory=tmp_path / "output",
+                strict_sources=strict_sources,
+            )
 
 
 def test_prepare_jobs_registers_prepared_jobs_on_the_tracker(tmp_path):

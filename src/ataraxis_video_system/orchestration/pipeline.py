@@ -53,8 +53,8 @@ def run_log_processing_pipeline(
         display_progress: Determines whether to display progress bars during timestamp extraction.
 
     Raises:
-        FileNotFoundError: If the log directory does not exist, if a requested source's archive is absent, or if
-            the recording resolves no job to run.
+        FileNotFoundError: If the log directory does not exist, if the log directory's tree holds no camera manifest,
+            or if a requested source's archive is absent.
         ValueError: If the tree holds more than one camera manifest, if a manifest registers no sources, if a
             requested source or job identifier is not registered, if the resolved archives span several directories,
             or if a resolved log archive carries no onset timestamp message.
@@ -63,22 +63,14 @@ def run_log_processing_pipeline(
         MissingValueError: If the camera manifest omits a field the CameraManifest class requires.
         TimeoutError: If the tracker's .lock file cannot be acquired within the timeout period.
     """
+    # Strict sourcing raises on every source it cannot prepare and on a tree holding no manifest, so the returned set
+    # holds at least one job.
     job_set = prepare_jobs(
         log_directory=log_directory,
         output_directory=output_directory,
         source_ids=source_ids,
         job_id=job_id,
     )
-
-    # A caller reaching this function asked for work to be carried out, so resolving nothing is a failure here even
-    # though the resolution itself reports a recording holding no camera data as an ordinary answer.
-    if not job_set.jobs:
-        message = (
-            f"Unable to process camera log archives in '{log_directory}'. The recording resolved no extraction job. "
-            f"Its tree holds no camera manifest, or the manifest registers no source whose log archive resolves to "
-            f"exactly one file beneath it."
-        )
-        console.error(message=message, error=FileNotFoundError)
 
     console.echo(
         message=(
