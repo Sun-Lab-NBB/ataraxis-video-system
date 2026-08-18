@@ -11,7 +11,7 @@ from tests.synthetic_node_map import (
 )
 
 from ataraxis_video_system import GenicamNodeInfo, GenicamConfiguration
-from ataraxis_video_system.video.camera import HarvestersCamera
+from ataraxis_video_system.video.camera import HarvestersCamera, read_camera_configuration
 from ataraxis_video_system.video.configuration import (
     _APPLY_PHASE_ORDER,
     _PHASE_RESET_VALUES,
@@ -136,36 +136,24 @@ def test_model_and_serial_number_report_the_connected_device_identity() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_get_node_info_describes_a_standard_genicam_node() -> None:
-    """Verifies that get_node_info returns a GenicamNodeInfo for a standard GenICam node."""
-    camera = HarvestersCamera(system_id=222, camera_index=0)
-    camera.connect()
-    try:
-        info = camera.get_node_info(name="Width")
-        assert isinstance(info, GenicamNodeInfo)
-        assert info.name == "Width"
-        assert isinstance(info.value, int)
-    finally:
-        camera.disconnect()
+def test_read_camera_configuration_reports_the_live_device_state() -> None:
+    """Verifies that read_camera_configuration returns the identity and writable nodes of the addressed camera."""
+    config = read_camera_configuration(camera_index=0)
+
+    assert isinstance(config, GenicamConfiguration)
+    assert config.camera_model == _SIMULATED_MODEL
+    assert config.camera_serial_number == _SIMULATED_SERIAL
+    assert len(config.nodes) == _SIMULATED_WRITABLE_NODES
+    assert {node.name for node in config.nodes} >= {"Width", "Height", "PixelFormat"}
 
 
 @pytest.mark.usefixtures("gentl_simulator")
-def test_get_node_description_renders_a_formatted_multi_line_string() -> None:
-    """Verifies that get_node_description returns a formatted multi-line string."""
-    camera = HarvestersCamera(system_id=222, camera_index=0)
-    camera.connect()
-    try:
-        description = camera.get_node_description(name="Width")
-        assert isinstance(description, str)
-        assert "Node: Width" in description
-        assert "Type: INTEGER" in description
-        assert "Value:" in description
-        assert "Access: READ_WRITE" in description
-        assert "Min:" in description
-        assert "Max:" in description
-        assert "Increment:" in description
-    finally:
-        camera.disconnect()
+def test_read_camera_configuration_honors_the_node_blacklist() -> None:
+    """Verifies that read_camera_configuration excludes every blacklisted node from the configuration it returns."""
+    config = read_camera_configuration(camera_index=0, blacklisted_nodes=frozenset({"Width"}))
+
+    assert "Width" not in {node.name for node in config.nodes}
+    assert "Height" in {node.name for node in config.nodes}
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -175,7 +163,7 @@ def test_set_node_value_writes_to_a_writable_node() -> None:
     camera.connect()
     try:
         camera.set_node_value(name="Width", value="256")
-        assert camera.get_node_info(name="Width").value == 256
+        assert read_genicam_node(node_map=camera.node_map, name="Width").value == 256
     finally:
         camera.disconnect()
 
@@ -204,14 +192,14 @@ def test_apply_configuration_restores_every_captured_node_value() -> None:
     camera.connect()
     try:
         config = camera.get_configuration()
-        original_width = camera.get_node_info(name="Width").value
+        original_width = read_genicam_node(node_map=camera.node_map, name="Width").value
 
         # Moves the camera away from the captured state so that the restore has something to undo.
         camera.set_node_value(name="Width", value="128")
-        assert camera.get_node_info(name="Width").value == 128
+        assert read_genicam_node(node_map=camera.node_map, name="Width").value == 128
 
         camera.apply_configuration(config=config, strict_identity=True)
-        assert camera.get_node_info(name="Width").value == original_width
+        assert read_genicam_node(node_map=camera.node_map, name="Width").value == original_width
     finally:
         camera.disconnect()
 
@@ -343,7 +331,7 @@ def test_apply_configuration_skips_blacklisted_nodes() -> None:
 
         # Blacklisting Width excludes it from both validation and the write pass, so it keeps its current value.
         camera.apply_configuration(config=config, strict_identity=True, blacklisted_nodes=frozenset({"Width"}))
-        assert camera.get_node_info(name="Width").value == 128
+        assert read_genicam_node(node_map=camera.node_map, name="Width").value == 128
     finally:
         camera.disconnect()
 

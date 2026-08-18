@@ -47,12 +47,9 @@ except ImportError:  # pragma: no cover
 from .saver import InputPixelFormats
 from .configuration import (
     DEFAULT_BLACKLISTED_NODES,
-    GenicamNodeInfo,
     GenicamConfiguration,
-    read_genicam_node,
     read_genicam_nodes,
     write_genicam_node,
-    format_genicam_node,
     apply_genicam_configuration,
 )
 
@@ -442,16 +439,6 @@ class OpenCVCamera:
         self._camera = None
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if the instance is connected to the camera hardware."""
-        return self._camera is not None
-
-    @property
-    def is_acquiring(self) -> bool:
-        """Returns True if the camera is currently acquiring video frames."""
-        return self._acquiring
-
-    @property
     def frame_rate(self) -> int:
         """Returns the acquisition rate of the camera, in frames per second (fps)."""
         return self._frame_rate
@@ -669,11 +656,6 @@ class HarvestersCamera:
         self._serial_number = ""
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if the instance is connected to the camera hardware."""
-        return self._camera is not None
-
-    @property
     def is_acquiring(self) -> bool:
         """Returns True if the camera is currently acquiring video frames."""
         if self._camera is not None:
@@ -725,38 +707,6 @@ class HarvestersCamera:
             console.error(message=message, error=ConnectionError)
 
         return self._camera.remote_device.node_map
-
-    def get_node_info(self, name: str) -> GenicamNodeInfo:
-        """Reads a single readable value node from the connected camera and returns its name and current value.
-
-        Args:
-            name: The feature name of the node to read (e.g., "Width", "ExposureTime").
-
-        Returns:
-            A ``GenicamNodeInfo`` instance containing the node's name and current value.
-
-        Raises:
-            ConnectionError: If the instance is not connected to the camera hardware.
-            ValueError: If the node is not a readable value node.
-            AttributeError: If the named node does not exist on the camera's node map.
-        """
-        return read_genicam_node(node_map=self.node_map, name=name)
-
-    def get_node_description(self, name: str) -> str:
-        """Reads a single readable value node from the connected camera and returns a formatted description string.
-
-        Args:
-            name: The feature name of the node to read (e.g., "Width", "ExposureTime").
-
-        Returns:
-            A multi-line formatted string containing the node's full metadata.
-
-        Raises:
-            ConnectionError: If the instance is not connected to the camera hardware.
-            ValueError: If the node is not a readable value node.
-            AttributeError: If the named node does not exist on the camera's node map.
-        """
-        return format_genicam_node(node_map=self.node_map, name=name)
 
     def set_node_value(self, name: str, value: str) -> None:
         """Sets the value of a single writable (ReadWrite) GenICam feature node on the connected camera.
@@ -942,6 +892,33 @@ def harvester_connection(camera_index: int) -> Generator[HarvestersCamera, None,
         camera.disconnect()
 
 
+def read_camera_configuration(
+    camera_index: int,
+    blacklisted_nodes: frozenset[str] = DEFAULT_BLACKLISTED_NODES,
+) -> GenicamConfiguration:
+    """Reads the live GenICam configuration of the target camera.
+
+    Notes:
+        Opens and closes its own connection, so the GenTL handle is released before this function returns rather than
+        held for as long as the caller holds the configuration.
+
+    Args:
+        camera_index: The index of the camera in the list of all cameras discoverable by Harvesters.
+        blacklisted_nodes: A set of node names to exclude from the configuration. Defaults to
+            ``DEFAULT_BLACKLISTED_NODES``, which excludes vendor-specific nodes known to report ReadWrite access but
+            reject writes at the hardware level. Pass an empty frozenset to disable blacklisting.
+
+    Returns:
+        The camera identity and the current value of every writable node the blacklist retains.
+
+    Raises:
+        RuntimeError: If the GenICam runtime is unavailable on the host.
+        ValueError: If the requested camera index does not resolve to a discoverable camera.
+    """
+    with harvester_connection(camera_index=camera_index) as camera:
+        return camera.get_configuration(blacklisted_nodes=blacklisted_nodes)
+
+
 class MockCamera:
     """Simulates (mocks) the behavior of the OpenCVCamera and HarvestersCamera classes without the need to interface
     with a physical camera.
@@ -1049,16 +1026,6 @@ class MockCamera:
         self._timer = None
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if the instance is 'connected' to the camera hardware."""
-        return self._camera
-
-    @property
-    def is_acquiring(self) -> bool:
-        """Returns True if the camera is currently 'acquiring' video frames."""
-        return self._acquiring
-
-    @property
     def frame_rate(self) -> int:
         """Returns the acquisition rate of the camera, in frames per second (fps)."""
         return self._frame_rate
@@ -1072,11 +1039,6 @@ class MockCamera:
     def frame_height(self) -> int:
         """Returns the height of the acquired frames, in pixels."""
         return self._frame_height
-
-    @property
-    def frame_pool(self) -> tuple[NDArray[np.uint8], ...]:
-        """Returns the pool of camera frames sampled by the grab_frame() method."""
-        return self._frames
 
     @property
     def pixel_color_format(self) -> InputPixelFormats:

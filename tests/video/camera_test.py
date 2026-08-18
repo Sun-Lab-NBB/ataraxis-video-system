@@ -61,7 +61,7 @@ def test_mock_camera_init_stores_the_requested_acquisition_parameters(
     assert camera.frame_height == frame_height
     assert camera.frame_rate == frame_rate
     assert camera._system_id == 222
-    assert not camera.is_acquiring
+    assert not camera._acquiring
 
     # The representation reports the acquisition state alongside the geometry, which is what distinguishes a mock that
     # is standing by from one a VideoSystem has already connected and started.
@@ -69,7 +69,7 @@ def test_mock_camera_init_stores_the_requested_acquisition_parameters(
         f"MockCamera(system_id=222, frame_rate={frame_rate} frames / second, frame_width={frame_width} pixels, "
         f"frame_height={frame_height} pixels, connected=False, acquiring=False)"
     )
-    assert not camera.is_connected
+    assert not camera._camera
 
 
 def test_mock_camera_connect_and_disconnect_toggle_the_connection_state() -> None:
@@ -77,10 +77,10 @@ def test_mock_camera_connect_and_disconnect_toggle_the_connection_state() -> Non
     camera = MockCamera(system_id=222)  # Uses default parameters.
 
     camera.connect()
-    assert camera.is_connected
+    assert camera._camera
 
     camera.disconnect()
-    assert not camera.is_connected
+    assert not camera._camera
 
 
 def test_mock_camera_grab_frame_cycles_through_the_frame_pool() -> None:
@@ -89,7 +89,7 @@ def test_mock_camera_grab_frame_cycles_through_the_frame_pool() -> None:
     camera.connect()
 
     # Accesses the frame pool generated at class initialization. All 'grabbed' frames are sampled from the frame pool.
-    frame_pool = camera.frame_pool
+    frame_pool = camera._frames
 
     for frame_number in range(11):
         frame = camera.grab_frame()
@@ -125,8 +125,8 @@ def test_opencv_camera_init_stores_parameters_and_renders_its_repr() -> None:
     assert camera.frame_rate == 100
     assert camera.frame_width == 500
     assert camera.frame_height == 500
-    assert not camera.is_connected
-    assert not camera.is_acquiring
+    assert camera._camera is None
+    assert not camera._acquiring
     assert camera._system_id == 222
 
     representation_string = (
@@ -161,13 +161,13 @@ def test_opencv_camera_connect_and_disconnect_toggle_the_connection_state(has_op
     # and height the connected camera reports. A camera that substitutes its own value for an explicitly requested one
     # is rejected with ValueError instead. Since this code is tested across many different cameras whose default values
     # are hard to predict, formal verification of the adopted values is not performed.
-    assert not camera.is_connected
+    assert camera._camera is None
     camera.connect()
-    assert camera.is_connected
-    assert not camera.is_acquiring
+    assert camera._camera is not None
+    assert not camera._acquiring
 
     camera.disconnect()
-    assert not camera.is_connected
+    assert camera._camera is None
 
 
 @pytest.mark.xdist_group(name="group1")
@@ -190,9 +190,9 @@ def test_opencv_camera_grab_frame_returns_the_requested_channel_count(has_opencv
     )
     camera.connect()
 
-    assert not camera.is_acquiring
+    assert not camera._acquiring
     frame = camera.grab_frame()
-    assert camera.is_acquiring
+    assert camera._acquiring
 
     # Ensures that acquiring colored frames correctly returns a multidimensional numpy array.
     if color:
@@ -409,7 +409,7 @@ def test_harvesters_camera_init_stores_parameters_and_renders_its_repr() -> None
     assert camera.frame_rate == 10
     assert camera.frame_width == 200
     assert camera.frame_height == 200
-    assert not camera.is_connected
+    assert camera._camera is None
     assert not camera.is_acquiring
     assert camera._system_id == 222
 
@@ -427,9 +427,9 @@ def test_harvesters_camera_connect_and_disconnect_toggle_the_connection_state() 
     """Verifies that connecting and disconnecting a HarvestersCamera toggles the reported connection state."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
 
-    assert not camera.is_connected
+    assert camera._camera is None
     camera.connect()
-    assert camera.is_connected
+    assert camera._camera is not None
     assert not camera.is_acquiring
 
     # The simulator reports the identity of the device the instance connected to.
@@ -437,7 +437,7 @@ def test_harvesters_camera_connect_and_disconnect_toggle_the_connection_state() 
     assert camera.serial_number == _SIMULATED_MONOCHROME_SERIAL
 
     camera.disconnect()
-    assert not camera.is_connected
+    assert camera._camera is None
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -461,7 +461,7 @@ def test_harvesters_camera_connect_is_idempotent() -> None:
     finally:
         camera.disconnect()
 
-    assert not camera.is_connected
+    assert camera._camera is None
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -748,7 +748,7 @@ def test_harvesters_camera_pixel_color_format_covers_both_color_states() -> None
 def test_harvester_connection_yields_a_connected_camera() -> None:
     """Verifies that the managed connection exposes a connected camera and releases it when the block ends."""
     with harvester_connection(camera_index=0) as camera:
-        assert camera.is_connected
+        assert camera._camera is not None
         assert camera.model == _SIMULATED_MONOCHROME_MODEL
 
         # Exposing the node map is the reason the helper exists, since every GenICam configuration entry point reads
@@ -756,7 +756,7 @@ def test_harvester_connection_yields_a_connected_camera() -> None:
         assert camera.node_map.Width.value > 0
 
     # The GenTL handle is released for other processes rather than held until the interpreter exits.
-    assert not camera.is_connected
+    assert camera._camera is None
     assert camera._harvester is None
 
 
@@ -770,7 +770,7 @@ def test_harvester_connection_releases_the_camera_on_error() -> None:
     with pytest.raises(RuntimeError, match=message), harvester_connection(camera_index=0) as camera:
         raise RuntimeError(message)
 
-    assert not camera.is_connected
+    assert camera._camera is None
     assert camera._harvester is None
 
 

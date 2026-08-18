@@ -16,6 +16,7 @@ from .camera import (
     discover_camera_ids as discover_camera_ids,
     harvester_connection as harvester_connection,
     genicam_runtime_available as genicam_runtime_available,
+    read_camera_configuration as read_camera_configuration,
 )
 from .manifest import (
     CAMERA_MANIFEST_FILENAME as CAMERA_MANIFEST_FILENAME,
@@ -69,6 +70,7 @@ __all__ = [
     "format_genicam_node",
     "genicam_runtime_available",
     "harvester_connection",
+    "read_camera_configuration",
     "read_genicam_node",
     "resolve_camera_video_path",
     "write_camera_manifest",

@@ -93,33 +93,6 @@ class JobSet:
     """Each source that yielded no job, paired with the reason. Always empty under strict sourcing, where a source
     that cannot be prepared raises instead."""
 
-    def resolve_job(self, job_id: str) -> JobDescriptor:
-        """Returns the descriptor of the requested job.
-
-        Args:
-            job_id: The hexadecimal identifier of the job to resolve.
-
-        Returns:
-            The descriptor of the requested job.
-
-        Raises:
-            ValueError: If no job in this set carries the requested identifier.
-        """
-        matches = {descriptor.job_id: descriptor for descriptor in self.jobs}
-
-        if job_id in matches:
-            return matches[job_id]
-
-        held_ids = ", ".join(sorted(matches)) or "none"
-        message = (
-            f"Unable to resolve the camera timestamp extraction job '{job_id}' in '{self.log_directory}'. The "
-            f"prepared job set holds no job with that identifier. Held job IDs: {held_ids}."
-        )
-        console.error(message=message, error=ValueError)
-
-        # Satisfies ruff RET503. console.error() is NoReturn, so this line never executes.
-        raise ValueError(message)  # pragma: no cover
-
 
 def resolve_jobs(log_directory: Path) -> JobUniverse:
     """Resolves the extraction job universe of one log directory and the subset its archives back.

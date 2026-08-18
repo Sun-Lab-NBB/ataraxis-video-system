@@ -425,7 +425,8 @@ alternative Producer without changing the path stored for future runtimes.
 
 GenICam-compatible cameras expose many configurable parameters (exposure time, gain, resolution, trigger mode, etc.)
 through the GenICam standard. This library provides tools to inspect, modify, save, and load these parameters via the
-CLI (`axvs configure`) or the [MCP server](#mcp-server).
+CLI (`axvs configure`) or the [MCP server](#mcp-server). Calling code reads the live configuration of a camera through
+the `read_camera_configuration()` function, which opens and closes its own connection.
 
 The `axvs configure read` command lists all writable nodes on a connected camera, or displays detailed metadata for a
 specific node (type, current value, access mode, valid range, step increment, enumeration entries, unit, and

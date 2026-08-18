@@ -160,6 +160,8 @@ video encoding using CPU or GPU.
   to prevent pipe buffer deadlocks. Supports CPU (libx264/libx265) and GPU (h264_nvenc/hevc_nvenc) encoders.
 - **GenICam Configuration**: Iterative stack-based NodeMap traversal collects ReadWrite leaf nodes. Configurations
   serialize to YAML via GenicamConfiguration dataclass with camera identity metadata for validation on load.
+  `read_camera_configuration()` is the library root's entry point for external callers, and `HarvestersCamera` and
+  `harvester_connection` stay `video` package exports that the CLI and the MCP tools consume.
 - **Camera Manifest**: `CameraManifest` (YamlConfig subclass) associates source IDs with human-readable camera
   names in a `camera_manifest.yaml` file alongside DataLogger archives. `CameraSourceData` stores per-camera
   entries. `write_camera_manifest()` creates or updates the manifest. Used by log processing discovery to identify
