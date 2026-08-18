@@ -597,7 +597,7 @@ class HarvestersCamera:
             NotImplementedError: If the GenICam camera runtime is not available in this environment.
             FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
             OSError: If the configured .cti file is not a loadable GenTL Producer.
-            IndexError: If the camera index exceeds the number of cameras the configured GenTL Producer discovers.
+            IndexError: If the camera index does not address one of the cameras the configured GenTL Producer discovers.
         """
         if self._camera is not None:
             return
@@ -610,6 +610,17 @@ class HarvestersCamera:
         # Suppresses stdout and stderr to avoid verbose CTI printouts.
         with _suppress_output():
             self._harvester.update()
+
+        # Resolves the index against the discovered device list before creating the acquirer. The Harvesters index
+        # error names neither the index nor the number of cameras discovered, which leaves a caller unable to tell a
+        # mistyped index apart from a Producer that discovered nothing.
+        discovered_cameras = len(self._harvester.device_info_list)
+        if not 0 <= self._camera_index < discovered_cameras:
+            message = (
+                f"Unable to connect to the GenICam camera at index {self._camera_index}. The configured GenTL "
+                f"Producer discovers {discovered_cameras} cameras, so no camera carries that index."
+            )
+            console.error(message=message, error=IndexError)
 
         self._camera = self._harvester.create(search_key=self._camera_index)
 
@@ -642,16 +653,19 @@ class HarvestersCamera:
 
     def disconnect(self) -> None:
         """Disconnects from the managed camera hardware."""
-        if self._camera is None or self._harvester is None:
-            return
+        # A connect() that fails while resolving the camera index leaves the Harvester holding the loaded GenTL
+        # Producer with no acquirer beside it. A Producer left loaded stays loaded for the rest of the process, and
+        # every later connection attempt then finds no cameras.
+        if self._camera is not None:
+            if self._camera.is_acquiring():
+                self._camera.stop()
 
-        if self._camera.is_acquiring():
-            self._camera.stop()
+            self._camera.destroy()
+            self._camera = None
 
-        self._camera.destroy()
-        self._camera = None
-        self._harvester.reset()
-        self._harvester = None
+        if self._harvester is not None:
+            self._harvester.reset()
+            self._harvester = None
         self._model = ""
         self._serial_number = ""
 
@@ -912,8 +926,10 @@ def read_camera_configuration(
         The camera identity and the current value of every writable node the blacklist retains.
 
     Raises:
-        RuntimeError: If the GenICam runtime is unavailable on the host.
-        ValueError: If the requested camera index does not resolve to a discoverable camera.
+        NotImplementedError: If the GenICam camera runtime is not available in this environment.
+        FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
+        OSError: If the configured .cti file is not a loadable GenTL Producer.
+        IndexError: If the camera index does not address one of the cameras the configured GenTL Producer discovers.
     """
     with harvester_connection(camera_index=camera_index) as camera:
         return camera.get_configuration(blacklisted_nodes=blacklisted_nodes)

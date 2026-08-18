@@ -80,7 +80,8 @@ def write_camera_manifest_tool(
     carries none. Otherwise, creates a new manifest.
 
     Args:
-        log_directory: The absolute path to the DataLogger output directory where the manifest file is stored.
+        log_directory: The absolute path to the DataLogger output directory where the manifest file is stored. The
+            directory must already exist.
         source_id: The numeric source ID to register in the manifest.
         name: The colloquial human-readable name for the camera source (e.g., 'face_camera').
 

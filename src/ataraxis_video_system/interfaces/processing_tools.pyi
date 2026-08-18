@@ -32,6 +32,7 @@ from ..orchestration import (
     resolve_memory_budget_mb as resolve_memory_budget_mb,
 )
 
+_REQUIRED_JOB_KEYS: tuple[str, ...]
 _OVERVIEW_AXES: tuple[str, ...]
 _OVERVIEW_SEMI_DETAIL_FIELDS: tuple[str, ...]
 _OVERVIEW_DETAIL_FIELDS: tuple[str, ...]

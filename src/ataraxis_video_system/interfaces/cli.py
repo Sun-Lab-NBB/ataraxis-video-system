@@ -2,7 +2,9 @@
 
 from typing import Literal
 from pathlib import Path
+from contextlib import contextmanager
 from dataclasses import dataclass
+from collections.abc import Iterator
 
 import click
 import numpy as np
@@ -14,6 +16,7 @@ from ..video import (
     GENICAM_UNAVAILABLE_REASON,
     VideoSystem,
     CameraInterfaces,
+    HarvestersCamera,
     OutputPixelFormats,
     EncoderSpeedPresets,
     GenicamConfiguration,
@@ -582,7 +585,7 @@ def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name
     If a node name is provided, displays detailed information about that specific node. Otherwise, lists every
     writable (ReadWrite) node that is not blacklisted, with its current value.
     """
-    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+    with _connected_genicam_camera(shared=shared) as camera:
         if node_name:
             description = format_genicam_node(node_map=camera.node_map, name=node_name)
             console.echo(message=description, level=LogLevel.SUCCESS, raw=True)
@@ -618,11 +621,14 @@ def write_genicam_configuration(shared: _SharedConfigurationParameters, node_nam
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
     The string value is automatically converted to the appropriate type (integer, float, boolean, or string)
-    based on the node's type.
+    based on the node's type. The node is read back over the same connection, since a node that reports ReadWrite
+    access can still coerce the write to its increment or reject it outright.
     """
-    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+    with _connected_genicam_camera(shared=shared) as camera:
         camera.set_node_value(name=node_name, value=value)
-        console.echo(message=f"Node '{node_name}' set to {value}.", level=LogLevel.SUCCESS)
+        observed = read_genicam_node(node_map=camera.node_map, name=node_name).value
+        message = f"Node '{node_name}' written with {value}. The camera reports {observed} for it on this connection."
+        console.echo(message=message, level=LogLevel.SUCCESS)
 
 
 @configure_group.command("dump")
@@ -640,7 +646,7 @@ def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_fi
     The output YAML includes every writable (ReadWrite) node that is not blacklisted, with its current value, as well
     as the camera model and serial number for identity validation.
     """
-    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+    with _connected_genicam_camera(shared=shared) as camera:
         config = camera.get_configuration(blacklisted_nodes=shared.blacklisted_nodes)
         config.to_yaml(file_path=output_file)
         console.echo(
@@ -673,7 +679,28 @@ def load_genicam_configuration(shared: _SharedConfigurationParameters, config_fi
     model and serial number against the configuration file, warning on a mismatch and aborting instead when --strict
     is set.
     """
-    with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+    with _connected_genicam_camera(shared=shared) as camera:
         config = GenicamConfiguration.from_yaml(file_path=config_file)
         camera.apply_configuration(config=config, strict_identity=strict, blacklisted_nodes=shared.blacklisted_nodes)
         console.echo(message="Configuration applied successfully.", level=LogLevel.SUCCESS)
+
+
+@contextmanager
+def _connected_genicam_camera(shared: _SharedConfigurationParameters) -> Iterator[HarvestersCamera]:
+    """Yields a camera connected to the index the ``configure`` group resolved.
+
+    Every IndexError crossing this block is reported as a Click usage error, since the resolved camera index is the
+    only one a subcommand supplies. Such an index names a mistyped option rather than a defect worth unwinding the
+    GenTL stack into the terminal for.
+
+    Args:
+        shared: The options the ``configure`` group parsed for the running subcommand.
+
+    Yields:
+        The connected camera interface.
+    """
+    try:
+        with harvester_connection(camera_index=shared.require_camera_index()) as camera:
+            yield camera
+    except IndexError as error:
+        console.error(message=str(error), error=click.UsageError)

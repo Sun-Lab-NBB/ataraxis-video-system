@@ -431,7 +431,9 @@ the `read_camera_configuration()` function, which opens and closes its own conne
 The `axvs configure read` command lists all writable nodes on a connected camera, or displays detailed metadata for a
 specific node (type, current value, access mode, valid range, step increment, enumeration entries, unit, and
 description). The `axvs configure write` command sets a single node to a new value, with automatic type conversion for
-integer, float, and boolean nodes. String and enumeration values are written as supplied.
+integer, float, and boolean nodes. String and enumeration values are written as supplied. The command reads the node
+back over the same connection and reports the value the camera holds, because a node that advertises ReadWrite access
+can still round the write to its step increment or reject it.
 
 To support reproducible configurations, the `axvs configure dump` command saves all current camera parameters to a
 human-readable YAML file, tagged with the camera model and serial number. The `axvs configure load` command restores a
@@ -449,6 +451,10 @@ always written.
 ***Note,*** configurations are independent of video capture sessions. The camera is configured first, and the
 VideoSystem respects the active configuration for every node it does not set itself. Supplying `frame_width`,
 `frame_height`, or `frame_rate` to the VideoSystem constructor overwrites the corresponding nodes for that session.
+Every configuration command opens and closes its own connection, so this workflow depends on the camera retaining node
+state across a device close. A camera that discards that state serves its previous values to the VideoSystem, and it
+needs the configuration saved to a camera UserSet instead. Reading the nodes back in a separate command shows whether
+the camera retained the values.
 
 ___
 

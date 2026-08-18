@@ -1,6 +1,8 @@
 from typing import Literal
 from pathlib import Path
+from contextlib import contextmanager
 from dataclasses import dataclass
+from collections.abc import Iterator
 
 import click
 from _typeshed import Incomplete
@@ -10,6 +12,7 @@ from ..video import (
     GENICAM_UNAVAILABLE_REASON as GENICAM_UNAVAILABLE_REASON,
     VideoSystem as VideoSystem,
     CameraInterfaces as CameraInterfaces,
+    HarvestersCamera as HarvestersCamera,
     OutputPixelFormats as OutputPixelFormats,
     EncoderSpeedPresets as EncoderSpeedPresets,
     GenicamConfiguration as GenicamConfiguration,
@@ -76,3 +79,5 @@ def write_genicam_configuration(shared: _SharedConfigurationParameters, node_nam
 def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_file: Path) -> None: ...
 @_pass_shared_parameters
 def load_genicam_configuration(shared: _SharedConfigurationParameters, config_file: Path, *, strict: bool) -> None: ...
+@contextmanager
+def _connected_genicam_camera(shared: _SharedConfigurationParameters) -> Iterator[HarvestersCamera]: ...

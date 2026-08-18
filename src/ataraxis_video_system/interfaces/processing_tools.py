@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import numpy as np
 import polars as pl
@@ -48,6 +48,10 @@ from ..orchestration import (
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+_REQUIRED_JOB_KEYS: tuple[str, ...] = tuple(field.name for field in (*fields(JobDescriptor), *fields(ArchiveFootprint)))
+"""The keys every dispatchable job mapping carries. The execution tool reads a descriptor and an archive footprint out
+of each mapping, so the contract it enforces is the union of both dataclasses rather than the descriptor alone."""
 
 _OVERVIEW_AXES: tuple[str, ...] = ("status",)
 """The directory keys a caller filters the batch overview by, which a bare call reports the counts of."""
@@ -241,6 +245,19 @@ def execute_log_processing_jobs_tool(
     job_allocations: list[dict[str, Any]] = []
 
     for job_dict in jobs:
+        # Checks the complete dispatch contract before parsing the descriptor. The descriptor reader knows only the
+        # keys its own dataclass writes. A mapping missing a sizing key would otherwise be rejected with a message
+        # naming an incomplete key set, which leads a caller to rebuild the mapping without those keys again.
+        missing_keys = [key for key in _REQUIRED_JOB_KEYS if key not in job_dict]
+        if missing_keys:
+            message = (
+                f"Unable to dispatch a camera timestamp extraction job from the supplied mapping. The following "
+                f"required keys are absent: {', '.join(missing_keys)}. A dispatchable job mapping carries every key "
+                f"the preparation tool stamps onto it: {', '.join(_REQUIRED_JOB_KEYS)}."
+            )
+            invalid_jobs.append({**job_dict, "error": message})
+            continue
+
         try:
             descriptor = JobDescriptor.from_mapping(mapping=job_dict)
         except Exception as error:
@@ -256,8 +273,13 @@ def execute_log_processing_jobs_tool(
                 message_count=int(job_dict["message_count"]),
                 archive_bytes=int(job_dict["archive_bytes"]),
             )
-        except (KeyError, TypeError, ValueError):
-            invalid_jobs.append({**job_dict, "error": "Missing or unreadable sizing keys from the prepared manifest."})
+        except (TypeError, ValueError):
+            message = (
+                f"Unable to dispatch a camera timestamp extraction job from the supplied mapping. The 'message_count' "
+                f"and 'archive_bytes' values must both be readable as integers, but got "
+                f"{job_dict['message_count']!r} and {job_dict['archive_bytes']!r}."
+            )
+            invalid_jobs.append({**job_dict, "error": message})
             continue
 
         core_weight = min(resolve_job_workers(footprint=footprint), resolved_cores)
