@@ -465,6 +465,33 @@ def test_harvesters_camera_connect_is_idempotent() -> None:
 
 
 @pytest.mark.usefixtures("gentl_simulator")
+def test_harvesters_camera_disconnect_releases_the_producer_after_a_failed_connect() -> None:
+    """Verifies that disconnecting after a connect that failed on the camera index releases the GenTL Producer."""
+    unreachable = HarvestersCamera(system_id=222, camera_index=_SIMULATED_DEVICE_COUNT, frame_width=200)
+
+    with pytest.raises(IndexError):
+        unreachable.connect()
+
+    # The failed attempt loaded the Producer without creating an acquirer beside it, so the Harvester is the only
+    # handle left to release.
+    assert unreachable._camera is None
+    assert unreachable._harvester is not None
+
+    unreachable.disconnect()
+
+    assert unreachable._harvester is None
+
+    # A Producer the failed attempt left loaded stays loaded for the rest of the process and hides every device from
+    # each later connection, so this second camera connects only when the release above actually happened.
+    camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
+    camera.connect()
+    try:
+        assert camera.model == _SIMULATED_MONOCHROME_MODEL
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.usefixtures("gentl_simulator")
 def test_get_harvesters_ids_reports_every_exposed_device() -> None:
     """Verifies that Harvesters discovery reports every device the configured GenTL Producer exposes."""
     cameras = _get_harvesters_ids()

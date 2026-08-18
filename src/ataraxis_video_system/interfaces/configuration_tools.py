@@ -59,7 +59,8 @@ def read_genicam_node_tool(
                     lines.append(f"  {name} = <unreadable>")
             return "\n".join(lines)
     except Exception as error:
-        return f"Error: {error}"
+        target = f"node '{node_name}'" if node_name else "the writable node list"
+        return f"Error: unable to read {target} from camera {camera_index}. {_describe_genicam_error(error=error)}"
 
 
 @mcp.tool()
@@ -68,23 +69,46 @@ def write_genicam_node_tool(camera_index: int, node_name: str, value: str) -> st
 
     The string value is automatically converted to the appropriate type based on the node's type.
 
+    Notes:
+        The write is applied over a connection that closes when this tool returns, and the reported value is read back
+        over that same connection. A node that reports ReadWrite access can still coerce the write to its increment or
+        reject it outright, and a camera that does not retain node state across a device close serves the previous
+        value to the next connection. Compare the reported value against the requested one, and treat a configuration
+        as applied to a recording only once the acquisition runtime writes it.
+
     Args:
         camera_index: The index of the Harvesters camera to write to.
         node_name: The name of the GenICam node to write (e.g., "Width", "ExposureTime").
         value: The string value to write. Automatically converted to the node's native type.
 
     Returns:
-        A confirmation with the node name and written value, or an error description.
+        A confirmation naming the requested value and the value the node reports after the write, a notice that the
+        write landed while the read-back failed, or an error description. Only the last carries the 'Error:' prefix,
+        since a failed read-back leaves the write itself in place and a retry would apply it a second time.
     """
     try:
         with harvester_connection(camera_index=camera_index) as camera:
             # The camera's set_node_value method casts the string value to int, float, or bool by node type, keeping
             # enumeration and string nodes as raw strings.
             camera.set_node_value(name=node_name, value=value)
+
+            # Reads the node back over the same connection, since a node that advertises ReadWrite access can still
+            # coerce or drop the write, and reporting the requested value alone hides that from the caller. A failure
+            # here follows a write that already landed, so it reports separately from a failure to write at all.
+            try:
+                observed = read_node_info(node_map=camera.node_map, name=node_name).value
+            except Exception as error:
+                return (
+                    f"Node '{node_name}' written with {value}, but reading it back failed, so the value the camera "
+                    f"holds is unconfirmed. {_describe_genicam_error(error=error)}"
+                )
     except Exception as error:
-        return f"Error: {error}"
+        return (
+            f"Error: unable to write node '{node_name}' on camera {camera_index}. "
+            f"{_describe_genicam_error(error=error)}"
+        )
     else:
-        return f"Node '{node_name}' set to {value}"
+        return f"Node '{node_name}' written with {value}. The camera reports {observed} for it on this connection."
 
 
 @mcp.tool()
@@ -123,7 +147,10 @@ def dump_genicam_config_tool(
             config.to_yaml(file_path=Path(output_file))
             return f"Configuration saved: {len(config.nodes)} nodes written to {output_file}"
     except Exception as error:
-        return f"Error: {error}"
+        return (
+            f"Error: unable to dump the configuration of camera {camera_index} to {output_file}. "
+            f"{_describe_genicam_error(error=error)}"
+        )
 
 
 @mcp.tool()
@@ -140,6 +167,12 @@ def load_genicam_config_tool(
         The AI agent calling this tool MUST ask the user to provide the config_file path before calling this tool.
         Do not assume or guess the configuration file path.
 
+    Notes:
+        The configuration is applied over a connection that closes when this tool returns. A camera that does not
+        retain node state across a device close serves its previous values to the next connection. State that must
+        survive this tool belongs in a camera UserSet, and a recording relies on the acquisition runtime to apply the
+        configuration it requires. Read the nodes back with read_genicam_node_tool to confirm what the camera holds.
+
     Args:
         camera_index: The index of the Harvesters camera to load the configuration onto.
         config_file: The absolute path to the YAML configuration file to load. Must be provided by the user.
@@ -150,7 +183,9 @@ def load_genicam_config_tool(
             empty list to disable blacklisting.
 
     Returns:
-        A confirmation that the configuration was applied, or an error description.
+        A confirmation naming the camera and the number of node entries read from the configuration file, or an error
+        description. The blacklist withholds some of those entries from the camera, so the count reports the file's
+        contents rather than the writes performed.
     """
     blacklist = _resolve_blacklist(blacklisted_nodes=blacklisted_nodes)
 
@@ -167,9 +202,31 @@ def load_genicam_config_tool(
             config = GenicamConfiguration.from_yaml(file_path=path)
             camera.apply_configuration(config=config, strict_identity=strict_identity, blacklisted_nodes=blacklist)
     except Exception as error:
-        return f"Error: {error}"
+        return (
+            f"Error: unable to apply the configuration stored in {config_file} to camera {camera_index}. "
+            f"{_describe_genicam_error(error=error)}"
+        )
     else:
-        return "Configuration applied successfully"
+        return f"Configuration applied to camera {camera_index}: {len(config.nodes)} node entries read from the file."
+
+
+def _describe_genicam_error(error: Exception) -> str:
+    """Renders an exception raised by the GenICam runtime as caller-facing text.
+
+    Several GenICam exceptions, including the one an unknown node name raises, carry no message, so interpolating them
+    directly yields text that names no cause. Naming the exception type keeps such a failure distinguishable from one
+    the runtime does describe.
+
+    Args:
+        error: The exception raised while the camera connection was open.
+
+    Returns:
+        The exception's own message, or a description naming its type when it carries no message.
+    """
+    description = str(error).strip()
+    if description:
+        return description
+    return f"The camera runtime raised {type(error).__name__} without a message."
 
 
 def _resolve_blacklist(blacklisted_nodes: list[str] | None) -> frozenset[str]:

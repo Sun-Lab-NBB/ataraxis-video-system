@@ -219,6 +219,8 @@ video encoding using CPU or GPU.
 2. OpenCVCamera and HarvestersCamera share a common interface pattern (connect, grab, disconnect)
 3. CTI file management functions (`add_cti_file`, `check_cti_file`) use platformdirs for persistence
 4. Camera discovery must handle both OpenCV and Harvesters gracefully when hardware is unavailable
+5. Release the acquirer and the Harvester independently in `disconnect()`, since a failed `connect()` leaves a
+   Harvester holding the GenTL Producer and stranding it hides every camera for the rest of the process
 
 **Modifying FFMPEG encoding:**
 
