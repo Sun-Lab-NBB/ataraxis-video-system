@@ -409,7 +409,7 @@ def test_harvesters_camera_init_stores_parameters_and_renders_its_repr() -> None
     assert camera.frame_rate == 10
     assert camera.frame_width == 200
     assert camera.frame_height == 200
-    assert not camera.is_connected
+    assert camera._camera is None
     assert not camera.is_acquiring
     assert camera._system_id == 222
 
@@ -427,9 +427,9 @@ def test_harvesters_camera_connect_and_disconnect_toggle_the_connection_state() 
     """Verifies that connecting and disconnecting a HarvestersCamera toggles the reported connection state."""
     camera = HarvestersCamera(system_id=222, camera_index=0, frame_width=200, frame_height=200)
 
-    assert not camera.is_connected
+    assert camera._camera is None
     camera.connect()
-    assert camera.is_connected
+    assert camera._camera is not None
     assert not camera.is_acquiring
 
     # The simulator reports the identity of the device the instance connected to.
@@ -437,7 +437,7 @@ def test_harvesters_camera_connect_and_disconnect_toggle_the_connection_state() 
     assert camera.serial_number == _SIMULATED_MONOCHROME_SERIAL
 
     camera.disconnect()
-    assert not camera.is_connected
+    assert camera._camera is None
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -461,7 +461,7 @@ def test_harvesters_camera_connect_is_idempotent() -> None:
     finally:
         camera.disconnect()
 
-    assert not camera.is_connected
+    assert camera._camera is None
 
 
 @pytest.mark.usefixtures("gentl_simulator")
@@ -748,7 +748,7 @@ def test_harvesters_camera_pixel_color_format_covers_both_color_states() -> None
 def test_harvester_connection_yields_a_connected_camera() -> None:
     """Verifies that the managed connection exposes a connected camera and releases it when the block ends."""
     with harvester_connection(camera_index=0) as camera:
-        assert camera.is_connected
+        assert camera._camera is not None
         assert camera.model == _SIMULATED_MONOCHROME_MODEL
 
         # Exposing the node map is the reason the helper exists, since every GenICam configuration entry point reads
@@ -756,7 +756,7 @@ def test_harvester_connection_yields_a_connected_camera() -> None:
         assert camera.node_map.Width.value > 0
 
     # The GenTL handle is released for other processes rather than held until the interpreter exits.
-    assert not camera.is_connected
+    assert camera._camera is None
     assert camera._harvester is None
 
 
@@ -770,7 +770,7 @@ def test_harvester_connection_releases_the_camera_on_error() -> None:
     with pytest.raises(RuntimeError, match=message), harvester_connection(camera_index=0) as camera:
         raise RuntimeError(message)
 
-    assert not camera.is_connected
+    assert camera._camera is None
     assert camera._harvester is None
 
 
