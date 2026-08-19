@@ -32,8 +32,6 @@ from ..video import (
 )
 from ..orchestration import run_log_processing_pipeline as run_log_processing_pipeline
 
-def _report_command_failure[**P](command: Callable[P, None]) -> Callable[P, None]: ...
-
 _CONTEXT_SETTINGS: dict[str, int]
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +42,7 @@ class _SharedConfigurationParameters:
 
 _pass_shared_parameters: Incomplete
 
+def _report_command_failure[**P](command: Callable[P, None]) -> Callable[P, None]: ...
 def axvs_cli() -> None: ...
 def cti_group() -> None: ...
 @_report_command_failure

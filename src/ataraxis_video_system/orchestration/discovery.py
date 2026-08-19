@@ -129,8 +129,8 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
     candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
 
     # A tree holding no camera manifest holds no camera jobs, which is an answer rather than a failure. A caller
-    # walking many recordings reads the empty universe and moves on, while a caller that asked for work to be done
-    # raises on the empty result itself.
+    # walking many recordings reads the empty universe and moves on, while prepare_jobs reads the absent manifest as a
+    # failure of the directory.
     if not candidates:
         return JobUniverse(
             log_directory=log_directory,
