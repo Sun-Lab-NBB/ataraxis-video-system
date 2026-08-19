@@ -29,6 +29,7 @@ from ataraxis_video_system.orchestration.execution import (
     _fail_job,
     _reset_job,
     _abandon_batch,
+    session_is_active,
     _job_is_unrecorded,
     _admit_pending_jobs,
     _handle_broken_pool,
@@ -38,6 +39,7 @@ from ataraxis_video_system.orchestration.execution import (
     _job_execution_manager,
     _select_admissible_jobs,
     start_execution_session,
+    finish_execution_session,
     _reconcile_unrecorded_job,
 )
 from ataraxis_video_system.orchestration.allocation import (
@@ -324,6 +326,87 @@ def test_start_execution_session_reserves_the_single_slot(tmp_path):
 
     second.manager_thread.join(timeout=_MANAGER_TIMEOUT_SECONDS)
     assert not second.manager_thread.is_alive()
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_session_is_active_reads_the_manager_thread(tmp_path):
+    """Verifies that liveness follows the manager thread rather than the presence of the state."""
+    assert not session_is_active(state=None)
+
+    _, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
+    state = JobExecutionState(
+        all_jobs={descriptor.dispatch_key: descriptor},
+        pending_jobs=[(descriptor, sizing)],
+        core_budget=1,
+        memory_budget_mb=8192,
+        pool_size=1,
+    )
+
+    # A state that never started a session carries no thread, so it reads as idle rather than as a live session.
+    assert not session_is_active(state=state)
+    assert start_execution_session(state=state)
+    assert session_is_active(state=state)
+
+    state.manager_thread.join(timeout=_MANAGER_TIMEOUT_SECONDS)
+
+    # The state stays readable once the batch ends, so a status reader still reaches it while the slot is free.
+    assert not session_is_active(state=state)
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_finish_execution_session_waits_out_a_canceled_session(tmp_path):
+    """Verifies that finishing a canceled session signals its manager and reports the ended thread."""
+    _, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
+    state = JobExecutionState(
+        all_jobs={descriptor.dispatch_key: descriptor},
+        pending_jobs=[(descriptor, sizing)],
+        core_budget=1,
+        memory_budget_mb=8192,
+        pool_size=1,
+    )
+
+    assert start_execution_session(state=state)
+
+    with state.lock:
+        state.canceled = True
+        state.pending_jobs.clear()
+
+    assert finish_execution_session(state=state)
+    assert state.wakeup.is_set()
+    assert not state.manager_thread.is_alive()
+
+    # The slot the finished session held is free, which is what lets a cancellation be followed by a new batch.
+    assert not session_is_active(state=state)
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_finish_execution_session_reports_a_running_session(tmp_path, monkeypatch):
+    """Verifies that a session still running its manager is reported as unfinished rather than waited out."""
+    monkeypatch.setattr(execution, "_SESSION_FINISH_TIMEOUT_SECONDS", 0.01)
+    _, descriptor, sizing = _build_single_job_batch(tmp_path=tmp_path)
+    state = JobExecutionState(
+        all_jobs={descriptor.dispatch_key: descriptor},
+        pending_jobs=[(descriptor, sizing)],
+        core_budget=1,
+        memory_budget_mb=8192,
+        pool_size=1,
+    )
+
+    assert start_execution_session(state=state)
+
+    # The manager is still warming its shared pool, so the bounded wait expires before the session ends.
+    assert not finish_execution_session(state=state)
+
+    state.manager_thread.join(timeout=_MANAGER_TIMEOUT_SECONDS)
+
+
+@pytest.mark.xdist_group(name="orchestration")
+def test_finish_execution_session_without_a_manager_thread():
+    """Verifies that a state carrying no manager thread reports the session as already finished."""
+    state = JobExecutionState(core_budget=1, memory_budget_mb=8192, pool_size=1)
+
+    assert finish_execution_session(state=state)
+    assert state.wakeup.is_set()
 
 
 @pytest.mark.xdist_group(name="orchestration")

@@ -2,9 +2,10 @@
 
 from typing import Literal
 from pathlib import Path
+from functools import wraps
 from contextlib import contextmanager
 from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import click
 import numpy as np
@@ -35,6 +36,7 @@ from .mcp_server import run_server as run_mcp
 from ..orchestration import run_log_processing_pipeline
 
 console.enable()
+
 
 _CONTEXT_SETTINGS: dict[str, int] = {"max_content_width": 120}
 """Ensures that displayed Click help messages are formatted according to the lab standard."""
@@ -75,6 +77,35 @@ _pass_shared_parameters = click.make_pass_decorator(_SharedConfigurationParamete
 """Injects the ``configure`` group's ``_SharedConfigurationParameters`` as each subcommand's first argument."""
 
 
+def _report_command_failure[**P](command: Callable[P, None]) -> Callable[P, None]:
+    """Reports the failure of a command through the console instead of an interpreter traceback.
+
+    Notes:
+        A traceback buries the message under a stack the user of a command line tool cannot act on.
+
+        A Click exception passes through, so the usage errors a command body raises keep the usage banner and the
+        exit status Click gives its own parameter validation. A caller therefore reads one exit status for every
+        malformed invocation, whether Click or a command body detected it.
+
+    Args:
+        command: The command function to wrap.
+
+    Returns:
+        The wrapped command, which reports any other exception its body raises and returns normally.
+    """
+
+    @wraps(command)
+    def report(*args: P.args, **kwargs: P.kwargs) -> None:
+        try:
+            command(*args, **kwargs)
+        except click.ClickException:
+            raise
+        except Exception as error:
+            console.echo(message=str(error), level=LogLevel.ERROR)
+
+    return report
+
+
 @click.group("axvs", context_settings=_CONTEXT_SETTINGS)
 def axvs_cli() -> None:
     """Serves as the entry-point for interfacing with all interactive components of the ataraxis-video-system (AXVS)
@@ -99,6 +130,7 @@ def cti_group() -> None:
         "See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details."
     ),
 )
+@_report_command_failure
 def set_cti_file(file_path: Path) -> None:
     """Configures the library to use the input CTI file for all future runtimes involving GenICam cameras.
 
@@ -113,6 +145,7 @@ def set_cti_file(file_path: Path) -> None:
 
 
 @cti_group.command("check")
+@_report_command_failure
 def check_cti_status() -> None:
     """Checks whether the library is configured with a valid GenTL Producer interface (.cti) file.
 
@@ -149,6 +182,7 @@ def check_group() -> None:
 
 
 @check_group.command("devices")
+@_report_command_failure
 def check_devices() -> None:
     """Discovers all cameras compatible with the library and prints their identification information.
 
@@ -209,6 +243,7 @@ def check_devices() -> None:
 
 
 @check_group.command("compatibility")
+@_report_command_failure
 def check_compatibility() -> None:
     """Checks whether the host system meets the requirements for CPU and (optionally) GPU video encoding.
 
@@ -312,6 +347,7 @@ def check_compatibility() -> None:
     show_default=True,
     help="The rate at which to acquire the frames, in frames per second.",
 )
+@_report_command_failure
 def live_run(
     interface: str,
     camera_index: int,
@@ -461,6 +497,7 @@ def live_run(
     help="Determines whether to suppress the progress bars during timestamp extraction. The progress bars are "
     "displayed by default.",
 )
+@_report_command_failure
 def process_log_archives(
     log_directory: Path,
     output_directory: Path,
@@ -498,6 +535,7 @@ def process_log_archives(
     help="The transport protocol to use for MCP communication. Use 'stdio' for standard input/output communication "
     "(default, recommended for Claude Desktop integration) or 'streamable-http' for HTTP-based communication.",
 )
+@_report_command_failure
 def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None:
     """Starts the Model Context Protocol (MCP) server for agentic interaction with the library.
 
@@ -579,6 +617,7 @@ def configure_group(
     "blacklisted.",
 )
 @_pass_shared_parameters
+@_report_command_failure
 def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str) -> None:
     """Reads GenICam node information from a connected Harvesters camera.
 
@@ -617,6 +656,7 @@ def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name
     help="The value to write to the node. The value is automatically converted to the type expected by the node.",
 )
 @_pass_shared_parameters
+@_report_command_failure
 def write_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str, value: str) -> None:
     """Writes a value to a GenICam node on a connected Harvesters camera.
 
@@ -640,6 +680,7 @@ def write_genicam_configuration(shared: _SharedConfigurationParameters, node_nam
     help="The path to the output YAML file to write the configuration to.",
 )
 @_pass_shared_parameters
+@_report_command_failure
 def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_file: Path) -> None:
     """Dumps the full GenICam configuration of a connected Harvesters camera to a YAML file.
 
@@ -672,6 +713,7 @@ def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_fi
     "and the connected camera.",
 )
 @_pass_shared_parameters
+@_report_command_failure
 def load_genicam_configuration(shared: _SharedConfigurationParameters, config_file: Path, *, strict: bool) -> None:
     """Loads a GenICam configuration from a YAML file onto a connected Harvesters camera.
 

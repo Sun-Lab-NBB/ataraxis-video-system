@@ -23,12 +23,14 @@ from ..orchestration import (
     size_job as size_job,
     prepare_jobs as prepare_jobs,
     resolve_pool_size as resolve_pool_size,
+    session_is_active as session_is_active,
     get_execution_state as get_execution_state,
     resolve_core_budget as resolve_core_budget,
     resolve_job_workers as resolve_job_workers,
     group_jobs_by_tracker as group_jobs_by_tracker,
     estimate_job_memory_mb as estimate_job_memory_mb,
     start_execution_session as start_execution_session,
+    finish_execution_session as finish_execution_session,
     resolve_memory_budget_mb as resolve_memory_budget_mb,
 )
 
@@ -43,7 +45,13 @@ def prepare_log_processing_batch_tool(
     log_directories: list[str], source_ids: list[str], output_directories: list[str]
 ) -> dict[str, Any]: ...
 def execute_log_processing_jobs_tool(
-    jobs: list[dict[str, Any]], *, core_budget: int = -1, memory_budget_mb: int = -1
+    jobs: list[dict[str, Any]] | None = None,
+    log_directories: list[str] | None = None,
+    source_ids: list[str] | None = None,
+    output_directories: list[str] | None = None,
+    *,
+    core_budget: int = -1,
+    memory_budget_mb: int = -1,
 ) -> dict[str, Any]: ...
 def get_log_processing_status_tool() -> dict[str, Any]: ...
 def get_log_processing_timing_tool() -> dict[str, Any]: ...
@@ -72,3 +80,4 @@ def _estimate_dropped_frames(
     intervals_us: NDArray[np.int64], gap_indices: NDArray[np.intp], expected_interval: float
 ) -> NDArray[np.int64]: ...
 def _clean_single_output(output_directory: str) -> dict[str, Any]: ...
+def _preparation_notes(preparation: dict[str, Any]) -> dict[str, Any]: ...

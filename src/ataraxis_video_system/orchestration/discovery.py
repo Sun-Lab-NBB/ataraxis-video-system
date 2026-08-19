@@ -129,8 +129,8 @@ def resolve_jobs(log_directory: Path) -> JobUniverse:
     candidates = discover_marker_files(directory=log_directory, marker_name=CAMERA_MANIFEST_FILENAME)
 
     # A tree holding no camera manifest holds no camera jobs, which is an answer rather than a failure. A caller
-    # walking many recordings reads the empty universe and moves on, while a caller that asked for work to be done
-    # raises on the empty result itself.
+    # walking many recordings reads the empty universe and moves on, while prepare_jobs reads the absent manifest as a
+    # failure of the directory.
     if not candidates:
         return JobUniverse(
             log_directory=log_directory,
@@ -216,6 +216,9 @@ def prepare_jobs(
         The tracker is aligned against the whole manifest universe whichever subset this call prepares, so several
         invocations naming different jobs share one tracker without resetting each other's recorded outcomes.
 
+        A tree holding no manifest is rejected whatever the sourcing mode, because the absent manifest is a property
+        of the directory rather than of any one requested source.
+
     Args:
         log_directory: The root directory whose tree holds the camera manifest and the log archives.
         output_directory: The root output directory. The library's own subdirectory is created under it.
@@ -231,8 +234,8 @@ def prepare_jobs(
         The prepared job set.
 
     Raises:
-        FileNotFoundError: If the log directory does not exist, or if a requested source's archive is absent under
-            strict sourcing.
+        FileNotFoundError: If the log directory does not exist, if the log directory's tree holds no camera
+            manifest, or if a requested source's archive is absent under strict sourcing.
         ValueError: If the tree holds more than one camera manifest, if a manifest registers no sources, if a
             requested source or job identifier is not registered, or if the resolved archives span several
             directories.
@@ -242,6 +245,17 @@ def prepare_jobs(
         TimeoutError: If the tracker's .lock file cannot be acquired within the timeout period.
     """
     universe = resolve_jobs(log_directory=log_directory)
+
+    # Reported before the requested sources are weighed, so the directory itself carries the reason.
+    if universe.manifest_path is None:
+        message = (
+            f"Unable to prepare camera timestamp extraction jobs in '{log_directory}'. Its tree holds no "
+            f"{CAMERA_MANIFEST_FILENAME}, so no source in it is registered and no requested source can be prepared. "
+            f"The archives beneath it were not produced by ataraxis-video-system, or the recording was logged "
+            f"without a manifest."
+        )
+        console.error(message=message, error=FileNotFoundError)
+
     registered_ids = [source.source_id for source in universe.sources]
     archives = universe.archives
 

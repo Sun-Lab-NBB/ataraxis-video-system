@@ -37,12 +37,14 @@ from ..orchestration import (
     size_job,
     prepare_jobs,
     resolve_pool_size,
+    session_is_active,
     get_execution_state,
     resolve_core_budget,
     resolve_job_workers,
     group_jobs_by_tracker,
     estimate_job_memory_mb,
     start_execution_session,
+    finish_execution_session,
     resolve_memory_budget_mb,
 )
 
@@ -113,8 +115,11 @@ def prepare_log_processing_batch_tool(
         sources the sizing skipped with their reasons. Each manifest also carries a 'jobs' list of dispatchable
         descriptors, annotated with their sized cores and memory and with their live tracker status. Every descriptor
         adds an 'error_message' for a job whose tracker recorded a failure, and the archive figures 'message_count'
-        and 'archive_bytes' that the execution tool requires. Also reports total counts and any invalid
-        paths. Returns an error dictionary when the log directory and output directory lists differ in length.
+        and 'archive_bytes' that the execution tool requires. Also reports total counts, any path that is not a
+        directory under 'invalid_paths', and any directory whose preparation raised under 'failed_directories' as an
+        entry carrying 'log_directory' and 'error'. The 'success' flag reads False when no directory prepared and at
+        least one failed. Returns an error dictionary when the log directory and output directory lists differ in
+        length.
     """
     if len(output_directories) != len(log_directories):
         return {
@@ -126,6 +131,7 @@ def prepare_log_processing_batch_tool(
 
     result_log_directories: dict[str, Any] = {}
     invalid_paths: list[str] = []
+    failed_directories: list[dict[str, str]] = []
     total_jobs = 0
 
     for entry_index, log_directory_string in enumerate(log_directories):
@@ -147,8 +153,10 @@ def prepare_log_processing_batch_tool(
             )
             sized_jobs = [size_job(job=job) for job in job_set.jobs]
             sized_jobs.sort(key=lambda entry: entry[1].memory_mb, reverse=True)
-        except Exception:
-            invalid_paths.append(log_directory_string)
+        except Exception as error:
+            # Carries the reason the preparation reported, since a directory that holds no manifest, holds several,
+            # or spans several loggers is diagnosed by that message rather than by the path alone.
+            failed_directories.append({"log_directory": log_directory_string, "error": str(error)})
             continue
 
         # Merges the tracker's live state over the sized set, so a directory prepared twice reports what its jobs
@@ -184,8 +192,10 @@ def prepare_log_processing_batch_tool(
         }
         total_jobs += len(jobs)
 
+    # A request that prepared no directory while at least one raised reports no success, since the caller holds no
+    # manifest to execute and the recorded failures are the reason.
     result: dict[str, Any] = {
-        "success": True,
+        "success": bool(result_log_directories) or not failed_directories,
         "log_directories": result_log_directories,
         "total_log_directories": len(result_log_directories),
         "total_jobs": total_jobs,
@@ -194,33 +204,49 @@ def prepare_log_processing_batch_tool(
     if invalid_paths:
         result["invalid_paths"] = invalid_paths
 
+    if failed_directories:
+        result["failed_directories"] = failed_directories
+
     return result
 
 
 @mcp.tool()
 def execute_log_processing_jobs_tool(
-    jobs: list[dict[str, Any]],
+    jobs: list[dict[str, Any]] | None = None,
+    log_directories: list[str] | None = None,
+    source_ids: list[str] | None = None,
+    output_directories: list[str] | None = None,
     *,
     core_budget: int = -1,
     memory_budget_mb: int = -1,
 ) -> dict[str, Any]:
     """Dispatches log processing jobs for background execution against a core and a memory budget.
 
-    Takes job descriptors from the manifest produced by prepare_log_processing_batch_tool and starts a background
-    execution manager. Each job's cores and memory are resolved from the archive it reads before dispatch, so a long
-    recording and a short one are admitted at their own sizes. An archive below the parallel extraction threshold takes
-    a single core and every archive above it takes the declared stage width, collapsed onto the core budget when that
-    budget is narrower. The manager admits a job once the running set has room for both its cores and its memory, and
-    it admits an oversized job alone rather than leaving it queued forever. A job whose estimated memory passes the
+    Names the work in either of two ways. Naming the same log directories, source IDs, and output directories that
+    prepare_log_processing_batch_tool takes rebuilds the manifest here and dispatches it, which is the shorter call
+    for a batch of any size. Passing the job descriptors from an earlier preparation dispatches exactly those, which
+    is what a caller that filtered or reordered the prepared manifest does.
+
+    Each job's cores and memory are resolved from the archive it reads before dispatch, so a long recording and a
+    short one are admitted at their own sizes. An archive below the parallel extraction threshold takes a single core
+    and every archive above it takes the declared stage width, collapsed onto the core budget when that budget is
+    narrower. The manager admits a job once the running set has room for both its cores and its memory, and it admits
+    an oversized job alone rather than leaving it queued forever. A job whose estimated memory passes the host's own
     memory is failed on its tracker instead of being admitted, since it cannot complete wherever it is dispatched.
 
     Important:
-        Only one execution session can be active at a time. Use cancel_log_processing_tool to cancel an active
-        session before starting a new one.
+        Only one execution session can be active at a time. Cancel an active session with cancel_log_processing_tool,
+        then read 'session_ended' from that call, polling get_log_processing_status_tool only while it reads false.
 
     Args:
-        jobs: The list of job descriptors, each a dictionary carrying every key the 'jobs' entries of
-            prepare_log_processing_batch_tool report.
+        jobs: The job descriptors to dispatch, each a dictionary carrying every key the 'jobs' entries of
+            prepare_log_processing_batch_tool report. Leaving this unset rebuilds the manifest from the preparation
+            arguments below.
+        log_directories: The DataLogger output directories to prepare and dispatch. Read only when 'jobs' is unset.
+        source_ids: The camera IDs to dispatch under every named log directory. Read only when 'jobs' is unset. An
+            empty or unset list dispatches every source the recording manifest registers.
+        output_directories: The per-log-directory output paths. Read only when 'jobs' is unset, where it must match
+            the length of 'log_directories'.
         core_budget: The total number of CPU cores available for the execution session. Set to -1 to auto-resolve
             to every available core minus the reserved host cores.
         memory_budget_mb: The total memory in megabytes available for the execution session. Set to -1 to
@@ -229,9 +255,35 @@ def execute_log_processing_jobs_tool(
     Returns:
         A dictionary containing a 'started' flag, 'total_jobs', the resolved 'core_budget', 'memory_budget_mb', and
         'pool_size', a 'job_allocations' entry per job carrying its 'job_id', 'source_id', 'cores', 'memory_mb',
-        and 'message_count', and any invalid jobs. Returns an error dictionary when an execution session is already
-        active, and one carrying 'invalid_jobs' when no submitted job is valid.
+        and 'message_count', and any invalid jobs. A call that rebuilt the manifest also carries the
+        'skipped_sources', 'invalid_paths', and 'failed_directories' the preparation reported, each omitted when the
+        preparation reported nothing for it. A source that yielded no job is therefore accounted for in the same
+        response, whether or not anything dispatched. Returns an error dictionary when an execution session is
+        already active, when neither the job descriptors nor the preparation arguments were named, and one carrying
+        'invalid_jobs' when no submitted job is valid. A rebuild that fails outright returns the preparation's own
+        error dictionary, which reports a log directory list the output directory list does not match.
     """
+    preparation: dict[str, Any] = {}
+    if not jobs:
+        if not log_directories or not output_directories:
+            return {
+                "error": (
+                    "No work was named. Pass the job descriptors from prepare_log_processing_batch_tool as 'jobs', "
+                    "or pass 'log_directories' and 'output_directories' to prepare and dispatch in one call."
+                )
+            }
+
+        preparation = prepare_log_processing_batch_tool(
+            log_directories=log_directories,
+            source_ids=source_ids or [],
+            output_directories=output_directories,
+        )
+
+        if "error" in preparation:
+            return preparation
+
+        jobs = [job for entry in preparation.get("log_directories", {}).values() for job in entry.get("jobs", [])]
+
     # Resolves both budgets before sizing, since the core budget bounds the width any single job receives.
     resolved_cores = resolve_core_budget(requested_budget=core_budget)
     resolved_memory = resolve_memory_budget_mb(requested_budget_mb=memory_budget_mb)
@@ -299,7 +351,11 @@ def execute_log_processing_jobs_tool(
         )
 
     if not pending:
-        return {"error": "No valid jobs to execute.", "invalid_jobs": invalid_jobs}
+        return {
+            "error": "No valid jobs to execute.",
+            "invalid_jobs": invalid_jobs,
+            **_preparation_notes(preparation=preparation),
+        }
 
     # Creates the execution state and reserves the single session slot. The reservation performs the incumbent check,
     # the publication, and the thread start as one atomic step, since two callers splitting those steps would each
@@ -314,7 +370,13 @@ def execute_log_processing_jobs_tool(
     )
 
     if not start_execution_session(state=state):
-        return {"error": "An execution session is already active. Cancel it first or wait for completion."}
+        return {
+            "error": (
+                "An execution session is already active. Cancel it with cancel_log_processing_tool, then read "
+                "'session_ended' from that call and poll get_log_processing_status_tool only while it reads false."
+            ),
+            **_preparation_notes(preparation=preparation),
+        }
 
     result: dict[str, Any] = {
         "started": True,
@@ -323,6 +385,7 @@ def execute_log_processing_jobs_tool(
         "memory_budget_mb": resolved_memory,
         "pool_size": pool_size,
         "job_allocations": job_allocations,
+        **_preparation_notes(preparation=preparation),
     }
 
     if invalid_jobs:
@@ -347,7 +410,7 @@ def get_log_processing_status_tool() -> dict[str, Any]:
     if state is None:
         return {"active": False, "message": "No execution session exists."}
 
-    manager_alive = state.manager_thread is not None and state.manager_thread.is_alive()
+    manager_alive = session_is_active(state=state)
 
     job_details: list[dict[str, Any]] = []
     succeeded_count = 0
@@ -437,7 +500,7 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
     if state is None:
         return {"active": False, "message": "No execution session exists."}
 
-    manager_alive = state.manager_thread is not None and state.manager_thread.is_alive()
+    manager_alive = session_is_active(state=state)
     current_us = int(get_timestamp(output_format=TimestampFormats.INTEGER, precision=TimestampPrecisions.MICROSECOND))
 
     job_timing: list[dict[str, Any]] = []
@@ -538,17 +601,20 @@ def get_log_processing_timing_tool() -> dict[str, Any]:
 def cancel_log_processing_tool() -> dict[str, Any]:
     """Cancels the active log processing execution session.
 
-    Clears the pending job queue so no new jobs are dispatched. Active jobs complete naturally but no new jobs
-    are started.
+    Clears the pending job queue so no new jobs are dispatched. Active jobs complete naturally. A call that leaves no
+    job running waits for the session to end, and reports through 'session_ended' whether it did.
 
     Returns:
-        A dictionary containing a 'canceled' flag, a 'message', and 'final_state' with counts for succeeded,
-        failed, and active jobs at the time of cancellation. Returns a 'canceled' flag of False with a 'message' and
-        no 'final_state' when no execution session is active.
+        A dictionary containing a 'canceled' flag, a 'message', a 'session_ended' flag reporting whether the next
+        execution can start immediately, and 'final_state' with counts for the jobs this session itself finished
+        alongside the jobs still running at cancellation. A call made with no active execution session returns the
+        'canceled' flag set to False and 'session_ended' set to True, without 'final_state'.
     """
     state = get_execution_state()
-    if state is None:
-        return {"canceled": False, "message": "No execution session is active."}
+    if state is None or not session_is_active(state=state):
+        # Reports the ended session as ended, so a caller reading 'session_ended' finds it on every response this
+        # tool returns rather than only on the ones that canceled something.
+        return {"canceled": False, "session_ended": True, "message": "No execution session is active."}
 
     with state.lock:
         state.canceled = True
@@ -556,24 +622,49 @@ def cancel_log_processing_tool() -> dict[str, Any]:
         state.pending_jobs.clear()
         active_count = len(state.active_jobs)
 
+    # Waits out the session once nothing is left running, so the guard that admits one session at a time is usually
+    # open by the time this call returns, and 'session_ended' reports whether it is. A session still running a body
+    # is left to finish it, since its jobs are not this call's to interrupt.
+    session_ended = False
+    if active_count == 0:
+        session_ended = finish_execution_session(state=state)
+
+    # A tracker records every job that ever wrote to its directory, so the count is the intersection of the keys
+    # this session finished with the tracker's terminal entries.
     succeeded = 0
     failed = 0
-    tracker_paths: set[Path] = {job.tracker_path for job in state.all_jobs.values()}
 
-    for tracker_path in tracker_paths:
+    with state.lock:
+        finished_keys = set(state.finished_jobs)
+
+    for tracker_path, path_jobs in group_jobs_by_tracker(state=state).items():
         try:
             registry = ProcessingTracker(file_path=tracker_path).snapshot()
-            for job_state in registry.values():
-                if job_state.status == ProcessingStatus.SUCCEEDED:
-                    succeeded += 1
-                elif job_state.status == ProcessingStatus.FAILED:
-                    failed += 1
-        except Exception:  # noqa: S110 - An unreadable tracker contributes no counts, since cancellation still holds.
-            pass
+        except Exception:  # noqa: S112 - A tracker that cannot be read contributes no counts, so the loop skips it.
+            continue
+
+        for job in path_jobs:
+            if job.dispatch_key not in finished_keys or job.job_id not in registry:
+                continue
+
+            job_state = registry[job.job_id]
+            if job_state.status == ProcessingStatus.SUCCEEDED:
+                succeeded += 1
+            elif job_state.status == ProcessingStatus.FAILED:
+                failed += 1
+
+    if active_count > 0:
+        message = (
+            f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing. Poll "
+            f"get_log_processing_status_tool until 'active' reads false before starting another execution."
+        )
+    else:
+        message = f"Canceled. Cleared {cleared_count} pending job(s). No job was still running."
 
     return {
         "canceled": True,
-        "message": f"Canceled. Cleared {cleared_count} pending job(s). {active_count} job(s) still completing.",
+        "session_ended": session_ended,
+        "message": message,
         "final_state": {
             "succeeded_jobs": succeeded,
             "failed_jobs": failed,
@@ -1164,3 +1255,39 @@ def _clean_single_output(output_directory: str) -> dict[str, Any]:
         }
 
     return {"output_directory": output_directory, "cleaned": True, "timestamps_path": str(timestamps_path)}
+
+
+def _preparation_notes(preparation: dict[str, Any]) -> dict[str, Any]:
+    """Extracts the sources and directories a rebuilt manifest could not turn into jobs.
+
+    Notes:
+        A caller that names the preparation arguments never sees the preparation's own response, so the accounting it
+        carries travels with the dispatch result instead. Each skipped source is tagged with the log directory that
+        reported it, since one dispatch spans many directories.
+
+    Args:
+        preparation: The response prepare_log_processing_batch_tool returned, or an empty mapping when the caller
+            passed job descriptors directly.
+
+    Returns:
+        The 'skipped_sources', 'invalid_paths', and 'failed_directories' entries the preparation reported, each
+        omitted when it holds nothing.
+    """
+    if not preparation:
+        return {}
+
+    skipped = [
+        {"log_directory": log_directory, **entry}
+        for log_directory, manifest in preparation.get("log_directories", {}).items()
+        for entry in manifest.get("skipped_sources", [])
+    ]
+
+    notes: dict[str, Any] = {}
+    if skipped:
+        notes["skipped_sources"] = skipped
+    if preparation.get("invalid_paths"):
+        notes["invalid_paths"] = preparation["invalid_paths"]
+    if preparation.get("failed_directories"):
+        notes["failed_directories"] = preparation["failed_directories"]
+
+    return notes

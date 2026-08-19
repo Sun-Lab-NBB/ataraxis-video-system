@@ -2,7 +2,10 @@ from typing import Literal
 from pathlib import Path
 from contextlib import contextmanager
 from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import (
+    Callable as Callable,
+    Iterator,
+)
 
 import click
 from _typeshed import Incomplete
@@ -39,13 +42,19 @@ class _SharedConfigurationParameters:
 
 _pass_shared_parameters: Incomplete
 
+def _report_command_failure[**P](command: Callable[P, None]) -> Callable[P, None]: ...
 def axvs_cli() -> None: ...
 def cti_group() -> None: ...
+@_report_command_failure
 def set_cti_file(file_path: Path) -> None: ...
+@_report_command_failure
 def check_cti_status() -> None: ...
 def check_group() -> None: ...
+@_report_command_failure
 def check_devices() -> None: ...
+@_report_command_failure
 def check_compatibility() -> None: ...
+@_report_command_failure
 def live_run(
     interface: str,
     camera_index: int,
@@ -57,6 +66,7 @@ def live_run(
     *,
     monochrome: bool,
 ) -> None: ...
+@_report_command_failure
 def process_log_archives(
     log_directory: Path,
     output_directory: Path,
@@ -66,18 +76,23 @@ def process_log_archives(
     workers: int,
     no_progress: bool,
 ) -> None: ...
+@_report_command_failure
 def run_mcp_server(transport: Literal["stdio", "streamable-http"]) -> None: ...
 @click.pass_context
 def configure_group(
     context: click.Context, camera_index: int | None, blacklisted_node: tuple[str, ...], *, no_blacklist: bool
 ) -> None: ...
 @_pass_shared_parameters
+@_report_command_failure
 def read_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str) -> None: ...
 @_pass_shared_parameters
+@_report_command_failure
 def write_genicam_configuration(shared: _SharedConfigurationParameters, node_name: str, value: str) -> None: ...
 @_pass_shared_parameters
+@_report_command_failure
 def dump_genicam_configuration(shared: _SharedConfigurationParameters, output_file: Path) -> None: ...
 @_pass_shared_parameters
+@_report_command_failure
 def load_genicam_configuration(shared: _SharedConfigurationParameters, config_file: Path, *, strict: bool) -> None: ...
 @contextmanager
 def _connected_genicam_camera(shared: _SharedConfigurationParameters) -> Iterator[HarvestersCamera]: ...
