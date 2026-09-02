@@ -84,6 +84,8 @@ class FakeImageAcquirer:
     def __init__(self, buffers: list[FakeBuffer | None]) -> None:
         self.buffers = list(buffers)
         self.start_calls = 0
+        self.stop_calls = 0
+        self.destroy_calls = 0
         self._acquiring = False
 
     def is_acquiring(self) -> bool:
@@ -94,6 +96,23 @@ class FakeImageAcquirer:
         """Starts the simulated acquisition, the way the frame grab path starts a real one on its first call."""
         self._acquiring = True
         self.start_calls += 1
+
+    def stop(self) -> None:
+        """Stops the simulated acquisition, the way the disconnection path stops a real one that is still acquiring."""
+        self._acquiring = False
+        self.stop_calls += 1
+
+    def destroy(self) -> None:
+        """Releases the simulated acquirer, the way the disconnection path releases a real one.
+
+        Notes:
+            The disconnection path runs from the camera's finalizer as well as from its disconnect() method, so an
+            acquirer missing this method or stop() raises inside __del__ during garbage collection. The raised error
+            is unraisable there, which surfaces as a warning against whichever test happens to trigger the collection
+            rather than as a failure of the test that built the acquirer.
+        """
+        self._acquiring = False
+        self.destroy_calls += 1
 
     def fetch(self) -> FakeBuffer | None:
         """Returns the next declared buffer, answering with None where the declaration stands for a discarded one."""
