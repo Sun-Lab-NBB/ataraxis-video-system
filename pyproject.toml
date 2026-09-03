@@ -260,10 +260,17 @@ pythonpath = ["."]
 # 'coverage' task to combine. The test corpus is omitted because a spawned child re-reads this file without the
 # '--cov' package restriction its parent was launched with. A test module that a child imports, which is every module
 # handing a spawned process one of its own functions, is otherwise measured as source.
+# The 'disable_warnings' key silences the 'no-data-collected' warning that every spawned child which executes no
+# measured statement prints to stderr as it exits. The multiprocessing concurrency setting above starts a measurement
+# session in each of them, which includes the helper processes the interpreter spawns alongside the producer, consumer,
+# and pool workers, and a helper that runs no library code has nothing to report. The warning bypasses the pytest
+# warnings summary, so it interleaves with the progress output once per such child, and the '--cov-fail-under' gate the
+# test task applies still catches a run that genuinely measures nothing.
 [tool.coverage.run]
 parallel = true
 concurrency = ["multiprocessing", "thread"]
 omit = ["*/ataraxis_video_system/interfaces/*", "*/tests/*"]
+disable_warnings = ["no-data-collected"]
 
 # Used by the 'coverage' tox task to merge the coverage data files the '{py}-test' tasks produce.
 [tool.coverage.paths]
