@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 # Project metadata section. Provides the general ID information about the project.
 [project]
 name = "ataraxis-video-system"
-version = "5.1.1"
+version = "5.2.0"
 description = "Interfaces with a wide range of cameras to flexibly record visual stream data as video files."
 readme = "README.md"
 license = "Apache-2.0"
@@ -49,15 +49,10 @@ dependencies = [
     # Video Acquisition
     "opencv-python>=5,<6",
 
-    # GenICam Video Acquisition. The 'genicam' distribution publishes a macOS wheel only for Apple Silicon on Python
-    # 3.12 and 3.13, so the markers below claim the runtime exactly where that wheel exists. Intel Macs and Python 3.14
-    # claim neither distribution, because 'genicam' ships no source archive to build from and a marker satisfied where
-    # no wheel exists fails the whole installation instead of dropping the interface. The macOS wheel also carries a
-    # macOS 13 minimum, which no marker expresses, and it ships only up to 'genicam' 1.5.0, so macOS resolves one
-    # release behind the other platforms. Live frame display is unavailable on every macOS host, since macOS forbids
-    # GUI updates outside the main thread. Every other library feature works on macOS as usual.
-    "harvesters>=1,<2; sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64')",
-    "genicam>=1,<2; sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64')",
+    # GenICam Video Release 1.6.0 is the first 'genicam' release to publish Python 3.14 macOS wheels. Intel Macs are
+    # unable to install this library.
+    "harvesters>=1,<2",
+    "genicam>=1.6,<2",
 
     # CLI
     "click>=8,<9",
@@ -232,9 +227,7 @@ exclude = [
     "tests/",
 ]
 
-# Treats the GenICam runtime as untyped, which it is, and also keeps the source type-checking on the macOS and Python
-# combinations that install no runtime, where it would otherwise be reported as a missing import rather than an untyped
-# one.
+# Treats the GenICam runtime as untyped, as neither 'harvesters' nor 'genicam' ships type information.
 [[tool.mypy.overrides]]
 module = ["harvesters.*", "genicam.*"]
 ignore_missing_imports = true

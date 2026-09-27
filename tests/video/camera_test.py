@@ -13,7 +13,6 @@ from ataraxis_video_system import CameraInterfaces, InputPixelFormats
 from ataraxis_video_system.video import camera as camera_module
 from ataraxis_video_system.video.camera import (
     _MAXIMUM_NON_WORKING_IDS,
-    GENICAM_UNAVAILABLE_REASON,
     _FAIL_CRITICAL_ERRORS_MODE,
     MockCamera,
     OpenCVCamera,
@@ -25,7 +24,6 @@ from ataraxis_video_system.video.camera import (
     _get_harvesters_ids,
     discover_camera_ids,
     harvester_connection,
-    genicam_runtime_available,
     _suppress_loader_error_dialog,
 )
 
@@ -679,11 +677,6 @@ def test_harvesters_camera_grab_frame_reports_a_failed_fetch() -> None:
 )
 def test_harvesters_camera_grab_frame_orders_color_channels(data_format, expected_pixel) -> None:
     """Verifies that color frames are returned in the BGR channel order whichever order the camera streams."""
-    # The format tables the branch under test consults are empty where the GenICam runtime is absent, which leaves
-    # every format unsupported.
-    if not genicam_runtime_available():
-        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
-
     camera = HarvestersCamera(system_id=222, camera_index=0)
     streamed_frame = np.tile(np.array([10, 20, 30], dtype=np.uint8), (2, 3, 1))
     camera._camera = FakeImageAcquirer(buffers=[build_frame_buffer(frame=streamed_frame, data_format=data_format)])
@@ -801,51 +794,9 @@ def test_harvester_connection_releases_the_camera_on_error() -> None:
     assert camera._harvester is None
 
 
-def test_genicam_runtime_available_tracks_the_imported_runtime(monkeypatch) -> None:
-    """Verifies that genicam_runtime_available() reports whether the GenICam runtime imported."""
-    # Patches both states rather than reading the host's own, so the assertions hold on the hosts where the library
-    # installs no runtime and the guarded import falls back to None.
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=object())
-    assert genicam_runtime_available()
-
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
-    assert not genicam_runtime_available()
-
-
-def test_harvesters_camera_connect_requires_the_genicam_runtime(monkeypatch) -> None:
-    """Verifies that connecting to a GenICam camera aborts on a platform that does not support the interface."""
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
-    camera = HarvestersCamera(system_id=222, camera_index=3)
-
-    # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
-    message = f"Unable to connect to the GenICam camera at index 3. {GENICAM_UNAVAILABLE_REASON}"
-    with pytest.raises(NotImplementedError, match=error_format(message)):
-        camera.connect()
-
-
-def test_discover_camera_ids_skips_genicam_without_the_runtime(monkeypatch) -> None:
-    """Verifies that camera discovery reports OpenCV cameras alone where the GenICam interface is unsupported."""
-
-    def _forbidden_discovery():
-        message = "Harvesters discovery ran without the GenICam runtime."
-        raise AssertionError(message)
-
-    def _no_opencv_cameras():
-        return ()
-
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
-    monkeypatch.setattr(target=camera_module, name="_get_harvesters_ids", value=_forbidden_discovery)
-    monkeypatch.setattr(target=camera_module, name="_get_opencv_ids", value=_no_opencv_cameras)
-
-    assert discover_camera_ids() == ()
-
-
 @pytest.mark.usefixtures("persisted_cti_directory")
 def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeypatch) -> None:
     """Verifies that camera discovery reports OpenCV cameras alone where no GenTL Producer has been configured."""
-    # A non-None sentinel keeps the runtime gate open on every platform, including the Macs that install no runtime. It
-    # is never instantiated, since resolving the Producer path raises before Harvesters discovery constructs one.
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
     monkeypatch.setattr(target=cv2, name="VideoCapture", value=build_capture_factory(captures={0: FakeVideoCapture()}))
 
     cameras = discover_camera_ids()
@@ -856,20 +807,9 @@ def test_discover_camera_ids_skips_genicam_without_a_configured_producer(monkeyp
     assert all(camera.interface == CameraInterfaces.OPENCV for camera in cameras)
 
 
-def test_check_cti_file_reports_an_unsupported_platform(monkeypatch) -> None:
-    """Verifies that check_cti_file() reports an unusable configuration where the GenICam interface is unsupported."""
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
-
-    assert check_cti_file() is None
-
-
 @pytest.mark.usefixtures("persisted_cti_directory")
-def test_check_cti_file_reports_no_configured_producer(monkeypatch) -> None:
+def test_check_cti_file_reports_no_configured_producer() -> None:
     """Verifies that a machine with no configured Producer reports one as absent instead of raising."""
-    # A non-None sentinel keeps the runtime gate open on every platform, including the Macs that install no runtime. It
-    # is never instantiated, since the absent path file answers before any Producer is loaded.
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=object)
-
     assert check_cti_file() is None
 
 
@@ -901,23 +841,10 @@ def test_check_cti_file_rejects_a_stale_persisted_producer(persisted_cti_directo
     assert check_cti_file() is None
 
 
-def test_add_cti_file_requires_the_genicam_runtime(monkeypatch) -> None:
-    """Verifies that configuring a Producer aborts on a platform that does not support the GenICam interface."""
-    monkeypatch.setattr(target=camera_module, name="Harvester", value=None)
-
-    # Reuses the module's own explanation, which is resolved from the host platform and therefore differs per platform.
-    message = f"Unable to configure the GenTL Producer interface (.cti) file. {GENICAM_UNAVAILABLE_REASON}"
-    with pytest.raises(NotImplementedError, match=error_format(message)):
-        add_cti_file(cti_path=Path("TLSimu.cti"))
-
-
 def test_add_cti_file_persists_a_resolved_producer_path(
     persisted_cti_directory, simulator_cti_path, monkeypatch
 ) -> None:
     """Verifies that a configured Producer is persisted as the absolute path every later runtime resolves."""
-    if not genicam_runtime_available():
-        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
-
     if simulator_cti_path is None:
         pytest.skip("Skipping this test as no GenTL Producer simulator is bundled for this platform.")
 
@@ -940,9 +867,6 @@ def test_add_cti_file_persists_a_resolved_producer_path(
 
 def test_add_cti_file_rejects_a_missing_producer(persisted_cti_directory, tmp_path) -> None:
     """Verifies that configuring an absent Producer leaves the previously configured Producer in place."""
-    if not genicam_runtime_available():
-        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
-
     path_file = persisted_cti_directory / "cti_path.txt"
     configured_path = tmp_path / "configured.cti"
     path_file.write_text(str(configured_path))
@@ -957,9 +881,6 @@ def test_add_cti_file_rejects_a_missing_producer(persisted_cti_directory, tmp_pa
 
 def test_add_cti_file_rejects_a_file_that_is_not_a_producer(persisted_cti_directory, tmp_path) -> None:
     """Verifies that configuring a file the runtime cannot load persists nothing."""
-    if not genicam_runtime_available():
-        pytest.skip("Skipping this test as this platform does not support the GenICam camera interface.")
-
     fake_producer = tmp_path / "fake.cti"
     fake_producer.write_text("not a shared library")
 
