@@ -10,7 +10,10 @@ import numpy as np
 from numpy.typing import NDArray as NDArray
 from ataraxis_time import PrecisionTimer
 from genicam.genapi import NodeMap as NodeMap
-from harvesters.core import Harvester, ImageAcquirer
+from harvesters.core import (
+    Harvester,
+    ImageAcquirer as ImageAcquirer,
+)
 
 from .saver import InputPixelFormats as InputPixelFormats
 from .configuration import (
@@ -21,8 +24,6 @@ from .configuration import (
     apply_genicam_configuration as apply_genicam_configuration,
 )
 
-_GENICAM_RUNTIME_CLAIMED: bool
-GENICAM_UNAVAILABLE_REASON: str
 _MONOCHROME_FORMATS: set[str]
 _COLOR_FORMATS: set[str]
 _ALL_RGB_FORMATS: set[str]
@@ -50,7 +51,6 @@ class CameraInformation:
     model: str | None = ...
 
 def discover_camera_ids() -> tuple[CameraInformation, ...]: ...
-def genicam_runtime_available() -> bool: ...
 def add_cti_file(cti_path: Path) -> None: ...
 def check_cti_file() -> Path | None: ...
 
@@ -173,7 +173,6 @@ class MockCamera:
 
 def _get_opencv_ids() -> tuple[CameraInformation, ...]: ...
 def _get_harvesters_ids() -> tuple[CameraInformation, ...]: ...
-def _require_genicam_runtime(action: str) -> None: ...
 def _get_frame_rate_node(node_map: NodeMap) -> Any | None: ...
 def _get_cti_path() -> Path: ...
 @contextmanager

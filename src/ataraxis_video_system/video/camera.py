@@ -12,7 +12,6 @@ from enum import StrEnum
 import ctypes
 from typing import TYPE_CHECKING, Any
 from pathlib import Path
-import platform
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -26,23 +25,9 @@ import cv2
 import numpy as np
 import platformdirs
 from ataraxis_time import TimeUnits, PrecisionTimer, TimerPrecisions, rate_to_interval
+from harvesters.core import Harvester, ImageAcquirer
+from harvesters.util.pfnc import bgr_formats, rgb_formats, mono_location_formats
 from ataraxis_base_utilities import LogLevel, console, ensure_directory_exists
-
-try:
-    from harvesters.core import Harvester, ImageAcquirer
-    from harvesters.util.pfnc import bgr_formats, rgb_formats, mono_location_formats
-except ImportError:  # pragma: no cover
-    # The GenICam camera runtime is not installed on the macOS hosts that _GENICAM_RUNTIME_CLAIMED excludes, where the
-    # 'genicam' distribution publishes no wheel. Guarding the import keeps this module usable for the OpenCV and Mock
-    # interfaces there, and every entry point that reaches GenICam hardware calls _require_genicam_runtime() before
-    # touching the names below. The format collections fall back to empty, which no reachable code consults, because
-    # the frame grab loop that reads them is only reachable through a connection the guard refuses to open. Only one of
-    # the two branches runs on any single host, so the fallback stays out of coverage measurement.
-    Harvester = None
-    ImageAcquirer = None
-    bgr_formats = ()
-    rgb_formats = ()
-    mono_location_formats = ()
 
 from .saver import InputPixelFormats
 from .configuration import (
@@ -52,39 +37,6 @@ from .configuration import (
     write_genicam_node,
     apply_genicam_configuration,
 )
-
-_GENICAM_RUNTIME_CLAIMED: bool = sys.platform != "darwin" or (
-    sys.version_info < (3, 14) and platform.machine() == "arm64"
-)
-"""Tracks whether this library claims the GenICam camera runtime as a dependency on the host evaluating it.
-
-This mirrors the environment marker the 'harvesters' and 'genicam' distributions carry in the project metadata, which is
-the only way to separate a host that never installs the runtime from one whose installation is damaged. The marker and
-this expression are edited together. The 'genicam' distribution publishes a macOS wheel only for Apple Silicon on Python
-3.12 and 3.13, so Intel Macs and Python 3.14 install no runtime while every other platform installs one.
-"""
-
-GENICAM_UNAVAILABLE_REASON: str = (
-    (
-        "The 'harvesters' and 'genicam' distributions that supply the GenICam camera runtime install together with "
-        "this library on this platform, so a runtime that does not import indicates a damaged installation. Reinstall "
-        "the library to restore the GenICam camera interface."
-    )
-    if _GENICAM_RUNTIME_CLAIMED
-    else (
-        "This host does not support the GenICam camera interface, as the 'genicam' distribution that supplies its "
-        "runtime publishes a macOS wheel only for Apple Silicon running Python 3.12 or 3.13. Use the 'opencv' camera "
-        "interface, or drive the GenICam cameras from a Linux host, a Windows host, or an Apple Silicon Mac running "
-        "Python 3.12 or 3.13."
-    )
-)
-"""Explains why the GenICam camera runtime is unavailable, which every interface reports when the runtime is absent.
-
-The explanation is resolved from the host rather than from the failed import, because the hosts that install no runtime
-report an expected limitation while every other host installs it alongside the library, making an absent runtime a
-broken environment there. Resolving it as a single conditional expression keeps both wordings out of a platform branch
-that only one host is ever able to execute.
-"""
 
 _MONOCHROME_FORMATS: set[str] = set(mono_location_formats)
 """Stores the monochrome Harvesters color formats as a set, which keeps membership checks constant in the format
@@ -185,19 +137,12 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
 
         For Harvesters cameras, this function requires a valid CTI file to be configured via the add_cti_file()
         function, the 'axvs cti set' CLI command, or the ``AXVS_CTI_PATH`` environment variable, which takes precedence
-        over the persisted path. If no CTI file is configured, Harvesters camera discovery is skipped. Harvesters
-        discovery is also skipped where the GenICam runtime is absent, which is every Intel Mac and every macOS host
-        running Python 3.14.
+        over the persisted path. If no CTI file is configured, Harvesters camera discovery is skipped.
 
     Returns:
         A tuple of CameraInformation instances for all discovered cameras from both interfaces.
     """
     opencv_cameras = _get_opencv_ids()
-
-    # Skips Harvesters discovery where the GenICam runtime is absent, since discovery reports the cameras this machine
-    # is able to reach rather than asserting that every interface is available on every platform.
-    if not genicam_runtime_available():
-        return opencv_cameras
 
     # Attempts to discover Harvesters-compatible cameras. Skips if no CTI file is configured.
     try:
@@ -207,18 +152,6 @@ def discover_camera_ids() -> tuple[CameraInformation, ...]:
         harvesters_cameras = ()
 
     return opencv_cameras + harvesters_cameras
-
-
-def genicam_runtime_available() -> bool:
-    """Determines whether the GenICam camera runtime is available in this environment.
-
-    The runtime is supplied by the 'harvesters' and 'genicam' distributions, which this library installs on every
-    platform other than the Intel Macs and the macOS hosts running Python 3.14, where 'genicam' publishes no wheel.
-
-    Returns:
-        True when the runtime is importable, False otherwise.
-    """
-    return Harvester is not None
 
 
 def add_cti_file(cti_path: Path) -> None:
@@ -237,12 +170,9 @@ def add_cti_file(cti_path: Path) -> None:
             See https://github.com/genicam/harvesters/blob/master/docs/INSTALL.rst for more details.
 
     Raises:
-        NotImplementedError: If the GenICam camera runtime is not available in this environment.
         FileNotFoundError: If the supplied .cti file does not exist.
         OSError: If the supplied .cti file is not a loadable GenTL Producer.
     """
-    _require_genicam_runtime(action="configure the GenTL Producer interface (.cti) file")
-
     # Resolves the path before it is verified and persisted. A relative path validates against the directory the
     # command happened to run from and then fails to resolve in every later runtime started from anywhere else,
     # which contradicts the reuse this function exists to provide.
@@ -269,15 +199,8 @@ def check_cti_file() -> Path | None:
     path, matching the resolution order applied when connecting to a camera.
 
     Returns:
-        The Path to the configured .cti file if one exists and is valid, or None otherwise. Also returns None where the
-        GenICam runtime that consumes the Producer is absent, which is every Intel Mac and every macOS host running
-        Python 3.14.
+        The Path to the configured .cti file if one exists and is valid, or None otherwise.
     """
-    # Reports the unusable state rather than raising, since this function answers whether the interface is ready to use
-    # and an unsupported platform is one of the ways it is not.
-    if not genicam_runtime_available():
-        return None
-
     override = os.environ.get(_CTI_PATH_VARIABLE)
     if override:
         cti_path = Path(override).expanduser().resolve()
@@ -594,15 +517,12 @@ class HarvestersCamera:
         """Connects to the managed camera hardware.
 
         Raises:
-            NotImplementedError: If the GenICam camera runtime is not available in this environment.
             FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
             OSError: If the configured .cti file is not a loadable GenTL Producer.
             IndexError: If the camera index does not address one of the cameras the configured GenTL Producer discovers.
         """
         if self._camera is not None:
             return
-
-        _require_genicam_runtime(action=f"connect to the GenICam camera at index {self._camera_index}")
 
         self._harvester = Harvester()
         with _suppress_loader_error_dialog():
@@ -926,7 +846,6 @@ def read_camera_configuration(
         The camera identity and the current value of every writable node the blacklist retains.
 
     Raises:
-        NotImplementedError: If the GenICam camera runtime is not available in this environment.
         FileNotFoundError: If no .cti file path has been configured or the configured file does not exist.
         OSError: If the configured .cti file is not a loadable GenTL Producer.
         IndexError: If the camera index does not address one of the cameras the configured GenTL Producer discovers.
@@ -1286,22 +1205,6 @@ def _get_harvesters_ids() -> tuple[CameraInformation, ...]:
     harvester.reset()
 
     return tuple(working_ids)
-
-
-def _require_genicam_runtime(action: str) -> None:
-    """Aborts the requested action when the GenICam camera runtime is absent from this environment.
-
-    Args:
-        action: The action the caller is unable to carry out, phrased as an infinitive clause without its subject.
-
-    Raises:
-        NotImplementedError: If the runtime is not importable.
-    """
-    if genicam_runtime_available():
-        return
-
-    message = f"Unable to {action}. {GENICAM_UNAVAILABLE_REASON}"
-    console.error(message=message, error=NotImplementedError)
 
 
 def _get_frame_rate_node(node_map: NodeMap) -> Any | None:
